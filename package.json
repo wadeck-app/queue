@@ -6,7 +6,6 @@
   "scripts": {
     "build": "tsc --build tsconfig.json",
     "bundle": "tsx ci/scripts/bundle.ts",
-    "bundle-updater": "tsx ci/scripts/bundle-updater.ts",
     "build-launcher": "node ci/scripts/build-launcher.mjs",
     "test": "vitest run --bail=1",
     "test:watch": "vitest",

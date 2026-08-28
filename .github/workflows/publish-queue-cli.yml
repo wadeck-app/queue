@@ -108,13 +108,8 @@ jobs:
                   VERSION_INPUT: ${{ github.event.inputs.version }}
                   BREAKING_INPUT: ${{ github.event.inputs.breaking }}
 
-            - name: Bundle queue CLI
+            - name: Bundle
               run: npm run bundle
-              env:
-                  BUNDLE_VERSION: ${{ steps.version.outputs.version }}
-
-            - name: Bundle updater
-              run: npm run bundle-updater
               env:
                   BUNDLE_VERSION: ${{ steps.version.outputs.version }}
 
