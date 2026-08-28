@@ -2,12 +2,7 @@
   "name": "@wadeck/queue-cli",
   "version": "0.1.0",
   "type": "module",
-  "private": false,
-  "publishConfig": {
-    "registry": "https://gitlab.com/api/v4/packages/npm/"
-  },
-  "bin": { "queue": "./dist-bundle/queue.cjs" },
-  "files": ["dist-bundle/", "launcher-go/dist/"],
+  "private": true,
   "scripts": {
     "build": "tsc --build tsconfig.json",
     "bundle": "tsx ci/scripts/bundle.ts",

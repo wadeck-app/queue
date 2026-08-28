@@ -1,7 +1,7 @@
 /**
  * Bundles the auto-updater into a single CommonJS file.
  * Output: dist-bundle/queue-updater.cjs
- * Usage:  npx tsx scripts/bundle-updater.ts
+ * Usage:  npm run bundle-updater
  *
  * Size guard: throws if output exceeds 500 KB (indicates queue runtime was accidentally included).
  */
@@ -15,7 +15,8 @@ const root = path.join(__dirname, '../..');
 const outfile = path.join(root, 'dist-bundle/queue-updater.cjs');
 const MAX_SIZE_BYTES = 500 * 1024; // 500 KB
 
-const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8')) as { version: string };
+const pkgVersion = (JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8')) as { version: string }).version;
+const version = process.env['BUNDLE_VERSION'] ?? pkgVersion;
 
 await build({
     entryPoints: [path.join(root, 'src/cli/queue-updater-entry.ts')],

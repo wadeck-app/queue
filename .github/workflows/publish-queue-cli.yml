@@ -29,6 +29,10 @@ jobs:
               with:
                   node-version: '24'
 
+            - uses: actions/setup-go@v5
+              with:
+                  go-version: '1.26'
+
             - name: Validate tokens
               run: |
                   READ=$(echo "${GITLAB_NPM_READ_TOKEN}" | tr -d '[:space:]')
