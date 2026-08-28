@@ -14,8 +14,8 @@
     "clean": "rimraf dist dist-bundle"
   },
   "dependencies": {
-    "@wadeck-app/shared-cli": "^2026.8.23-006-2d3e15d6",
-    "@wadeck-app/singleton-daemon-kit": "^2026.8.28-068-4a52b84c",
+    "@wadeck-app/shared-cli": "^2026.8.28-007-f471d994",
+    "@wadeck-app/singleton-daemon-kit": "^2026.8.28-071-c253e8d8",
     "jsonpath-plus": "^10.3.0",
     "js-yaml": "^4.1.1",
     "zod": "^3.24.0"
