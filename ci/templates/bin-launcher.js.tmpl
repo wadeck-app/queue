@@ -1,0 +1,50 @@
+#!/usr/bin/env node
+'use strict';
+const { execFileSync, execSync } = require('child_process');
+const os = require('os');
+
+const PLATFORM_PKG = {
+  'win32-x64':    '@wadeck/{{CLI_NAME}}-win32-x64',
+  'darwin-arm64': '@wadeck/{{CLI_NAME}}-darwin-arm64',
+  'darwin-x64':   '@wadeck/{{CLI_NAME}}-darwin-x64',
+};
+
+const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
+const key = `${process.platform}-${arch}`;
+const pkgName = PLATFORM_PKG[key];
+if (!pkgName) {
+  process.stderr.write(`{{CLI_NAME}}: unsupported platform ${key}\n`);
+  process.exit(1);
+}
+
+const ext = process.platform === 'win32' ? '.exe' : '';
+
+let launcherPath;
+try {
+  launcherPath = require.resolve(`${pkgName}/{{CLI_NAME}}${ext}`);
+} catch {
+  process.stderr.write(`{{CLI_NAME}}: platform package ${pkgName} missing -- installing...\n`);
+  try {
+    const out = execSync(`npm install -g ${pkgName}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    if (out) process.stdout.write(out);
+  } catch (installErr) {
+    if (installErr.stdout) process.stdout.write(installErr.stdout);
+    if (installErr.stderr) process.stderr.write(installErr.stderr);
+    process.stderr.write(`{{CLI_NAME}}: install failed (exit ${installErr.status})\n`);
+    process.exit(1);
+  }
+  try {
+    launcherPath = require.resolve(`${pkgName}/{{CLI_NAME}}${ext}`);
+  } catch {
+    process.stderr.write(
+      `{{CLI_NAME}}: installed ${pkgName} but cannot resolve binary -- try: npm install -g @wadeck/{{CLI_NAME}}\n`
+    );
+    process.exit(1);
+  }
+}
+
+const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
+execFileSync(launcherPath, process.argv.slice(2), {
+  stdio: 'inherit',
+  env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
+});
