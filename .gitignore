@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-bundle/
+dist-types/
+launcher-go/dist/
+packages/*/
+*.tsbuildinfo
+*.log

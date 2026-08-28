@@ -1,0 +1,150 @@
+name: Publish @wadeck/queue-cli
+
+env:
+    GITLAB_NPM_REGISTRY_PATH: //gitlab.com/api/v4/projects/84445653/packages/npm/
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Stable version (e.g. 1.2.0)'
+                required: false
+                default: ''
+            breaking:
+                description: 'Breaking change? (true/false)'
+                required: false
+                default: 'false'
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+
+            - name: Validate tokens
+              run: |
+                  READ=$(echo "${GITLAB_NPM_READ_TOKEN}" | tr -d '[:space:]')
+                  [ -z "$READ" ] && echo "::error::GITLAB_NPM_READ_TOKEN is empty" && exit 1
+                  echo "READ token: ${READ:0:9}*** (length: ${#READ})"
+                  PROJECT_ID=$(echo "${GITLAB_NPM_REGISTRY_PATH}" | sed 's|.*/projects/\([0-9]*\)/.*|\1|')
+                  HTTP_READ=$(curl -s -o /dev/null -w "%{http_code}" \
+                    -H "Authorization: Bearer ${READ}" \
+                    "https://gitlab.com/api/v4/projects/${PROJECT_ID}/packages/pypi/simple/")
+                  case "$HTTP_READ" in
+                    200) echo "READ token: read_package_registry OK (PyPI simple index HTTP 200)" ;;
+                    401) echo "::error::GITLAB_NPM_READ_TOKEN invalid or expired (HTTP 401)" ; exit 1 ;;
+                    403) echo "::error::GITLAB_NPM_READ_TOKEN lacks read_package_registry scope (HTTP 403)" ; exit 1 ;;
+                    *)   echo "::error::GITLAB_NPM_READ_TOKEN unexpected HTTP ${HTTP_READ}" ; exit 1 ;;
+                  esac
+
+                  WRITE=$(echo "${GITLAB_NPM_WRITE_TOKEN}" | tr -d '[:space:]')
+                  [ -z "$WRITE" ] && echo "::error::GITLAB_NPM_WRITE_TOKEN is empty" && exit 1
+                  echo "WRITE token: ${WRITE:0:9}*** (length: ${#WRITE})"
+
+                  INTROSPECT=$(curl -s -H "Authorization: Bearer ${WRITE}" "https://gitlab.com/api/v4/personal_access_tokens/self")
+                  if ! echo "$INTROSPECT" | grep -q '"scopes"'; then
+                    INTROSPECT=$(curl -s -H "Authorization: Bearer ${WRITE}" "https://gitlab.com/api/v4/deploy_tokens/self")
+                  fi
+                  echo "WRITE token introspection: ${INTROSPECT}"
+
+                  if echo "$INTROSPECT" | grep -q '"scopes"'; then
+                    if ! echo "$INTROSPECT" | grep -q 'write_package_registry'; then
+                      echo "::error::GITLAB_NPM_WRITE_TOKEN lacks write_package_registry scope. Got: ${INTROSPECT}" ; exit 1
+                    fi
+                    echo "WRITE token: write_package_registry OK (via introspection)"
+                  else
+                    HTTP_WRITE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST \
+                      -H "Authorization: Bearer ${WRITE}" \
+                      "https://gitlab.com/api/v4/projects/${PROJECT_ID}/packages/pypi")
+                    case "$HTTP_WRITE" in
+                      400) echo "WRITE token: write_package_registry OK (PyPI probe HTTP 400 -- nothing created)" ;;
+                      403) echo "::error::GITLAB_NPM_WRITE_TOKEN lacks write_package_registry scope (HTTP 403) -- update deploy token in GitLab" ; exit 1 ;;
+                      404) echo "::error::GITLAB_NPM_WRITE_TOKEN has no visibility to this project (HTTP 404)" ; exit 1 ;;
+                      401) echo "::error::GITLAB_NPM_WRITE_TOKEN invalid or expired (HTTP 401)" ; exit 1 ;;
+                      *)   echo "::error::GITLAB_NPM_WRITE_TOKEN unexpected HTTP ${HTTP_WRITE}" ; exit 1 ;;
+                    esac
+                  fi
+              env:
+                  GITLAB_NPM_READ_TOKEN: ${{ secrets.GITLAB_NPM_READ_TOKEN }}
+                  GITLAB_NPM_WRITE_TOKEN: ${{ secrets.GITLAB_NPM_WRITE_TOKEN }}
+
+            - name: Configure GitLab npm registry (read -- for npm install)
+              run: |
+                  TOKEN=$(echo "${GITLAB_NPM_READ_TOKEN}" | tr -d '[:space:]')
+                  echo "@wadeck:registry=https:${GITLAB_NPM_REGISTRY_PATH}" >> ~/.npmrc
+                  echo "${GITLAB_NPM_REGISTRY_PATH}:_authToken=${TOKEN}" >> ~/.npmrc
+                  echo "auth-type=legacy" >> ~/.npmrc
+                  echo "=== whoami ===" && curl -s "https:${GITLAB_NPM_REGISTRY_PATH}-/whoami" -H "Authorization: Bearer ${TOKEN}"
+                  echo ""
+              env:
+                  GITLAB_NPM_READ_TOKEN: ${{ secrets.GITLAB_NPM_READ_TOKEN }}
+
+            - name: Install dependencies
+              run: npm install --prefer-offline
+
+            - name: Build TypeScript
+              run: npm run build
+
+            - name: Bundle queue CLI
+              run: npm run bundle
+
+            - name: Bundle updater
+              run: npm run bundle-updater
+
+            - name: Build Go launchers
+              run: npm run build-launcher
+
+            - name: Compute version
+              id: version
+              run: bash ci/scripts/compute-version.sh
+              env:
+                  GITHUB_EVENT_NAME: ${{ github.event_name }}
+                  VERSION_INPUT: ${{ github.event.inputs.version }}
+                  BREAKING_INPUT: ${{ github.event.inputs.breaking }}
+
+            - name: Generate platform package directories
+              run: bash ci/scripts/generate-platform-packages.sh
+
+            - name: Copy artifacts to platform packages
+              run: bash ci/scripts/copy-binaries.sh
+
+            - name: Set version in all packages
+              run: |
+                  for pkg in queue-cli-dist queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64; do
+                    (cd "packages/$pkg" && npm pkg set version="${{ steps.version.outputs.version }}")
+                  done
+
+            - name: Configure GitLab npm registry (write -- for npm publish)
+              run: |
+                  TOKEN=$(echo "${GITLAB_NPM_WRITE_TOKEN}" | tr -d '[:space:]')
+                  if [ -z "$TOKEN" ]; then
+                    echo "::error::GITLAB_NPM_WRITE_TOKEN is empty"
+                    exit 1
+                  fi
+                  echo "WRITE token: ${TOKEN:0:9}*** (length: ${#TOKEN})"
+                  echo "@wadeck:registry=https:${GITLAB_NPM_REGISTRY_PATH}" >> ~/.npmrc
+                  echo "${GITLAB_NPM_REGISTRY_PATH}:_authToken=${TOKEN}" >> ~/.npmrc
+                  echo "auth-type=legacy" >> ~/.npmrc
+                  echo "=== .npmrc (token masked) ===" && sed 's/_authToken=.*/_authToken=***/' ~/.npmrc
+                  echo "=== whoami ===" && curl -s "https:${GITLAB_NPM_REGISTRY_PATH}-/whoami" -H "Authorization: Bearer ${TOKEN}"
+                  echo ""
+              env:
+                  GITLAB_NPM_WRITE_TOKEN: ${{ secrets.GITLAB_NPM_WRITE_TOKEN }}
+
+            - name: Publish platform packages
+              run: |
+                  for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64; do
+                    (cd "packages/$pkg" && npm publish --tag ${{ steps.version.outputs.dist_tag }})
+                  done
+
+            - name: Publish main package
+              working-directory: packages/queue-cli-dist
+              run: npm publish --tag ${{ steps.version.outputs.dist_tag }}

@@ -1,0 +1,1 @@
+{ "appName": "queue", "displayName": "Queue CLI", "nodeScript": "queue.cjs", "defaultConfigDir": "queue", "cliFlags": [] }

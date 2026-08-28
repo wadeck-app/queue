@@ -1,0 +1,38 @@
+{
+  "name": "@wadeck/queue-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "publishConfig": {
+    "registry": "https://gitlab.com/api/v4/packages/npm/"
+  },
+  "bin": { "queue": "./dist-bundle/queue.cjs" },
+  "files": ["dist-bundle/", "launcher-go/dist/"],
+  "scripts": {
+    "build": "tsc --build tsconfig.json",
+    "bundle": "tsx scripts/bundle.ts",
+    "bundle-updater": "tsx scripts/bundle-updater.ts",
+    "build-launcher": "node scripts/build-launcher.mjs",
+    "test": "vitest run --bail=1",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rimraf dist dist-bundle"
+  },
+  "dependencies": {
+    "@wadeck/shared-cli": "^2026.8.23-006-2d3e15d6",
+    "@wadeck/singleton-daemon-kit": "^2026.8.28-068-4a52b84c",
+    "jsonpath-plus": "^10.3.0",
+    "js-yaml": "^4.1.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.27.2",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.7.0",
+    "typescript": "^7.0.0",
+    "vitest": "^4.0.14"
+  },
+  "engines": { "node": ">=22" }
+}
