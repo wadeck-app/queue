@@ -1,8 +1,5 @@
 name: CI / Publish
 
-env:
-    GITHUB_NPM_REGISTRY_PATH: //npm.pkg.github.com/
-
 on:
     push:
         branches: [main]
@@ -33,16 +30,13 @@ jobs:
             - uses: actions/setup-node@v5
               with:
                   node-version: '24'
-
-            - name: Configure GitHub npm registry
-              run: |
-                  echo "@wadeck-app:registry=https:${GITHUB_NPM_REGISTRY_PATH}" >> ~/.npmrc
-                  echo "${GITHUB_NPM_REGISTRY_PATH}:_authToken=${GITHUB_TOKEN}" >> ~/.npmrc
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
 
             - name: Install dependencies
               run: npm install --prefer-offline
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Build TypeScript
               run: npm run build
@@ -62,20 +56,17 @@ jobs:
             - uses: actions/setup-node@v5
               with:
                   node-version: '24'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
 
             - uses: actions/setup-go@v5
               with:
                   go-version: '1.26'
 
-            - name: Configure GitHub npm registry (read -- for npm install)
-              run: |
-                  echo "@wadeck-app:registry=https:${GITHUB_NPM_REGISTRY_PATH}" >> ~/.npmrc
-                  echo "${GITHUB_NPM_REGISTRY_PATH}:_authToken=${GITHUB_TOKEN}" >> ~/.npmrc
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
             - name: Install dependencies
               run: npm install --prefer-offline
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Build TypeScript
               run: npm run build
@@ -108,20 +99,16 @@ jobs:
                     (cd "packages/$pkg" && npm pkg set version="${{ steps.version.outputs.version }}")
                   done
 
-            - name: Configure GitHub npm registry (write -- for npm publish)
-              run: |
-                  echo "@wadeck-app:registry=https:${GITHUB_NPM_REGISTRY_PATH}" >> ~/.npmrc
-                  echo "${GITHUB_NPM_REGISTRY_PATH}:_authToken=${GITHUB_TOKEN}" >> ~/.npmrc
-                  echo "=== .npmrc (token masked) ===" && sed 's/_authToken=.*/_authToken=***/' ~/.npmrc
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
             - name: Publish platform packages
               run: |
                   for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64; do
                     (cd "packages/$pkg" && npm publish --tag ${{ steps.version.outputs.dist_tag }})
                   done
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Publish main package
               working-directory: packages/queue-cli-dist
               run: npm publish --tag ${{ steps.version.outputs.dist_tag }}
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
