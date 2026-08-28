@@ -1,4 +1,5 @@
 node_modules/
+scripts/
 dist/
 dist-bundle/
 dist-types/
