@@ -1,4 +1,4 @@
-name: Publish @wadeck-app/queue-cli
+name: CI / Publish
 
 env:
     GITHUB_NPM_REGISTRY_PATH: //npm.pkg.github.com/
@@ -6,6 +6,7 @@ env:
 on:
     push:
         branches: [main]
+    pull_request:
     workflow_dispatch:
         inputs:
             version:
@@ -17,12 +18,42 @@ on:
                 required: false
                 default: 'false'
 
+permissions:
+    contents: read
+    packages: write
+
 jobs:
-    publish:
+    build-and-test:
         runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            packages: write
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+
+            - name: Configure GitHub npm registry
+              run: |
+                  echo "@wadeck-app:registry=https:${GITHUB_NPM_REGISTRY_PATH}" >> ~/.npmrc
+                  echo "${GITHUB_NPM_REGISTRY_PATH}:_authToken=${GITHUB_TOKEN}" >> ~/.npmrc
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Install dependencies
+              run: npm install --prefer-offline
+
+            - name: Build TypeScript
+              run: npm run build
+
+            - name: Run tests
+              run: npm test
+
+    publish:
+        needs: build-and-test
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+        runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
               with:
