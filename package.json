@@ -10,6 +10,7 @@
     "test": "vitest run --bail=1",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "preversion": "npm test",
     "clean": "rimraf dist dist-bundle"
   },
   "dependencies": {

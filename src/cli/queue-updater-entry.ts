@@ -257,7 +257,7 @@ export async function main(): Promise<void> {
             const { stdout: npmRootOut } = await execFileAsync('npm', ['root', '-g'], { timeout: 10000 });
             const globalBundlePath = path.join(npmRootOut.trim(), PKG_NAME, bundleFile);
 
-            execFileSync(process.execPath, [globalBundlePath, '--version'], {
+            execFileSync(process.execPath, [globalBundlePath, 'cli', 'self-check'], {
                 stdio: 'pipe',
                 timeout: 15000,
                 env: { ...process.env, CLI_SELF_CHECK_QUIET: '1' },
