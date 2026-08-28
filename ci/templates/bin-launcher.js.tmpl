@@ -44,7 +44,11 @@ try {
 }
 
 const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
-execFileSync(launcherPath, process.argv.slice(2), {
-  stdio: 'inherit',
-  env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
-});
+try {
+  execFileSync(launcherPath, process.argv.slice(2), {
+    stdio: 'inherit',
+    env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
+  });
+} catch (err) {
+  process.exit(err != null && typeof err === 'object' && 'status' in err && typeof err.status === 'number' ? err.status : 1);
+}

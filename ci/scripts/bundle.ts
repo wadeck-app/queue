@@ -27,7 +27,7 @@ function getCalVer(): string {
   }
 }
 
-const version = process.env['BUNDLE_VERSION'] ?? getCalVer();
+const version = process.env['BUNDLE_VERSION'] || getCalVer();
 const sharedDefine = {
   'import.meta.url': '__importMetaUrl',
   __QUEUE_CLI_VERSION__: JSON.stringify(version),
