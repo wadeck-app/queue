@@ -58,7 +58,7 @@ generate_dist() {
 }
 EOF
 
-  sed "s/{{CLI_NAME}}/${CLI}/g" "$TEMPLATES_DIR/bin-launcher.js.tmpl" > "$dir/bin/${CLI}.js"
+  sed -e "s/{{CLI_NAME}}/${CLI}/g" -e "s/{{PKG_PREFIX}}/${CLI}-cli/g" "$TEMPLATES_DIR/bin-launcher.js.tmpl" > "$dir/bin/${CLI}.js"
   chmod +x "$dir/bin/${CLI}.js"
   echo "generated $dir/"
 }
