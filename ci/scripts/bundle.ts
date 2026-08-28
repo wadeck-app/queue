@@ -25,7 +25,7 @@ function getCalVer(): string {
   }
 }
 
-const version = getCalVer();
+const version = process.env['BUNDLE_VERSION'] ?? getCalVer();
 
 await esbuild.build({
   entryPoints: [join(rootDir, 'src/cli/QueueIndex.ts')],

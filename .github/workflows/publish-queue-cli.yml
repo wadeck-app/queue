@@ -93,12 +93,6 @@ jobs:
             - name: Build TypeScript
               run: npm run build
 
-            - name: Bundle queue CLI
-              run: npm run bundle
-
-            - name: Bundle updater
-              run: npm run bundle-updater
-
             - name: Build Go launchers
               run: npm run build-launcher
 
@@ -109,6 +103,16 @@ jobs:
                   GITHUB_EVENT_NAME: ${{ github.event_name }}
                   VERSION_INPUT: ${{ github.event.inputs.version }}
                   BREAKING_INPUT: ${{ github.event.inputs.breaking }}
+
+            - name: Bundle queue CLI
+              run: npm run bundle
+              env:
+                  BUNDLE_VERSION: ${{ steps.version.outputs.version }}
+
+            - name: Bundle updater
+              run: npm run bundle-updater
+              env:
+                  BUNDLE_VERSION: ${{ steps.version.outputs.version }}
 
             - name: Generate platform package directories
               run: bash ci/scripts/generate-platform-packages.sh
