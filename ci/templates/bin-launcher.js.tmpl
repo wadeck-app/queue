@@ -44,11 +44,27 @@ try {
 }
 
 const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
-try {
-  execFileSync(launcherPath, process.argv.slice(2), {
-    stdio: 'inherit',
-    env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
-  });
-} catch (err) {
-  process.exit(err != null && typeof err === 'object' && 'status' in err && typeof err.status === 'number' ? err.status : 1);
+
+// On Windows the Go launcher binary is compiled as SUBSYSTEM:WINDOWS (GUI application).
+// Its hasConsole() check fails when spawned from a terminal, causing node's stdio to be
+// redirected to NUL and swallowing all output. Bypass the launcher for short-lived
+// read-only commands so their output reaches the terminal.
+const PASSTHROUGH_FLAGS = ['--version', '-v', '--pid', '--help', '-h'];
+const _args = process.argv.slice(2);
+
+function _runWithExit(bin, binArgs) {
+  try {
+    execFileSync(bin, binArgs, {
+      stdio: 'inherit',
+      env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
+    });
+  } catch (err) {
+    process.exit(err != null && typeof err === 'object' && 'status' in err && typeof err.status === 'number' ? err.status : 1);
+  }
+}
+
+if (process.platform === 'win32' && _args.some(function(a) { return PASSTHROUGH_FLAGS.includes(a); })) {
+  _runWithExit(process.execPath, [bundlePath].concat(_args));
+} else {
+  _runWithExit(launcherPath, _args);
 }
