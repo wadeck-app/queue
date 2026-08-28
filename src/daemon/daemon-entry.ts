@@ -1,4 +1,4 @@
-import { ConfigDir } from '@wadeck/shared-cli/ConfigDir';
+import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { startDaemon } from './QueueDaemon.js';
 
 const configDir = process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');

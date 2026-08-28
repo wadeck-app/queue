@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="$SCRIPT_DIR/../templates"
-REGISTRY="https://gitlab.com/api/v4/projects/84445653/packages/npm/"
+REGISTRY="https://npm.pkg.github.com/"
 CLI="queue"
 
 generate_platform() {
@@ -15,13 +15,13 @@ generate_platform() {
   mkdir -p "$dir"
   cat > "$dir/package.json" <<EOF
 {
-  "name": "@wadeck/${name}",
+  "name": "@wadeck-app/${name}",
   "version": "0.0.0",
   "os": ["${os}"],
   "cpu": ["${cpu}"],
   "files": ["${bin_file}"],
   "publishConfig": {
-    "@wadeck:registry": "${REGISTRY}"
+    "@wadeck-app:registry": "${REGISTRY}"
   }
 }
 EOF
@@ -34,7 +34,7 @@ generate_dist() {
 
   cat > "$dir/package.json" <<EOF
 {
-  "name": "@wadeck/${CLI}-cli",
+  "name": "@wadeck-app/${CLI}-cli",
   "version": "0.0.0",
   "private": false,
   "type": "commonjs",
@@ -48,12 +48,12 @@ generate_dist() {
     "package.json"
   ],
   "optionalDependencies": {
-    "@wadeck/${CLI}-cli-win32-x64": ">=0.0.0-0",
-    "@wadeck/${CLI}-cli-darwin-arm64": ">=0.0.0-0",
-    "@wadeck/${CLI}-cli-darwin-x64": ">=0.0.0-0"
+    "@wadeck-app/${CLI}-cli-win32-x64": ">=0.0.0-0",
+    "@wadeck-app/${CLI}-cli-darwin-arm64": ">=0.0.0-0",
+    "@wadeck-app/${CLI}-cli-darwin-x64": ">=0.0.0-0"
   },
   "publishConfig": {
-    "@wadeck:registry": "${REGISTRY}"
+    "@wadeck-app:registry": "${REGISTRY}"
   }
 }
 EOF

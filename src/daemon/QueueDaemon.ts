@@ -1,5 +1,5 @@
-import { createDaemon } from '@wadeck/singleton-daemon-kit';
-import type { DaemonHandle, ShutdownReason } from '@wadeck/singleton-daemon-kit';
+import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
+import type { DaemonHandle, ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
 import { join } from 'node:path';
 import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';

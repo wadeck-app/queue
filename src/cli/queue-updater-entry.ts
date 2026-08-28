@@ -2,7 +2,7 @@
 // This module is bundled separately as queue-updater.cjs.
 // It must NOT import any queue runtime modules
 // Allowed: node:fs, node:path, node:child_process, node:os
-import { ConfigDir } from '@wadeck/shared-cli/ConfigDir';
+import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 declare const __QUEUE_CLI_VERSION__: string;
 
 // Package name is injected by the caller via env var.
-const PKG_NAME = process.env['UPDATER_PKG_NAME'] ?? '@wadeck/queue-cli';
+const PKG_NAME = process.env['UPDATER_PKG_NAME'] ?? '@wadeck-app/queue-cli';
 // Version regex — kept inline to avoid importing shared-cli at runtime (separate bundle).
 const VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/;
 

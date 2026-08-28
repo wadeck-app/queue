@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
-import { ConfigDir } from '@wadeck/shared-cli/ConfigDir';
-import { UpdateManager } from '@wadeck/shared-cli/UpdateManager';
+import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
+import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
 import { createQueueClient } from './QueueClient.js';
 
 declare const __QUEUE_CLI_VERSION__: string;
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   // Read and display any pending update notification before command output.
-  const updateManager = new UpdateManager('@wadeck/queue-cli');
+  const updateManager = new UpdateManager('@wadeck-app/queue-cli');
   const updateState = updateManager.readAndClearState();
   if (updateState) {
     if (updateState.status === 'success') {

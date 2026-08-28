@@ -1,5 +1,5 @@
-import { createDaemonClient } from '@wadeck/singleton-daemon-kit';
-import type { DaemonClient } from '@wadeck/singleton-daemon-kit';
+import { createDaemonClient } from '@wadeck-app/singleton-daemon-kit';
+import type { DaemonClient } from '@wadeck-app/singleton-daemon-kit';
 import type { QueueCommands } from '../daemon/QueueDaemon.js';
 
 export function createQueueClient(configDir: string): DaemonClient<QueueCommands> {

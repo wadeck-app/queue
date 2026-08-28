@@ -15,7 +15,7 @@ const PACKAGE_DIR = path.join(__dirname, '../..');
 
 // Resolve build.sh via require.resolve (handles workspace hoisting)
 const require = createRequire(import.meta.url);
-const sdkPkg = require.resolve('@wadeck/singleton-daemon-kit/package.json');
+const sdkPkg = require.resolve('@wadeck-app/singleton-daemon-kit/package.json');
 const SDK_DIR = path.dirname(sdkPkg);
 const BUILD_SH = path.join(SDK_DIR, 'go-launcher', 'build.sh');
 const QUEUE_CONFIG = path.join(PACKAGE_DIR, 'launcher-queue.config.json');

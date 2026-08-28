@@ -1,5 +1,5 @@
 {
-  "name": "@wadeck/queue-cli",
+  "name": "@wadeck-app/queue-cli",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -14,8 +14,8 @@
     "clean": "rimraf dist dist-bundle"
   },
   "dependencies": {
-    "@wadeck/shared-cli": "^2026.8.23-006-2d3e15d6",
-    "@wadeck/singleton-daemon-kit": "^2026.8.28-068-4a52b84c",
+    "@wadeck-app/shared-cli": "^2026.8.23-006-2d3e15d6",
+    "@wadeck-app/singleton-daemon-kit": "^2026.8.28-068-4a52b84c",
     "jsonpath-plus": "^10.3.0",
     "js-yaml": "^4.1.1",
     "zod": "^3.24.0"
