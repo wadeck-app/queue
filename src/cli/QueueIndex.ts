@@ -407,7 +407,6 @@ async function main(): Promise<void> {
           ? `[ok]  version: ${VERSION}\n`
           : `[fail] version: resolved to ${VERSION} (bundle may not be built)\n`;
         process.stderr.write(line);
-        process.stdout.write(line);
       }
       if (!versionOk) allOk = false;
 
@@ -418,7 +417,6 @@ async function main(): Promise<void> {
           ? `[ok]  config-dir: ${configDir}\n`
           : `[fail] config-dir: ${configDir} is not writable\n`;
         process.stderr.write(line);
-        process.stdout.write(line);
       }
       if (!writableOk) allOk = false;
 
@@ -436,7 +434,6 @@ async function main(): Promise<void> {
           ? '[ok]  daemon-client: instantiable\n'
           : `[fail] daemon-client: ${clientErr}\n`;
         process.stderr.write(line);
-        process.stdout.write(line);
       }
       if (!clientOk) allOk = false;
 
