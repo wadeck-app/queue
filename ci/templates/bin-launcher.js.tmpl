@@ -63,10 +63,10 @@ function _runWithExit(bin, binArgs) {
   }
 }
 
-// Also bypass the Go launcher for 'cli *' subcommands so stdout/stderr reach the terminal
-// (the -H windowsgui launcher swallows child process output for CLI meta-commands)
-var _bypassLauncher = _args.some(function(a) { return PASSTHROUGH_FLAGS.includes(a); })
-  || _args[0] === 'cli';
+// Bypass the Go launcher for ALL commands except 'start'.
+// The -H windowsgui launcher swallows stdout/stderr of ALL child node processes on Windows.
+// Only 'start' needs the launcher (it spawns the daemon background process).
+var _bypassLauncher = _args[0] !== 'start';
 
 if (process.platform === 'win32' && _bypassLauncher) {
   _runWithExit(process.execPath, [bundlePath].concat(_args));
