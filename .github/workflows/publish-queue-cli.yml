@@ -115,10 +115,10 @@ jobs:
 
             - name: Tag as latest
               run: |
-                  VER="${{ steps.version.outputs.version }}"
                   for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64 queue-cli-dist; do
                     PKG=$(node -e "process.stdout.write(require('./packages/${pkg}/package.json').name)")
-                    npm dist-tag add "${PKG}@${VER}" latest --registry https://npm.pkg.github.com/
+                    ACTUAL_VER=$(npm view "${PKG}" dist-tags.edge --registry https://npm.pkg.github.com/ 2>/dev/null)
+                    npm dist-tag add "${PKG}@${ACTUAL_VER}" latest --registry https://npm.pkg.github.com/
                   done
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
