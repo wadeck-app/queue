@@ -165,10 +165,11 @@ export function tryAcquireLock(lockFile: string): boolean {
 }
 
 function execNpm(args: string[], opts: { timeout: number }): Promise<{ stdout: string }> {
+	const winHide = process.platform === 'win32' ? { windowsHide: true } : {};
     if (USE_NPM_CLI) {
-        return execFileAsync(process.execPath, [NPM_CLI_JS, ...args], opts);
+        return execFileAsync(process.execPath, [NPM_CLI_JS, ...args], { ...opts, ...winHide });
     }
-    return execFileAsync('npm', args, opts);
+    return execFileAsync('npm', args, { ...opts, ...winHide });
 }
 
 export async function main(): Promise<void> {
