@@ -455,6 +455,26 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (sub === 'version') {
+      process.stdout.write(`queue v${VERSION} (installed)\n`);
+      try {
+        const { existsSync } = await import('node:fs');
+        const { dirname } = await import('node:path');
+        const NPM_CLI = pathJoin(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+        const USE_CLI = existsSync(NPM_CLI);
+        const winHide = process.platform === 'win32' ? { windowsHide: true as const } : {};
+        const result = USE_CLI
+          ? execFileSync(process.execPath, [NPM_CLI, 'view', '@wadeck-app/queue-cli', 'dist-tags.latest'], { encoding: 'utf8', timeout: 15000, ...winHide })
+          : execFileSync('npm', ['view', '@wadeck-app/queue-cli', 'dist-tags.latest'], { encoding: 'utf8', timeout: 15000, ...winHide });
+        const latest = result.trim();
+        process.stdout.write(`Latest (latest): v${latest}\n`);
+        if (VERSION === latest) process.stdout.write('Up to date.\n');
+      } catch (err) {
+        process.stderr.write(`Could not fetch latest version: ${String(err)}\n`);
+      }
+      return;
+    }
+
     if (sub === 'update') {
       // Find queue-updater.cjs next to the bundle file
       const { dirname } = await import('node:path');
@@ -479,7 +499,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    process.stderr.write(`Unknown cli subcommand: ${sub}\nUse: queue cli self-check|update|logs\n`);
+    process.stderr.write(`Unknown cli subcommand: ${sub}\nUse: queue cli version|self-check|update|logs\n`);
     process.exit(1);
   }
 
