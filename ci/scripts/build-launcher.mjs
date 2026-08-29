@@ -12,13 +12,14 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = path.join(__dirname, '../..');
+const CI_DIR = path.join(__dirname, '..');
 
 // Resolve build.sh via require.resolve (handles workspace hoisting)
 const require = createRequire(import.meta.url);
 const sdkPkg = require.resolve('@wadeck-app/singleton-daemon-kit/package.json');
 const SDK_DIR = path.dirname(sdkPkg);
 const BUILD_SH = path.join(SDK_DIR, 'go-launcher', 'build.sh');
-const QUEUE_CONFIG = path.join(PACKAGE_DIR, 'launcher-queue.config.json');
+const QUEUE_CONFIG = path.join(CI_DIR, 'launcher-queue.config.json');
 const OUT_DIR = path.join(PACKAGE_DIR, 'launcher-go', 'dist');
 
 if (!fs.existsSync(BUILD_SH)) {
