@@ -2,7 +2,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, unlinkSync, appendFileSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
@@ -121,7 +121,7 @@ function isConfigDirWritable(dir: string): boolean {
 }
 
 async function runLogsCommand(configDir: string, rest: string[]): Promise<void> {
-  const follow = rest.includes('--follow');
+  const follow = rest.includes('--follow') || rest.includes('-f');
   const { existsSync, readFileSync: readFS, watch } = await import('node:fs');
 
   const logsDir = pathJoin(configDir, 'logs');
@@ -150,6 +150,15 @@ async function runLogsCommand(configDir: string, rest: string[]): Promise<void> 
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+
+  // Log every CLI invocation to ~/.config/queue/logs/YYYY-MM-DD.ndjson
+  try {
+    const logsDir = pathJoin(getConfigDir(), 'logs');
+    const today = new Date().toISOString().slice(0, 10);
+    const logFile = pathJoin(logsDir, `${today}.ndjson`);
+    mkdirSync(logsDir, { recursive: true });
+    appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: `cmd: queue ${args.join(' ')}` }) + '\n');
+  } catch { /* never block the CLI on logging failure */ }
 
   // Read and display any pending update notification before command output.
   const updateManager = new UpdateManager('@wadeck-app/queue-cli');
