@@ -105,7 +105,7 @@ export function parseCheckInterval(value: string): number {
 function readConfig(configDir: string): UpdateConfig {
     const configFile = path.join(configDir, 'config.yml');
     const defaults: UpdateConfig = {
-        channel: 'edge',
+        channel: 'latest',
         checkIntervalMs: 30 * 60 * 1000,
         disabled: false,
     };

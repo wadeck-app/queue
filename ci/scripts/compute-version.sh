@@ -39,8 +39,8 @@ else
   BUILD=$(printf '%03d' "$(git -C "$REPO_ROOT" rev-list --count HEAD)")
   SHA=$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)
   VERSION="${DATE}-${BUILD}-${SHA}"
-  DIST_TAG="edge"
-  IS_PRERELEASE="true"
+  DIST_TAG="latest"
+  IS_PRERELEASE="false"
 fi
 
 TAG="v${VERSION}"

@@ -112,14 +112,3 @@ jobs:
               run: npm publish --tag ${{ steps.version.outputs.dist_tag }}
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-            - name: Tag as latest
-              run: |
-                  RAW_VER="${{ steps.version.outputs.version }}"
-                  VER=$(printf '%s' "$RAW_VER" | sed 's/\.0\([0-9]\)/.\1/g')
-                  for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64 queue-cli-dist; do
-                    PKG=$(node -e "process.stdout.write(require('./packages/${pkg}/package.json').name)")
-                    npm dist-tag add "${PKG}@${VER}" latest --registry https://npm.pkg.github.com/
-                  done
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
