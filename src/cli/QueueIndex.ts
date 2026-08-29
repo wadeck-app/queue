@@ -33,7 +33,7 @@ Usage:
   queue push <event> <json> [--timeout <duration>]
   queue retry --event <id>
   queue status [--json]
-  queue list-subscribers [event]
+  queue list-subscribers [event] [--json]
   queue dlq list
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
@@ -283,11 +283,24 @@ async function main(): Promise<void> {
   }
 
   if (command === 'list-subscribers') {
-    const event = rest[0];
+    const jsonFlag = rest.includes('--json');
+    // Event is the first non-flag argument
+    const event = rest.find(arg => !arg.startsWith('--'));
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
     const response = await client.send('list-subscribers', { event });
-    process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
+    if (process.stdout.isTTY && !jsonFlag) {
+      if (response.subscribers.length === 0) {
+        process.stdout.write('[ok] no subscribers\n');
+      } else {
+        for (const sub of response.subscribers) {
+          const target = sub.type === 'cli' ? sub.command : sub.url;
+          process.stdout.write(`[ok] ${sub.subscriberId}  ${sub.type}  ${target ?? '?'}\n`);
+        }
+      }
+    } else {
+      process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
+    }
     return;
   }
 
