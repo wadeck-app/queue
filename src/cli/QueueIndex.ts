@@ -403,22 +403,22 @@ async function main(): Promise<void> {
       // Check (a): bundle version is a real version, not the literal string 'undefined'
       const versionOk = VERSION !== 'undefined' && !VERSION.startsWith('0.0.0-dev');
       if (!quiet) {
-        if (versionOk) {
-          process.stdout.write(`[ok]  version: ${VERSION}\n`);
-        } else {
-          process.stdout.write(`[fail] version: resolved to ${VERSION} (bundle may not be built)\n`);
-        }
+        const line = versionOk
+          ? `[ok]  version: ${VERSION}\n`
+          : `[fail] version: resolved to ${VERSION} (bundle may not be built)\n`;
+        process.stderr.write(line);
+        process.stdout.write(line);
       }
       if (!versionOk) allOk = false;
 
       // Check (b): config dir is writable
       const writableOk = isConfigDirWritable(configDir);
       if (!quiet) {
-        if (writableOk) {
-          process.stdout.write(`[ok]  config-dir: ${configDir}\n`);
-        } else {
-          process.stdout.write(`[fail] config-dir: ${configDir} is not writable\n`);
-        }
+        const line = writableOk
+          ? `[ok]  config-dir: ${configDir}\n`
+          : `[fail] config-dir: ${configDir} is not writable\n`;
+        process.stderr.write(line);
+        process.stdout.write(line);
       }
       if (!writableOk) allOk = false;
 
@@ -432,11 +432,11 @@ async function main(): Promise<void> {
         clientErr = e instanceof Error ? e.message : String(e);
       }
       if (!quiet) {
-        if (clientOk) {
-          process.stdout.write('[ok]  daemon-client: instantiable\n');
-        } else {
-          process.stdout.write(`[fail] daemon-client: ${clientErr}\n`);
-        }
+        const line = clientOk
+          ? '[ok]  daemon-client: instantiable\n'
+          : `[fail] daemon-client: ${clientErr}\n`;
+        process.stderr.write(line);
+        process.stdout.write(line);
       }
       if (!clientOk) allOk = false;
 
