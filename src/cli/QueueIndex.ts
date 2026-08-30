@@ -8,7 +8,7 @@ import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
-import { cliLogsCommand, cliVersionCommand, cliUpdateCommand } from '@wadeck-app/shared-cli/CliMetaCommands';
+import { cliLogsCommand, cliVersionCommand, cliUpdateCommand, warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import { createQueueClient } from './QueueClient.js';
 
@@ -428,11 +428,14 @@ async function main(): Promise<void> {
     }
 
     if (sub === 'logs') {
-      await cliLogsCommand(configDir, { follow: rest.slice(1).includes('--follow') });
+      const subArgs = rest.slice(1);
+      warnUnknownArgs(subArgs, ['--follow', '-f'], 'queue cli logs');
+      await cliLogsCommand(configDir, { follow: subArgs.includes('--follow') || subArgs.includes('-f') });
       return;
     }
 
     if (sub === 'version') {
+      warnUnknownArgs(rest.slice(1), [], 'queue cli version');
       const channel = readChannelFromConfig(configDir);
       await cliVersionCommand('@wadeck-app/queue-cli', VERSION, channel);
       return;

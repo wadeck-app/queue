@@ -15,6 +15,7 @@ vi.mock('@wadeck-app/shared-cli/CliMetaCommands', () => ({
 	cliLogsCommand: vi.fn().mockResolvedValue(undefined),
 	cliUpdateCommand: vi.fn().mockResolvedValue(undefined),
 	cliRollbackCommand: vi.fn().mockResolvedValue(undefined),
+	warnUnknownArgs: vi.fn(),
 }));
 
 vi.mock('@wadeck-app/shared-cli/ChannelConfig', () => ({
@@ -142,6 +143,21 @@ describe('queue cli update', () => {
 		const { cliUpdateCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
 		await run(['cli', 'update']);
 		expect(cliUpdateCommand).toHaveBeenCalledWith(updaterPath, '@wadeck-app/queue-cli', expect.objectContaining({ rawArgs: expect.any(Array) }));
+	});
+
+	it('passes --force in rawArgs so cliUpdateCommand can warn the user', async () => {
+		const { writeFileSync } = await import('node:fs');
+		const updaterPath = join(tmpDir, 'queue-updater.cjs');
+		writeFileSync(updaterPath, '');
+		process.env['LAUNCHER_BUNDLE_OVERRIDE'] = join(tmpDir, 'queue.cjs');
+
+		const { cliUpdateCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		await run(['cli', 'update', '--force']);
+		expect(cliUpdateCommand).toHaveBeenCalledWith(
+			updaterPath,
+			'@wadeck-app/queue-cli',
+			expect.objectContaining({ rawArgs: expect.arrayContaining(['--force']) }),
+		);
 	});
 });
 
