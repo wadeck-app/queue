@@ -141,7 +141,7 @@ describe('queue cli update', () => {
 
 		const { cliUpdateCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
 		await run(['cli', 'update']);
-		expect(cliUpdateCommand).toHaveBeenCalledWith(updaterPath, '@wadeck-app/queue-cli');
+		expect(cliUpdateCommand).toHaveBeenCalledWith(updaterPath, '@wadeck-app/queue-cli', expect.objectContaining({ rawArgs: expect.any(Array) }));
 	});
 });
 

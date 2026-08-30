@@ -446,7 +446,7 @@ async function main(): Promise<void> {
         process.stderr.write(`[fail] updater not found at: ${updaterPath}\n`);
         process.exit(1);
       }
-      await cliUpdateCommand(updaterPath, '@wadeck-app/queue-cli');
+      await cliUpdateCommand(updaterPath, '@wadeck-app/queue-cli', { rawArgs: rest.slice(1) });
       return;
     }
 
