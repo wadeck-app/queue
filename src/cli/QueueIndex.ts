@@ -237,7 +237,7 @@ async function main(): Promise<void> {
     const { execFileSync: execFS } = await import('node:child_process');
     let orchAvailable = false;
     try {
-      execFS(process.platform === 'win32' ? 'where' : 'which', ['orch'], { stdio: 'pipe' });
+      execFS(process.platform === 'win32' ? 'where' : 'which', ['orch'], { stdio: 'pipe', windowsHide: true });
       orchAvailable = true;
     } catch {
       orchAvailable = false;

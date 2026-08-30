@@ -6,7 +6,7 @@ const BACKOFF_EXPONENTIAL = ['1m', '2m', '4m', '8m', '16m'];
 function findOrch(): string | null {
   const isWindows = process.platform === 'win32';
   try {
-    const result = execFileSync(isWindows ? 'where' : 'which', ['orch'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const result = execFileSync(isWindows ? 'where' : 'which', ['orch'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     const line = result.trim().split('\n')[0]?.trim();
     return line && line.length > 0 ? line : null;
   } catch {
@@ -32,9 +32,9 @@ export class RetryScheduler {
     const args = ['add', '--once', '--delay', backoffStr, `queue retry --event ${entry.id}`];
 
     if (useSync) {
-      execFileSync(orchPath, args, { stdio: 'pipe' });
+      execFileSync(orchPath, args, { stdio: 'pipe', windowsHide: true });
     } else {
-      execFile(orchPath, args, {}, (err) => {
+      execFile(orchPath, args, { windowsHide: true }, (err) => {
         if (err) {
           process.stderr.write(`[queue] RetryScheduler: failed to schedule retry for ${entry.id}: ${err.message}\n`);
         }
