@@ -67,6 +67,7 @@ function spawnDaemon(configDir: string): void {
   const child = spawn(process.execPath, [daemonScript], {
     detached: true,
     stdio: 'ignore',
+    windowsHide: true,
     env: { ...process.env, QUEUE_CONFIG_DIR: configDir },
   });
   child.unref();
