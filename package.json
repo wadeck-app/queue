@@ -24,6 +24,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.2.0",
+    "@wadeck-app/violations-rules": "^2026.8.30-069-d83fe7ae",
     "esbuild": "^0.27.2",
     "rimraf": "^6.0.1",
     "tsx": "^4.7.0",
