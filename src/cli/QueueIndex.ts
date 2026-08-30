@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 
 import { fileURLToPath } from 'node:url';
-import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, unlinkSync, appendFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
+import { parseDuration } from '@wadeck-app/shared-cli/Duration';
+import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
+import { cliLogsCommand, cliVersionCommand, cliUpdateCommand } from '@wadeck-app/shared-cli/CliMetaCommands';
+import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import { createQueueClient } from './QueueClient.js';
 
 declare const __QUEUE_CLI_VERSION__: string;
@@ -95,19 +99,6 @@ async function ensureDaemon(configDir: string): Promise<void> {
   }
 }
 
-function parseDurationMs(raw: string): number | undefined {
-  const match = /^(\d+)(ms|s|m|h)$/.exec(raw);
-  if (!match) return undefined;
-  const val = parseInt(match[1]!, 10);
-  switch (match[2]) {
-    case 'ms': return val;
-    case 's': return val * 1000;
-    case 'm': return val * 60_000;
-    case 'h': return val * 3_600_000;
-    default: return undefined;
-  }
-}
-
 function isConfigDirWritable(dir: string): boolean {
   try {
     mkdirSync(dir, { recursive: true });
@@ -120,56 +111,22 @@ function isConfigDirWritable(dir: string): boolean {
   }
 }
 
-async function runLogsCommand(configDir: string, rest: string[]): Promise<void> {
-  const follow = rest.includes('--follow') || rest.includes('-f');
-  const { existsSync, readFileSync: readFS, watch } = await import('node:fs');
-
-  const logsDir = pathJoin(configDir, 'logs');
-  const today = new Date().toISOString().slice(0, 10);
-  const logFile = pathJoin(logsDir, `${today}.ndjson`);
-
-  if (existsSync(logFile)) {
-    process.stdout.write(readFS(logFile, 'utf-8'));
-  }
-
-  if (follow) {
-    // Informational prefix goes to stderr to avoid polluting log output piped to tools
-    process.stderr.write(`[queue] Following ${logFile} (Ctrl+C to stop)\n`);
-    let size = existsSync(logFile) ? readFS(logFile, 'utf-8').length : 0;
-    watch(logFile, { persistent: true }, () => {
-      if (existsSync(logFile)) {
-        const content = readFS(logFile, 'utf-8');
-        if (content.length > size) {
-          process.stdout.write(content.slice(size));
-          size = content.length;
-        }
-      }
-    });
-  }
-}
-
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   // Log every CLI invocation to ~/.config/queue/logs/YYYY-MM-DD.ndjson
-  try {
-    const logsDir = pathJoin(getConfigDir(), 'logs');
-    const today = new Date().toISOString().slice(0, 10);
-    const logFile = pathJoin(logsDir, `${today}.ndjson`);
-    mkdirSync(logsDir, { recursive: true });
-    appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: `cmd: queue ${args.join(' ')}` }) + '\n');
-  } catch { /* never block the CLI on logging failure */ }
+  try { logCliInvocation(getConfigDir(), 'queue', args); } catch { /* never block the CLI on logging failure */ }
 
   // Read and display any pending update notification before command output.
   const updateManager = new UpdateManager('@wadeck-app/queue-cli');
   const updateState = updateManager.readAndClearState();
   if (updateState) {
     if (updateState.status === 'success') {
-      process.stderr.write(`[queue] Updated to v${updateState.newVersion ?? '?'}\n`);
+      process.stderr.write(`[queue] Updated to v${updateState.targetVersion ?? '?'}\n`);
     } else if (updateState.status === 'rolled-back') {
       process.stderr.write(`[queue] Update to v${updateState.targetVersion ?? '?'} failed (self-check), rolled back to v${updateState.previousVersion ?? '?'}\n`);
-    } else if (updateState.status === 'update-failed') {
-      process.stderr.write(`[queue] Background update failed: ${updateState.reason ?? 'unknown'}\n`);
+    } else if (updateState.status === 'failed') {
+      process.stderr.write(`[queue] Background update failed: ${updateState.error ?? 'unknown'}\n`);
     }
   }
 
@@ -213,7 +170,12 @@ async function main(): Promise<void> {
     let timeout: number | undefined;
     const timeoutIdx = rest.indexOf('--timeout');
     if (timeoutIdx !== -1 && rest[timeoutIdx + 1]) {
-      timeout = parseDurationMs(rest[timeoutIdx + 1]!);
+      try {
+        timeout = parseDuration(rest[timeoutIdx + 1]!);
+      } catch {
+        process.stderr.write(`[queue] Invalid timeout: ${rest[timeoutIdx + 1]} (use e.g. 30s, 5m, 1h)\n`);
+        process.exit(1);
+      }
     }
 
     await ensureDaemon(configDir);
@@ -393,7 +355,7 @@ async function main(): Promise<void> {
 
   // Backward-compatible top-level alias for `queue cli logs`
   if (command === 'logs') {
-    await runLogsCommand(configDir, rest);
+    await cliLogsCommand(configDir, { follow: rest.includes('--follow') || rest.includes('-f') });
     return;
   }
 
@@ -409,93 +371,82 @@ async function main(): Promise<void> {
       const quiet = process.env['CLI_SELF_CHECK_QUIET'] === '1';
       let allOk = true;
 
-      // Check (a): bundle version is a real version, not the literal string 'undefined'
-      const versionOk = VERSION !== 'undefined' && !VERSION.startsWith('0.0.0-dev');
-      if (!quiet) {
-        const line = versionOk
-          ? `[ok]  version: ${VERSION}\n`
-          : `[fail] version: resolved to ${VERSION} (bundle may not be built)\n`;
-        process.stderr.write(line);
+      function report(ok: boolean, msg: string): void {
+        if (!quiet) process.stderr.write(`${ok ? '[ok] ' : '[fail]'} ${msg}\n`);
+        if (!ok) allOk = false;
       }
-      if (!versionOk) allOk = false;
 
-      // Check (b): config dir is writable
-      const writableOk = isConfigDirWritable(configDir);
-      if (!quiet) {
-        const line = writableOk
-          ? `[ok]  config-dir: ${configDir}\n`
-          : `[fail] config-dir: ${configDir} is not writable\n`;
-        process.stderr.write(line);
-      }
-      if (!writableOk) allOk = false;
+      // (a) Bundle version is a real version, not the dev placeholder
+      report(
+        VERSION !== 'undefined' && !VERSION.startsWith('0.0.0-dev'),
+        `version: ${VERSION}`,
+      );
 
-      // Check (c): daemon client can be instantiated without connecting
-      let clientOk = false;
-      let clientErr = '';
+      // (b) Config dir is writable
+      report(isConfigDirWritable(configDir), `config-dir: ${configDir}`);
+
+      // (c) If daemon is running, ping it and verify it responds with a valid version
+      const client = createQueueClient(configDir);
+      let daemonRunning = false;
       try {
-        createQueueClient(configDir);
-        clientOk = true;
-      } catch (e: unknown) {
-        clientErr = e instanceof Error ? e.message : String(e);
+        daemonRunning = await client.isRunning();
+      } catch { /* not running */ }
+
+      if (daemonRunning) {
+        let pingOk = false;
+        let pingErr = '';
+        try {
+          const info = await client.version();
+          pingOk = typeof info?.version === 'string' && info.version.length > 0;
+          if (!pingOk) pingErr = `unexpected version response: ${JSON.stringify(info)}`;
+        } catch (e: unknown) {
+          pingErr = e instanceof Error ? e.message : String(e);
+        }
+        report(pingOk, pingOk ? `daemon: running, v${(await client.version()).version}` : `daemon ping failed: ${pingErr}`);
+      } else {
+        if (!quiet) process.stderr.write('[info] daemon: not running (skipping ping)\n');
       }
-      if (!quiet) {
-        const line = clientOk
-          ? '[ok]  daemon-client: instantiable\n'
-          : `[fail] daemon-client: ${clientErr}\n`;
-        process.stderr.write(line);
+
+      // (d) If port file exists, verify it has expected fields
+      const portFile = pathJoin(configDir, 'config.port');
+      const { existsSync, readFileSync } = await import('node:fs');
+      if (existsSync(portFile)) {
+        let portOk = false;
+        let portErr = '';
+        try {
+          const data = JSON.parse(readFileSync(portFile, 'utf8'));
+          portOk = typeof data?.port === 'number' && typeof data?.pid === 'number';
+          if (!portOk) portErr = 'missing port or pid fields';
+        } catch (e: unknown) {
+          portErr = e instanceof Error ? e.message : String(e);
+        }
+        report(portOk, portOk ? `port-file: port valid` : `port-file corrupt: ${portErr}`);
       }
-      if (!clientOk) allOk = false;
 
       process.exit(allOk ? 0 : 1);
       return;
     }
 
     if (sub === 'logs') {
-      await runLogsCommand(configDir, rest.slice(1));
+      await cliLogsCommand(configDir, { follow: rest.slice(1).includes('--follow') });
       return;
     }
 
     if (sub === 'version') {
-      process.stdout.write(`queue v${VERSION} (installed)\n`);
-      try {
-        const { existsSync } = await import('node:fs');
-        const { dirname } = await import('node:path');
-        const NPM_CLI = pathJoin(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-        const USE_CLI = existsSync(NPM_CLI);
-        const winHide = process.platform === 'win32' ? { windowsHide: true as const } : {};
-        const result = USE_CLI
-          ? execFileSync(process.execPath, [NPM_CLI, 'view', '@wadeck-app/queue-cli', 'dist-tags.latest'], { encoding: 'utf8', timeout: 15000, ...winHide })
-          : execFileSync('npm', ['view', '@wadeck-app/queue-cli', 'dist-tags.latest'], { encoding: 'utf8', timeout: 15000, ...winHide });
-        const latest = result.trim();
-        process.stdout.write(`Latest (latest): v${latest}\n`);
-        if (VERSION === latest) process.stdout.write('Up to date.\n');
-      } catch (err) {
-        process.stderr.write(`Could not fetch latest version: ${String(err)}\n`);
-      }
+      const channel = readChannelFromConfig(configDir);
+      await cliVersionCommand('@wadeck-app/queue-cli', VERSION, channel);
       return;
     }
 
     if (sub === 'update') {
-      // Find queue-updater.cjs next to the bundle file
       const { dirname } = await import('node:path');
-      const bundleDir = dirname(bundlePath);
-      const updaterPath = pathJoin(bundleDir, 'queue-updater.cjs');
       const { existsSync } = await import('node:fs');
+      const updaterPath = pathJoin(dirname(bundlePath), 'queue-updater.cjs');
       if (!existsSync(updaterPath)) {
         process.stderr.write(`[fail] updater not found at: ${updaterPath}\n`);
         process.exit(1);
       }
-      process.stderr.write('[queue] Running update (this may take a moment)...\n');
-      try {
-        execFileSync(process.execPath, [updaterPath], {
-          stdio: 'inherit',
-          env: { ...process.env, UPDATER_FORCE: '1' },
-        });
-        process.stdout.write('[ok] update completed\n');
-      } catch {
-        process.stderr.write('[fail] update failed\n');
-        process.exit(1);
-      }
+      await cliUpdateCommand(updaterPath, '@wadeck-app/queue-cli');
       return;
     }
 

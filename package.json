@@ -14,10 +14,11 @@
     "clean": "rimraf dist dist-bundle"
   },
   "dependencies": {
-    "@wadeck-app/shared-cli": "2026.8.29-015-a451d65f",
+    "@wadeck-app/shared-cli": "^2026.8.30-017-5a05e1c3",
+    "@wadeck-app/shared-updater": "^2026.8.30-003-5afad81b",
     "@wadeck-app/singleton-daemon-kit": "^2026.8.28-071-c253e8d8",
-    "jsonpath-plus": "^10.3.0",
     "js-yaml": "^4.1.1",
+    "jsonpath-plus": "^10.3.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -29,5 +30,7 @@
     "typescript": "^7.0.0",
     "vitest": "^4.0.14"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }
