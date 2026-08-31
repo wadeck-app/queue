@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@wadeck-app/shared-cli": "^2026.8.31-022-55ef14e0",
-    "@wadeck-app/shared-updater": "^2026.8.30-003-5afad81b",
+    "@wadeck-app/shared-updater": "*",
     "@wadeck-app/singleton-daemon-kit": "2026.8.30-082-8c02b26d",
     "js-yaml": "^4.1.1",
     "jsonpath-plus": "^10.3.0",

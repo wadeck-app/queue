@@ -27,6 +27,7 @@ runUpdater({
     configDir,
     currentVersion,
     strategy: 'without-daemon',
+    onUpdateAvailable: async (_newVersion: string) => 'apply-now' as const,
 }).catch(err => {
     process.stderr.write(`[queue-updater] fatal: ${err}\n`);
     process.exit(1);
