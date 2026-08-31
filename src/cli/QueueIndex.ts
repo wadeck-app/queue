@@ -10,6 +10,7 @@ import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
 import { cliLogsCommand, cliVersionCommand, cliUpdateCommand, warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
+import { runSelfCheck } from '@wadeck-app/shared-cli';
 import { createQueueClient } from './QueueClient.js';
 
 declare const __QUEUE_CLI_VERSION__: string;
@@ -369,63 +370,48 @@ async function main(): Promise<void> {
     }
 
     if (sub === 'self-check') {
-      const quiet = process.env['CLI_SELF_CHECK_QUIET'] === '1';
-      let allOk = true;
-
-      function report(ok: boolean, msg: string): void {
-        if (!quiet) process.stderr.write(`${ok ? '[ok] ' : '[fail]'} ${msg}\n`);
-        if (!ok) allOk = false;
-      }
-
-      // (a) Bundle version is a real version, not the dev placeholder
-      report(
-        VERSION !== 'undefined' && !VERSION.startsWith('0.0.0-dev'),
-        `version: ${VERSION}`,
-      );
-
-      // (b) Config dir is writable
-      report(isConfigDirWritable(configDir), `config-dir: ${configDir}`);
-
-      // (c) If daemon is running, ping it and verify it responds with a valid version
       const client = createQueueClient(configDir);
-      let daemonRunning = false;
-      try {
-        daemonRunning = await client.isRunning();
-      } catch { /* not running */ }
 
-      if (daemonRunning) {
-        let pingOk = false;
-        let pingErr = '';
-        try {
-          const info = await client.version();
-          pingOk = typeof info?.version === 'string' && info.version.length > 0;
-          if (!pingOk) pingErr = `unexpected version response: ${JSON.stringify(info)}`;
-        } catch (e: unknown) {
-          pingErr = e instanceof Error ? e.message : String(e);
-        }
-        report(pingOk, pingOk ? `daemon: running, v${(await client.version()).version}` : `daemon ping failed: ${pingErr}`);
-      } else {
-        if (!quiet) process.stderr.write('[info] daemon: not running (skipping ping)\n');
-      }
-
-      // (d) If port file exists, verify it has expected fields
-      const portFile = pathJoin(configDir, 'config.port');
-      const { existsSync, readFileSync } = await import('node:fs');
-      if (existsSync(portFile)) {
-        let portOk = false;
-        let portErr = '';
-        try {
-          const data = JSON.parse(readFileSync(portFile, 'utf8'));
-          portOk = typeof data?.port === 'number' && typeof data?.pid === 'number';
-          if (!portOk) portErr = 'missing port or pid fields';
-        } catch (e: unknown) {
-          portErr = e instanceof Error ? e.message : String(e);
-        }
-        report(portOk, portOk ? `port-file: port valid` : `port-file corrupt: ${portErr}`);
-      }
-
-      process.exit(allOk ? 0 : 1);
-      return;
+      await runSelfCheck([
+        async () => ({
+          name: `version: ${VERSION}`,
+          ok: VERSION !== 'undefined' && !VERSION.startsWith('0.0.0-dev'),
+        }),
+        async () => ({
+          name: 'config-dir',
+          ok: isConfigDirWritable(configDir),
+          detail: configDir,
+        }),
+        async () => {
+          let daemonRunning = false;
+          try { daemonRunning = await client.isRunning(); } catch { /* not running */ }
+          if (!daemonRunning) return { name: 'daemon', ok: true, detail: 'not running (skipped)' };
+          try {
+            const info = await client.version();
+            const ok = typeof info?.version === 'string' && info.version.length > 0;
+            return {
+              name: 'daemon',
+              ok,
+              detail: ok ? `running, v${info.version}` : `unexpected version response: ${JSON.stringify(info)}`,
+            };
+          } catch (e: unknown) {
+            return { name: 'daemon', ok: false, detail: e instanceof Error ? e.message : String(e) };
+          }
+        },
+        async () => {
+          const portFile = pathJoin(configDir, 'config.port');
+          const { existsSync, readFileSync } = await import('node:fs');
+          if (!existsSync(portFile)) return { name: 'port-file', ok: true, detail: 'absent (skipped)' };
+          try {
+            const data = JSON.parse(readFileSync(portFile, 'utf8'));
+            const ok = typeof data?.port === 'number' && typeof data?.pid === 'number';
+            return { name: 'port-file', ok, detail: ok ? 'port valid' : 'missing port or pid fields' };
+          } catch (e: unknown) {
+            return { name: 'port-file', ok: false, detail: e instanceof Error ? e.message : String(e) };
+          }
+        },
+      ]);
+      process.exit(0);
     }
 
     if (sub === 'logs') {
