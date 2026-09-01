@@ -11,8 +11,8 @@ const MAX_UPDATER_SIZE = 500 * 1024; // 500 KB
 
 function getCalVer(): string {
   try {
-    const count = execSync('git rev-list --count HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
-    const hash = execSync('git rev-parse --short=8 HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+    const count = execSync('git rev-list --count HEAD', { cwd: rootDir, encoding: 'utf8', windowsHide: true }).trim();
+    const hash = execSync('git rev-parse --short=8 HEAD', { cwd: rootDir, encoding: 'utf8', windowsHide: true }).trim();
     const now = new Date();
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, '0');

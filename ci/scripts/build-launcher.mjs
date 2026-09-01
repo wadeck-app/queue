@@ -31,4 +31,4 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const toUnix = p => p.replace(/\\/g, '/');
 console.log('Building queue launchers...');
-execFileSync('bash', [toUnix(BUILD_SH), toUnix(QUEUE_CONFIG), toUnix(OUT_DIR)], { stdio: 'inherit' });
+execFileSync('bash', [toUnix(BUILD_SH), toUnix(QUEUE_CONFIG), toUnix(OUT_DIR)], { stdio: 'inherit', windowsHide: true });

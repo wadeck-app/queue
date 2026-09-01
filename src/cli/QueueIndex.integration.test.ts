@@ -19,6 +19,7 @@ beforeAll(() => {
     stdio: 'inherit',
     env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
     timeout: 60_000,
+    windowsHide: true,
   });
 
   tempConfigDir = mkdtempSync(join(tmpdir(), 'queue-integration-'));
