@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { runQueueCommand } from './QueueIndex.js';
+import { getErrorMessage } from '../errors.js';
 
 // --- module mocks (hoisted) ---
 
@@ -50,6 +51,7 @@ function captureOutput() {
 
 function mockExit() {
 	const calls: number[] = [];
+	// violations-suppress: ts/no-union-with-string process.exit Node.js type includes string
 	const spy = vi.spyOn(process, 'exit').mockImplementation((code?: number | string | null) => {
 		calls.push(Number(code ?? 0));
 		throw new Error(`process.exit(${code})`);
@@ -64,7 +66,7 @@ async function run(args: string[]): Promise<{ stdout: string; stderr: string; ex
 	try {
 		await withArgv(args, runQueueCommand);
 	} catch (e) {
-		if (e instanceof Error && e.message.startsWith('process.exit(')) {
+		if (e instanceof Error && getErrorMessage(e).startsWith('process.exit(')) {
 			exitCode = exit.calls[0] ?? 1;
 		} else {
 			throw e;

@@ -4,12 +4,13 @@ import { join } from 'node:path';
 import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
-import { ConfigLoader, resolveProjectName } from '../config/ConfigLoader.js';
+import { ConfigLoader, resolveProjectName } from '../ConfigLoader.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
 import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
 import { PayloadFilter } from '../dispatch/PayloadFilter.js';
 import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import type { WalEntry } from '../storage/Wal.js';
+import { getErrorMessage } from '../errors.js';
 import type { DlqEntry } from '../storage/DlqStore.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 
@@ -125,7 +126,7 @@ export async function startDaemon(configDir: string): Promise<void> {
 
         // Fire and forget
         asyncDispatcher.dispatch(filtered, envelope, walEntries).catch((err: unknown) => {
-          process.stderr.write(`[queue] AsyncDispatcher error: ${err instanceof Error ? err.message : String(err)}\n`);
+          process.stderr.write(`[queue] AsyncDispatcher error: ${getErrorMessage(err)}\n`);
         });
 
         return { status: 'queued' };
@@ -156,7 +157,7 @@ export async function startDaemon(configDir: string): Promise<void> {
       const walEntries = new Map([[sub.subscriberId, entry]]);
       activeDispatches++;
       asyncDispatcher.dispatch([sub], envelope, walEntries).catch((err: unknown) => {
-        process.stderr.write(`[queue] retry dispatch error: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.stderr.write(`[queue] retry dispatch error: ${getErrorMessage(err)}\n`);
       }).finally(() => { activeDispatches--; });
 
       return { status: 'ok' };

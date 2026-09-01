@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { EventEnvelope } from '../types.js';
+import { getErrorMessage } from '../errors.js';
 
 export interface DispatchResult {
   success: boolean;
@@ -46,7 +47,7 @@ export class CliTransport {
 
       child.on('error', (err) => {
         clearTimeout(timer);
-        resolve({ success: false, error: err.message, durationMs: Date.now() - start });
+        resolve({ success: false, error: getErrorMessage(err), durationMs: Date.now() - start });
       });
 
       try {

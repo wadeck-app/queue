@@ -32,7 +32,7 @@ const sharedDefine = {
   'import.meta.url': '__importMetaUrl',
   __QUEUE_CLI_VERSION__: JSON.stringify(version),
 };
-const sharedBanner = { js: "const __importMetaUrl = require('url').pathToFileURL(__filename).href;" };
+const sharedBanner = { js: "const __importMetaUrl = require('node:url').pathToFileURL(__filename).href;" };
 
 const updaterOutfile = join(rootDir, 'dist-bundle/queue-updater.cjs');
 

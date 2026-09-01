@@ -1,5 +1,6 @@
 import { JSONPath } from 'jsonpath-plus';
 import type { EventEnvelope } from '../types.js';
+import { getErrorMessage } from '../errors.js';
 
 export class PayloadFilter {
   static matches(filter: string, envelope: EventEnvelope): boolean {
@@ -10,7 +11,7 @@ export class PayloadFilter {
       return PayloadFilter.matchDotNotation(filter, envelope);
     } catch (err) {
       process.stderr.write(
-        `[queue] filter miss — error evaluating filter "${filter}": ${err instanceof Error ? err.message : String(err)}\n`
+        `[queue] filter miss — error evaluating filter "${filter}": ${getErrorMessage(err)}\n`
       );
       return false;
     }
@@ -26,7 +27,7 @@ export class PayloadFilter {
     const path = filter.slice(0, eqIdx);
     const expected = filter.slice(eqIdx + 1);
 
-    const actual = PayloadFilter.getByDotPath((envelope as unknown) as Record<string, unknown>, path);
+    const actual = PayloadFilter.getByDotPath(envelope, path);
 
     if (actual === undefined) {
       process.stderr.write(`[queue] filter miss — path "${path}" not found in envelope\n`);
@@ -41,12 +42,12 @@ export class PayloadFilter {
     return String(actual) === expected;
   }
 
-  private static getByDotPath(obj: Record<string, unknown>, path: string): unknown {
+  private static getByDotPath(obj: object, path: string): unknown {
     const parts = path.split('.');
     let current: unknown = obj;
     for (const part of parts) {
       if (current === null || typeof current !== 'object') return undefined;
-      current = (current as Record<string, unknown>)[part];
+      current = Reflect.get(current, part);
     }
     return current;
   }

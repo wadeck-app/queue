@@ -2,8 +2,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { z } from 'zod';
-import { EventMatcher } from '../dispatch/EventMatcher.js';
-import type { ResolvedSubscriber } from '../types.js';
+import { EventMatcher } from './dispatch/EventMatcher.js';
+import type { ResolvedSubscriber } from './types.js';
+import { getErrorMessage } from './errors.js';
 
 const SubscriberConfigSchema = z.object({
   type: z.enum(['cli', 'http']),
@@ -56,7 +57,7 @@ function loadYml(filePath: string): SubscribersYml | null {
     raw = yamlLoad(readFileSync(filePath, 'utf-8'));
   } catch (err) {
     throw new Error(
-      `[queue] Failed to parse YAML at ${filePath}: ${err instanceof Error ? err.message : String(err)}\n` +
+      `[queue] Failed to parse YAML at ${filePath}: ${getErrorMessage(err)}\n` +
       `Fix the YAML syntax and retry.`
     );
   }

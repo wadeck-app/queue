@@ -1,5 +1,6 @@
 import { execFileSync, execFile } from 'node:child_process';
 import type { WalEntry } from '../storage/Wal.js';
+import { getErrorMessage } from '../errors.js';
 
 const BACKOFF_EXPONENTIAL = ['1m', '2m', '4m', '8m', '16m'];
 
@@ -36,7 +37,7 @@ export class RetryScheduler {
     } else {
       execFile(orchPath, args, { windowsHide: true }, (err) => {
         if (err) {
-          process.stderr.write(`[queue] RetryScheduler: failed to schedule retry for ${entry.id}: ${err.message}\n`);
+          process.stderr.write(`[queue] RetryScheduler: failed to schedule retry for ${entry.id}: ${getErrorMessage(err)}\n`);
         }
       });
     }

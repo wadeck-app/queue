@@ -12,6 +12,7 @@ import { cliLogsCommand, cliVersionCommand, cliUpdateCommand, warnUnknownArgs } 
 import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import { runSelfCheck } from '@wadeck-app/shared-cli';
 import { createQueueClient } from './QueueClient.js';
+import { getErrorMessage } from '../errors.js';
 
 declare const __QUEUE_CLI_VERSION__: string;
 
@@ -395,7 +396,7 @@ async function main(): Promise<void> {
               detail: ok ? `running, v${info.version}` : `unexpected version response: ${JSON.stringify(info)}`,
             };
           } catch (e: unknown) {
-            return { name: 'daemon', ok: false, detail: e instanceof Error ? e.message : String(e) };
+            return { name: 'daemon', ok: false, detail: getErrorMessage(e) };
           }
         },
         async () => {
@@ -407,7 +408,7 @@ async function main(): Promise<void> {
             const ok = typeof data?.port === 'number' && typeof data?.pid === 'number';
             return { name: 'port-file', ok, detail: ok ? 'port valid' : 'missing port or pid fields' };
           } catch (e: unknown) {
-            return { name: 'port-file', ok: false, detail: e instanceof Error ? e.message : String(e) };
+            return { name: 'port-file', ok: false, detail: getErrorMessage(e) };
           }
         },
       ]);
@@ -456,7 +457,7 @@ async function main(): Promise<void> {
 const currentFile = fileURLToPath(import.meta.url);
 if (process.argv[1] === currentFile || process.argv[1]?.endsWith('QueueIndex.js') || process.argv[1]?.endsWith('QueueIndex.ts') || process.argv[1]?.endsWith('queue.cjs')) {
   main().catch((err: unknown) => {
-    process.stderr.write(`[queue] Fatal error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`[queue] Fatal error: ${getErrorMessage(err)}\n`);
     process.exit(1);
   });
 }

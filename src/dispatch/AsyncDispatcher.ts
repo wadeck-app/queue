@@ -3,6 +3,7 @@ import { HttpTransport } from './HttpTransport.js';
 import { RetryScheduler } from './RetryScheduler.js';
 import type { WalEntry } from '../storage/Wal.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
+import { getErrorMessage } from '../errors.js';
 
 export class AsyncDispatcher {
   private readonly cliTransport = new CliTransport();
@@ -47,7 +48,7 @@ export class AsyncDispatcher {
             try {
               RetryScheduler.scheduleRetry({ ...walEntry, attempts: newAttempts });
             } catch (err) {
-              process.stderr.write(`[queue] AsyncDispatcher: ${err instanceof Error ? err.message : String(err)}\n`);
+              process.stderr.write(`[queue] AsyncDispatcher: ${getErrorMessage(err)}\n`);
             }
           }
         }
