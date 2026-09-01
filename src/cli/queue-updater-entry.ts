@@ -17,7 +17,9 @@ const currentVersion = typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CL
 try {
     const npmRoot = execNpm(['root', '-g'], { timeout: 10_000 }).trim();
     const selfCheckCmd = `${process.execPath} ${join(npmRoot, PKG_NAME, 'queue.cjs')} cli self-check`;
-    process.env['UPDATER_SELF_CHECK_CMD'] = selfCheckCmd;
+    if (!process.env['UPDATER_SELF_CHECK_CMD']) {
+        process.env['UPDATER_SELF_CHECK_CMD'] = selfCheckCmd;
+    }
 } catch {
     // Skip self-check if npm root is unavailable — update proceeds without verification.
 }
