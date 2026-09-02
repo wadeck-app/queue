@@ -46,6 +46,7 @@ export class EventLogger {
     event: string;
     subscriberId: string;
     status: 'success' | 'failed' | 'dlq';
+    target?: string;
     durationMs?: number;
     error?: string;
     attempts?: number;

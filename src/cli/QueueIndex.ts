@@ -102,12 +102,13 @@ function formatLogLine(raw: string): string {
   if (entry['type'] === 'dispatch') {
     const status = entry['status'] as string;
     const sub = entry['subscriberId'] as string;
+    const tgt = entry['target'] ? ` → ${entry['target']}` : '';
     const dur = entry['durationMs'] !== undefined ? ` (${entry['durationMs']}ms)` : '';
     const err = entry['error'] ? ` — ${entry['error']}` : '';
     const attempts = entry['attempts'] !== undefined ? ` (attempts: ${entry['attempts']})` : '';
-    if (status === 'success') return `[${ts}] ✓ ${sub}${dur}`;
-    if (status === 'failed') return `[${ts}] ✗ ${sub}${err}${dur}`;
-    if (status === 'dlq')    return `[${ts}] ⚠ dlq ${sub}${err}${attempts}`;
+    if (status === 'success') return `[${ts}] ✓ ${sub}${tgt}${dur}`;
+    if (status === 'failed') return `[${ts}] ✗ ${sub}${tgt}${err}${dur}`;
+    if (status === 'dlq')    return `[${ts}] ⚠ dlq ${sub}${tgt}${err}${attempts}`;
   }
   return trimmed;
 }

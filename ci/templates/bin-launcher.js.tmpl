@@ -63,10 +63,11 @@ function _runWithExit(bin, binArgs) {
   }
 }
 
-// Bypass the Go launcher for ALL commands except 'start'.
+// Bypass the Go launcher for ALL commands including 'start'.
 // The -H windowsgui launcher swallows stdout/stderr of ALL child node processes on Windows.
-// Only 'start' needs the launcher (it spawns the daemon background process).
-var _bypassLauncher = _args[0] !== 'start';
+// The daemon is spawned independently via wscript.exe SW_HIDE (not managed by the launcher's
+// job object), so the launcher adds no value for 'start' and only swallows its output.
+var _bypassLauncher = true;
 
 if (process.platform === 'win32' && _bypassLauncher) {
   _runWithExit(process.execPath, [bundlePath].concat(_args));
