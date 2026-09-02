@@ -41,11 +41,13 @@ function makeWalEntry(subscriberId: string): WalEntry {
 
 describe('AsyncDispatcher', () => {
   let walUpdater: (id: string, updates: Partial<WalEntry>) => void;
+  let dlqMover: (entry: WalEntry, lastError: string) => void;
   let dispatcher: AsyncDispatcher;
 
   beforeEach(() => {
     walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
-    dispatcher = new AsyncDispatcher(walUpdater);
+    dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
+    dispatcher = new AsyncDispatcher(walUpdater, dlqMover);
   });
 
   it('parallel dispatch: both subscribers called', async () => {
@@ -74,5 +76,50 @@ describe('AsyncDispatcher', () => {
     await dispatcher.dispatch([sub], makeEnvelope(), walEntries);
 
     expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed' }));
+  });
+
+  it('retries=0 + failure → dlqMover called immediately', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'exit code 1', durationMs: 1 });
+
+    const sub = { ...makeSub('sub-1'), retries: 0 };
+    const w = makeWalEntry('sub-1');
+    const walEntries = new Map([['sub-1', w]]);
+
+    await dispatcher.dispatch([sub], makeEnvelope(), walEntries);
+
+    expect(dlqMover).toHaveBeenCalledTimes(1);
+    expect(dlqMover).toHaveBeenCalledWith(
+      expect.objectContaining({ id: w.id, attempts: 1 }),
+      'exit code 1',
+    );
+  });
+
+  it('retries=2: dlqMover not called on first failure', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'err', durationMs: 1 });
+
+    const sub = { ...makeSub('sub-1'), retries: 2 };
+    const w = makeWalEntry('sub-1');
+    const walEntries = new Map([['sub-1', w]]);
+
+    await dispatcher.dispatch([sub], makeEnvelope(), walEntries);
+
+    expect(dlqMover).not.toHaveBeenCalled();
+  });
+
+  it('retries=2: dlqMover called when attempts reach retries', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'err', durationMs: 1 });
+
+    const sub = { ...makeSub('sub-1'), retries: 2 };
+    // Simulate entry that has already failed twice (attempts=2 >= retries=2 → DLQ)
+    const w = { ...makeWalEntry('sub-1'), attempts: 2 };
+    const walEntries = new Map([['sub-1', w]]);
+
+    await dispatcher.dispatch([sub], makeEnvelope(), walEntries);
+
+    expect(dlqMover).toHaveBeenCalledTimes(1);
+    expect(dlqMover).toHaveBeenCalledWith(
+      expect.objectContaining({ id: w.id, attempts: 3 }),
+      'err',
+    );
   });
 });

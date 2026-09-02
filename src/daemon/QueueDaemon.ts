@@ -18,10 +18,10 @@ export const DAEMON_PORT = 47910;
 export const IDLE_TIMEOUT_MS = 60_000;
 
 export interface PushRequest { event: string; payload: unknown; timeout?: number; }
-export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted'; result?: unknown; reason?: string; }
+export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted'; result?: unknown; reason?: string; subscriberCount?: number; }
 export interface RetryRequest { eventId: string; }
 export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; }
-export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; }
+export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }
 export interface ListSubscribersRequest { event?: string; }
 export interface SubscriberListResponse { subscribers: ResolvedSubscriber[]; }
 export interface DlqListResponse { entries: DlqEntry[]; }
@@ -46,7 +46,23 @@ export async function startDaemon(configDir: string): Promise<void> {
   const _eventLogger = new EventLogger(join(configDir, 'logs'));
   const configLoader = new ConfigLoader(configDir);
   const syncDispatcher = new SyncDispatcher();
-  const asyncDispatcher = new AsyncDispatcher((id, updates) => wal.updateEntry(id, updates));
+  const startedAt = Date.now();
+  const asyncDispatcher = new AsyncDispatcher(
+    (id, updates) => wal.updateEntry(id, updates),
+    (walEntry, lastError) => {
+      dlq.append({
+        id: walEntry.id,
+        event: walEntry.event,
+        payload: walEntry.payload,
+        meta: walEntry.meta,
+        subscriberId: walEntry.subscriberId,
+        attempts: walEntry.attempts,
+        lastError,
+        movedAt: new Date().toISOString(),
+      });
+      wal.updateEntry(walEntry.id, { status: 'dlq' });
+    },
+  );
 
   let activeDispatches = 0;
   let idleCountdown: ReturnType<typeof setTimeout> | null = null;
@@ -129,7 +145,7 @@ export async function startDaemon(configDir: string): Promise<void> {
           process.stderr.write(`[queue] AsyncDispatcher error: ${getErrorMessage(err)}\n`);
         });
 
-        return { status: 'queued' };
+        return { status: 'queued', subscriberCount: filtered.length };
       } finally {
         activeDispatches--;
       }
@@ -168,6 +184,8 @@ export async function startDaemon(configDir: string): Promise<void> {
         pendingCount: wal.pendingCount(),
         dlqCount: dlq.readAll().length,
         daemonRunning: true,
+        uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
+        pid: process.pid,
       };
     },
 

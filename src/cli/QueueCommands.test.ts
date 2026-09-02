@@ -97,7 +97,7 @@ afterEach(() => {
 
 describe('queue push', () => {
 	it('sends push command with parsed payload', async () => {
-		mockSend.mockResolvedValue({ status: 'queued' });
+		mockSend.mockResolvedValue({ status: 'queued', subscriberCount: 1 });
 		const { stdout, exitCode } = await run(['push', 'myEvent', '{"key":"val"}']);
 		expect(mockSend).toHaveBeenCalledWith('push', expect.objectContaining({ event: 'myEvent', payload: { key: 'val' } }));
 		expect(exitCode).toBe(0);
@@ -105,7 +105,7 @@ describe('queue push', () => {
 	});
 
 	it('parses --timeout flag into ms', async () => {
-		mockSend.mockResolvedValue({ status: 'queued' });
+		mockSend.mockResolvedValue({ status: 'queued', subscriberCount: 1 });
 		await run(['push', 'myEvent', '{}', '--timeout', '30s']);
 		expect(mockSend).toHaveBeenCalledWith('push', expect.objectContaining({ timeout: 30_000 }));
 	});

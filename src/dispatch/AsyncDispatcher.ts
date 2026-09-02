@@ -9,7 +9,10 @@ export class AsyncDispatcher {
   private readonly cliTransport = new CliTransport();
   private readonly httpTransport = new HttpTransport();
 
-  constructor(private readonly walUpdater: (id: string, updates: Partial<WalEntry>) => void) {}
+  constructor(
+    private readonly walUpdater: (id: string, updates: Partial<WalEntry>) => void,
+    private readonly dlqMover: (entry: WalEntry, lastError: string) => void,
+  ) {}
 
   async dispatch(
     subscribers: ResolvedSubscriber[],
@@ -43,13 +46,16 @@ export class AsyncDispatcher {
           this.walUpdater(walEntry.id, { status: 'acked', ackedAt: new Date().toISOString() });
         } else {
           const newAttempts = walEntry.attempts + 1;
-          this.walUpdater(walEntry.id, { status: 'failed', lastError: result.error, attempts: newAttempts });
+          const lastError = result.error ?? 'unknown error';
+          this.walUpdater(walEntry.id, { status: 'failed', lastError, attempts: newAttempts });
           if (newAttempts < sub.retries) {
             try {
               RetryScheduler.scheduleRetry({ ...walEntry, attempts: newAttempts });
             } catch (err) {
               process.stderr.write(`[queue] AsyncDispatcher: ${getErrorMessage(err)}\n`);
             }
+          } else {
+            this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError);
           }
         }
       })

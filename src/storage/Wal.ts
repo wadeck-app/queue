@@ -9,7 +9,7 @@ export interface WalEntry {
   payload: unknown;
   meta: EventMeta;
   subscriberId: string;
-  status: 'pending' | 'acked' | 'failed';
+  status: 'pending' | 'acked' | 'failed' | 'dlq';
   attempts: number;
   lastError?: string;
   ackedAt?: string;

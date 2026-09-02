@@ -84,6 +84,12 @@ function getConfigDir(): string {
   return process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
 }
 
+function formatUptime(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+}
+
 function spawnDaemon(configDir: string): void {
   // Bundle layout: queue-daemon.cjs sits next to queue.cjs
   // TSC dev layout: ../daemon/daemon-entry.js relative to dist/cli/QueueIndex.js
@@ -318,7 +324,7 @@ async function main(): Promise<void> {
     try {
       payload = JSON.parse(jsonArg);
     } catch {
-      process.stderr.write(`[queue] Invalid JSON payload: ${jsonArg}\n`);
+      process.stderr.write(`[queue] Invalid JSON payload: ${jsonArg}\n  Windows CMD: use "{""key"":""value""}" (double the inner quotes)\n  PowerShell / Bash: use '{"key":"value"}'\n`);
       process.exit(1);
     }
 
@@ -348,7 +354,12 @@ async function main(): Promise<void> {
     if (event.startsWith('before')) {
       process.stdout.write(JSON.stringify(response.result ?? null) + '\n');
     } else {
-      process.stdout.write('[ok] queued\n');
+      const count = response.subscriberCount ?? 0;
+      if (count === 0) {
+        process.stderr.write(`[warn] queued — no subscribers for '${event}'\n`);
+      } else {
+        process.stdout.write(`[ok] queued (${count} subscriber${count !== 1 ? 's' : ''})\n`);
+      }
     }
 
     return;
@@ -401,6 +412,8 @@ async function main(): Promise<void> {
       process.stdout.write('[ok]  daemon:  running\n');
       process.stdout.write(`      pending: ${response.pendingCount}\n`);
       process.stdout.write(`      dlq:     ${response.dlqCount}\n`);
+      process.stdout.write(`      uptime:  ${formatUptime(response.uptimeSec ?? 0)}\n`);
+      process.stdout.write(`      pid:     ${response.pid ?? '?'}\n`);
       process.stdout.write(`      orch:    ${orchAvailable ? 'available' : 'not found'}\n`);
     } else {
       process.stdout.write(JSON.stringify(data) + '\n');
