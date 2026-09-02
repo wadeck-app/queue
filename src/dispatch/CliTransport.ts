@@ -15,7 +15,7 @@ export class CliTransport {
     const start = Date.now();
 
     return new Promise<DispatchResult>((resolve) => {
-      const child = spawn(command, [], { shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(command, [], { shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 
       let stdout = '';
       let stderr = '';
