@@ -45,6 +45,7 @@ generate_dist() {
     "bin/",
     "${CLI}.cjs",
     "${CLI}-updater.cjs",
+    "${CLI}-daemon.cjs",
     "package.json"
   ],
   "optionalDependencies": {
