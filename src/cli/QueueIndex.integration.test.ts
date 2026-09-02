@@ -95,3 +95,41 @@ describe('unknown top-level command (integration)', () => {
     expect(stderr).toContain('foobar-unknown-cmd-xyz');
   });
 });
+
+describe('daemon lifecycle (integration)', () => {
+  afterEach(() => {
+    // Best-effort cleanup: stop daemon after each test
+    runCli(['stop']);
+  });
+
+  it('queue start → status running → stop → status not running', async () => {
+    // Ensure clean state
+    runCli(['stop']);
+
+    const start = runCli(['start']);
+    expect(start.exitCode, `start stderr: ${start.stderr}`).toBe(0);
+    expect(start.stdout).toContain('[ok] daemon started');
+
+    // status is non-TTY → outputs JSON
+    const statusRunning = JSON.parse(runCli(['status']).stdout);
+    expect(statusRunning.daemonRunning).toBe(true);
+
+    const stop = runCli(['stop']);
+    expect(stop.exitCode, `stop stderr: ${stop.stderr}`).toBe(0);
+    expect(stop.stdout).toContain('[ok] daemon stopped');
+
+    const statusStopped = JSON.parse(runCli(['status']).stdout);
+    expect(statusStopped.daemonRunning).toBe(false);
+  }, 30_000);
+
+  it('queue start twice shows already running', () => {
+    runCli(['stop']); // ensure clean state
+    runCli(['start']);
+
+    const start2 = runCli(['start']);
+    expect(start2.exitCode).toBe(0);
+    expect(start2.stdout).toContain('[ok] daemon already running');
+
+    runCli(['stop']);
+  }, 30_000);
+});

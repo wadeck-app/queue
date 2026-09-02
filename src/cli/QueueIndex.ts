@@ -2,7 +2,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
@@ -11,8 +11,11 @@ import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
 import { cliLogsCommand, cliVersionCommand, cliUpdateCommand, warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import { runSelfCheck } from '@wadeck-app/shared-cli';
+import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
 import { getErrorMessage } from '../errors.js';
+import type { SubscriberConfig } from '../ConfigLoader.js';
+import { SubscribersYmlSchema } from '../ConfigLoader.js';
 
 declare const __QUEUE_CLI_VERSION__: string;
 
@@ -33,6 +36,18 @@ Usage:
   queue cli --help
 `;
 
+const SUB_GROUP_HELP = `queue sub - Subscriber management commands
+Usage:
+  queue sub list [event] [--json] [--scope global|project]
+  queue sub add <event> --type cli --command "..." [--timeout <d>] [--retries <n>] [--backoff exponential|linear] [--when <expr>] [--scope global|project]
+  queue sub add <event> --type http --url "..." [--method <m>] [--header "key:value"] [--timeout <d>] [--retries <n>] [--backoff exponential|linear] [--when <expr>] [--scope global|project]
+  queue sub remove <event> --index <N> [--scope global|project]
+  queue sub edit <event> --index <N> --type cli|http [...] [--scope global|project]
+
+Aliases: queue subscribers
+Scopes: global (default) = $QUEUE_CONFIG_DIR/subscribers.yml, project = .queue/subscribers.yml in cwd
+`;
+
 function usage(): void {
   process.stdout.write(`queue v${VERSION}
 Usage:
@@ -43,6 +58,10 @@ Usage:
   queue dlq list
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
+  queue sub list [event] [--json] [--scope global|project]
+  queue sub add <event> --type cli|http [...] [--scope global|project]
+  queue sub remove <event> --index <N> [--scope global|project]
+  queue sub edit <event> --index <N> [...] [--scope global|project]
   queue start
   queue stop
   queue logs [--follow]
@@ -65,7 +84,11 @@ function getConfigDir(): string {
 }
 
 function spawnDaemon(configDir: string): void {
-  const daemonScript = fileURLToPath(new URL('../daemon/daemon-entry.js', import.meta.url));
+  // Bundle layout: queue-daemon.cjs sits next to queue.cjs
+  // TSC dev layout: ../daemon/daemon-entry.js relative to dist/cli/QueueIndex.js
+  const bundleDaemon = fileURLToPath(new URL('./queue-daemon.cjs', import.meta.url));
+  const tscDaemon = fileURLToPath(new URL('../daemon/daemon-entry.js', import.meta.url));
+  const daemonScript = existsSync(bundleDaemon) ? bundleDaemon : tscDaemon;
   const child = spawn(process.execPath, [daemonScript], {
     detached: true,
     stdio: 'ignore',
@@ -100,6 +123,111 @@ async function ensureDaemon(configDir: string): Promise<void> {
       process.exit(1);
     }
   }
+}
+
+function resolveSubsFile(configDir: string, scope: string): string {
+  if (scope === 'project') return pathJoin(process.cwd(), '.queue', 'subscribers.yml');
+  return pathJoin(configDir, 'subscribers.yml');
+}
+
+function readSubsYmlOrExit(filePath: string): { subscribers: Record<string, SubscriberConfig[]> } {
+  if (!existsSync(filePath)) return { subscribers: {} };
+  let raw: unknown;
+  try {
+    raw = yamlLoad(readFileSync(filePath, 'utf-8'));
+  } catch (err) {
+    process.stderr.write(`[fail] Failed to parse YAML at ${filePath}: ${getErrorMessage(err)}\n`);
+    process.exit(1);
+  }
+  const result = SubscribersYmlSchema.safeParse(raw);
+  if (!result.success) {
+    process.stderr.write(`[fail] Invalid subscribers.yml at ${filePath}:\n${result.error.toString()}\n`);
+    process.exit(1);
+  }
+  return result.data as { subscribers: Record<string, SubscriberConfig[]> };
+}
+
+function writeSubsYmlOrExit(filePath: string, data: { subscribers: Record<string, SubscriberConfig[]> }): void {
+  const result = SubscribersYmlSchema.safeParse(data);
+  if (!result.success) {
+    process.stderr.write(`[fail] Invalid subscriber config: ${result.error.toString()}\n`);
+    process.exit(1);
+  }
+  const tmpPath = filePath + '.tmp';
+  try {
+    writeFileSync(tmpPath, yamlDump(data), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    process.stderr.write(`[fail] Failed to write ${filePath}: ${getErrorMessage(err)}\n`);
+    process.exit(1);
+  }
+}
+
+function parseSubFlags(args: string[]): { config: Partial<SubscriberConfig>; errors: string[] } {
+  const errors: string[] = [];
+  const config: Partial<SubscriberConfig> = {};
+
+  const getArg = (flag: string): string | undefined => {
+    const idx = args.indexOf(flag);
+    if (idx === -1) return undefined;
+    const next = args[idx + 1];
+    if (!next || next.startsWith('--')) return undefined;
+    return next;
+  };
+
+  const typeVal = getArg('--type');
+  if (typeVal === 'cli' || typeVal === 'http') config.type = typeVal;
+  else if (typeVal) errors.push(`--type must be cli or http, got: ${typeVal}`);
+
+  const commandVal = getArg('--command');
+  if (commandVal) config.command = commandVal;
+
+  const urlVal = getArg('--url');
+  if (urlVal) config.url = urlVal;
+
+  const methodVal = getArg('--method');
+  if (methodVal) config.method = methodVal;
+
+  const headers: Record<string, string> = {};
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '--header') {
+      const val = args[i + 1];
+      if (val && !val.startsWith('--')) {
+        const colonIdx = val.indexOf(':');
+        if (colonIdx === -1) {
+          errors.push(`Invalid --header format: "${val}" (expected "key:value")`);
+        } else {
+          headers[val.slice(0, colonIdx).trim()] = val.slice(colonIdx + 1).trim();
+        }
+      }
+    }
+  }
+  if (Object.keys(headers).length > 0) config.headers = headers;
+
+  const timeoutVal = getArg('--timeout');
+  if (timeoutVal) {
+    if (!/^\d+(ms|s|m|h)$/.test(timeoutVal)) {
+      errors.push(`Invalid timeout: ${timeoutVal} (use e.g. 30s, 5m, 1h)`);
+    } else {
+      config.timeout = timeoutVal;
+    }
+  }
+
+  const retriesVal = getArg('--retries');
+  if (retriesVal !== undefined) {
+    const n = parseInt(retriesVal, 10);
+    if (isNaN(n) || n < 0) errors.push(`--retries must be a non-negative integer, got: ${retriesVal}`);
+    else config.retries = n;
+  }
+
+  const backoffVal = getArg('--backoff');
+  if (backoffVal === 'exponential' || backoffVal === 'linear') config.backoff = backoffVal;
+  else if (backoffVal) errors.push(`--backoff must be exponential or linear, got: ${backoffVal}`);
+
+  const whenVal = getArg('--when');
+  if (whenVal) config.when = whenVal;
+
+  return { config, errors };
 }
 
 function isConfigDirWritable(dir: string): boolean {
@@ -443,6 +571,207 @@ async function main(): Promise<void> {
 
     process.stderr.write(`Unknown cli subcommand: ${sub}\nUse: queue cli version|self-check|update|logs\n`);
     process.exit(1);
+  }
+
+  if (command === 'sub' || command === 'subscribers') {
+    const sub = rest[0];
+
+    if (!sub || sub === '--help' || sub === '-h') {
+      process.stdout.write(SUB_GROUP_HELP);
+      return;
+    }
+
+    const scopeIdx = rest.indexOf('--scope');
+    const scope = scopeIdx !== -1 && rest[scopeIdx + 1] ? rest[scopeIdx + 1]! : 'global';
+    if (scope !== 'global' && scope !== 'project') {
+      process.stderr.write(`[fail] --scope must be global or project, got: ${scope}\n`);
+      process.exit(1);
+    }
+
+    if (sub === 'list') {
+      const jsonFlag = rest.includes('--json');
+      const eventArg = rest.slice(1).find(a => !a.startsWith('--') && a !== scope);
+
+      if (scopeIdx === -1) {
+        // No --scope: delegate to daemon (same as queue list-subscribers)
+        await ensureDaemon(configDir);
+        const client = createQueueClient(configDir);
+        const response = await client.send('list-subscribers', { event: eventArg });
+        if (process.stdout.isTTY && !jsonFlag) {
+          if (response.subscribers.length === 0) {
+            process.stdout.write('[ok] no subscribers\n');
+          } else {
+            for (const s of response.subscribers) {
+              const target = s.type === 'cli' ? s.command : s.url;
+              process.stdout.write(`[ok] ${s.subscriberId}  ${s.type}  ${target ?? '?'}\n`);
+            }
+          }
+        } else {
+          process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
+        }
+        return;
+      }
+
+      // --scope provided: read YAML file directly
+      const filePath = resolveSubsFile(configDir, scope);
+      const data = readSubsYmlOrExit(filePath);
+      const entries: Array<{ subscriberId: string; event: string; type: string; command?: string; url?: string }> = [];
+      for (const [evtPattern, subs] of Object.entries(data.subscribers)) {
+        if (eventArg && evtPattern !== eventArg) continue;
+        for (let i = 0; i < subs.length; i++) {
+          const s = subs[i]!;
+          entries.push({ subscriberId: `${evtPattern}[${i}]`, event: evtPattern, type: s.type, command: s.command, url: s.url });
+        }
+      }
+      if (process.stdout.isTTY && !jsonFlag) {
+        if (entries.length === 0) {
+          process.stdout.write('[ok] no subscribers\n');
+        } else {
+          for (const e of entries) {
+            const target = e.type === 'cli' ? e.command : e.url;
+            process.stdout.write(`[ok] ${e.subscriberId}  ${e.type}  ${target ?? '?'}\n`);
+          }
+        }
+      } else {
+        process.stdout.write(JSON.stringify(entries, null, 2) + '\n');
+      }
+      return;
+    }
+
+    if (sub !== 'add' && sub !== 'remove' && sub !== 'edit') {
+      process.stderr.write(`Unknown sub subcommand: ${sub ?? '(none)'}\nUse: queue sub list|add|remove|edit\n`);
+      process.exit(1);
+    }
+
+    const event = rest[1];
+    if (!event || event.startsWith('--')) {
+      process.stderr.write(`Usage: queue sub ${sub} <event> [...]\n`);
+      process.exit(1);
+    }
+
+    if (sub === 'add') {
+      const { config, errors } = parseSubFlags(rest.slice(2));
+      if (errors.length > 0) {
+        for (const e of errors) process.stderr.write(`[fail] ${e}\n`);
+        process.exit(1);
+      }
+      if (!config.type) {
+        process.stderr.write(`[fail] --type cli|http is required\nUsage: queue sub add <event> --type cli|http ...\n`);
+        process.exit(1);
+      }
+      if (config.type === 'cli' && !config.command) {
+        process.stderr.write(`[fail] --command is required for type: cli\n`);
+        process.exit(1);
+      }
+      if (config.type === 'http' && !config.url) {
+        process.stderr.write(`[fail] --url is required for type: http\n`);
+        process.exit(1);
+      }
+
+      const filePath = resolveSubsFile(configDir, scope);
+      if (scope === 'project') mkdirSync(pathJoin(process.cwd(), '.queue'), { recursive: true });
+      const data = readSubsYmlOrExit(filePath);
+      const existing = data.subscribers[event] ?? [];
+      const newEntry: SubscriberConfig = { type: config.type };
+      if (config.command) newEntry.command = config.command;
+      if (config.url) newEntry.url = config.url;
+      if (config.method) newEntry.method = config.method;
+      if (config.headers && Object.keys(config.headers).length > 0) newEntry.headers = config.headers;
+      if (config.timeout) newEntry.timeout = config.timeout;
+      if (config.retries !== undefined) newEntry.retries = config.retries;
+      if (config.backoff) newEntry.backoff = config.backoff;
+      if (config.when) newEntry.when = config.when;
+      data.subscribers[event] = [...existing, newEntry];
+      writeSubsYmlOrExit(filePath, data);
+      process.stdout.write(`[ok] Added subscriber to '${event}' (index ${existing.length}) in ${filePath}\n`);
+      return;
+    }
+
+    if (sub === 'remove') {
+      const indexIdx = rest.indexOf('--index');
+      const indexStr = indexIdx !== -1 ? rest[indexIdx + 1] : undefined;
+      if (!indexStr) {
+        process.stderr.write(`[fail] --index <N> is required\n`);
+        process.exit(1);
+      }
+      const index = parseInt(indexStr, 10);
+      if (isNaN(index) || index < 0) {
+        process.stderr.write(`[fail] --index must be a non-negative integer\n`);
+        process.exit(1);
+      }
+      const filePath = resolveSubsFile(configDir, scope);
+      if (!existsSync(filePath)) {
+        process.stderr.write(`[fail] No subscribers file at: ${filePath}\n`);
+        process.exit(1);
+      }
+      const data = readSubsYmlOrExit(filePath);
+      const subs = data.subscribers[event] ?? [];
+      if (index >= subs.length) {
+        process.stderr.write(`[fail] No subscriber at index ${index} for event '${event}' (found ${subs.length})\n`);
+        process.exit(1);
+      }
+      data.subscribers[event] = subs.filter((_, i) => i !== index);
+      if (data.subscribers[event]!.length === 0) delete data.subscribers[event];
+      writeSubsYmlOrExit(filePath, data);
+      process.stdout.write(`[ok] Removed subscriber at index ${index} from '${event}' in ${filePath}\n`);
+      return;
+    }
+
+    if (sub === 'edit') {
+      const indexIdx = rest.indexOf('--index');
+      const indexStr = indexIdx !== -1 ? rest[indexIdx + 1] : undefined;
+      if (!indexStr) {
+        process.stderr.write(`[fail] --index <N> is required\n`);
+        process.exit(1);
+      }
+      const index = parseInt(indexStr, 10);
+      if (isNaN(index) || index < 0) {
+        process.stderr.write(`[fail] --index must be a non-negative integer\n`);
+        process.exit(1);
+      }
+      const filePath = resolveSubsFile(configDir, scope);
+      if (!existsSync(filePath)) {
+        process.stderr.write(`[fail] No subscribers file at: ${filePath}\n`);
+        process.exit(1);
+      }
+      const data = readSubsYmlOrExit(filePath);
+      const subs = data.subscribers[event] ?? [];
+      if (index >= subs.length) {
+        process.stderr.write(`[fail] No subscriber at index ${index} for event '${event}' (found ${subs.length})\n`);
+        process.exit(1);
+      }
+      const { config, errors } = parseSubFlags(rest.slice(2));
+      if (errors.length > 0) {
+        for (const e of errors) process.stderr.write(`[fail] ${e}\n`);
+        process.exit(1);
+      }
+      if (!config.type) {
+        process.stderr.write(`[fail] --type cli|http is required\nUsage: queue sub edit <event> --index <N> --type cli|http ...\n`);
+        process.exit(1);
+      }
+      if (config.type === 'cli' && !config.command) {
+        process.stderr.write(`[fail] --command is required for type: cli\n`);
+        process.exit(1);
+      }
+      if (config.type === 'http' && !config.url) {
+        process.stderr.write(`[fail] --url is required for type: http\n`);
+        process.exit(1);
+      }
+      const newEntry: SubscriberConfig = { type: config.type };
+      if (config.command) newEntry.command = config.command;
+      if (config.url) newEntry.url = config.url;
+      if (config.method) newEntry.method = config.method;
+      if (config.headers && Object.keys(config.headers).length > 0) newEntry.headers = config.headers;
+      if (config.timeout) newEntry.timeout = config.timeout;
+      if (config.retries !== undefined) newEntry.retries = config.retries;
+      if (config.backoff) newEntry.backoff = config.backoff;
+      if (config.when) newEntry.when = config.when;
+      data.subscribers[event] = subs.map((s, i) => (i === index ? newEntry : s));
+      writeSubsYmlOrExit(filePath, data);
+      process.stdout.write(`[ok] Updated subscriber at index ${index} for '${event}' in ${filePath}\n`);
+      return;
+    }
+
   }
 
   process.stderr.write(`Unknown command: ${command}\n`);

@@ -62,6 +62,18 @@ await Promise.all([
     supported: { 'top-level-await': false },
     logLevel: 'warning',
   }),
+  build({
+    entryPoints: [join(rootDir, 'src/daemon/daemon-entry.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    target: 'node22',
+    outfile: join(rootDir, 'dist-bundle/queue-daemon.cjs'),
+    banner: sharedBanner,
+    define: sharedDefine,
+    external: [],
+    supported: { 'top-level-await': false },
+  }),
 ]);
 
 const updaterSize = statSync(updaterOutfile).size;

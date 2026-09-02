@@ -242,7 +242,6 @@ export async function startDaemon(configDir: string): Promise<void> {
     commands,
     hooks: {
       onStart: (_port: number) => {
-        daemonHandle = handle;
         // Startup scan: reschedule pending WAL entries
         const pending = wal.readAll().filter(e => e.status === 'pending');
         for (const entry of pending) {

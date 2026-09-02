@@ -18,7 +18,7 @@ const SubscriberConfigSchema = z.object({
   when: z.string().optional(),
 });
 
-const SubscribersYmlSchema = z.object({
+export const SubscribersYmlSchema = z.object({
   subscribers: z.record(z.array(SubscriberConfigSchema)),
 });
 
@@ -71,7 +71,7 @@ function loadYml(filePath: string): SubscribersYml | null {
   return result.data;
 }
 
-interface SubscriberConfig {
+export interface SubscriberConfig {
   type: 'cli' | 'http';
   command?: string;
   url?: string;
