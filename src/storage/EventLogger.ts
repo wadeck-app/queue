@@ -42,6 +42,19 @@ export class EventLogger {
     appendFileSync(file, JSON.stringify(entry) + '\n', 'utf-8');
   }
 
+  logDispatch(entry: {
+    event: string;
+    subscriberId: string;
+    status: 'success' | 'failed' | 'dlq';
+    durationMs?: number;
+    error?: string;
+    attempts?: number;
+  }): void {
+    this.ensureDir();
+    const file = join(this.logsDir, `${this.currentDateStr()}.ndjson`);
+    appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), type: 'dispatch', ...entry }) + '\n', 'utf-8');
+  }
+
   readDay(date: string): EventLogEntry[] {
     const file = join(this.logsDir, `${date}.ndjson`);
     if (!existsSync(file)) return [];

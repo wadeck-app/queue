@@ -43,7 +43,7 @@ export type QueueCommands = {
 export async function startDaemon(configDir: string): Promise<void> {
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
-  const _eventLogger = new EventLogger(join(configDir, 'logs'));
+  const eventLogger = new EventLogger(join(configDir, 'logs'));
   const configLoader = new ConfigLoader(configDir);
   const syncDispatcher = new SyncDispatcher();
   const startedAt = Date.now();
@@ -62,6 +62,7 @@ export async function startDaemon(configDir: string): Promise<void> {
       });
       wal.updateEntry(walEntry.id, { status: 'dlq' });
     },
+    eventLogger,
   );
 
   let activeDispatches = 0;

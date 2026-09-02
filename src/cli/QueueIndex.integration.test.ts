@@ -108,7 +108,7 @@ describe('daemon lifecycle (integration)', () => {
 
     const start = runCli(['start']);
     expect(start.exitCode, `start stderr: ${start.stderr}`).toBe(0);
-    expect(start.stdout).toContain('[ok] daemon started');
+    expect(start.stderr).toContain('[ok] daemon started');
 
     // status is non-TTY → outputs JSON
     const statusRunning = JSON.parse(runCli(['status']).stdout);
@@ -128,7 +128,7 @@ describe('daemon lifecycle (integration)', () => {
 
     const start2 = runCli(['start']);
     expect(start2.exitCode).toBe(0);
-    expect(start2.stdout).toContain('[ok] daemon already running');
+    expect(start2.stderr).toContain('[ok] daemon already running');
 
     runCli(['stop']);
   }, 30_000);

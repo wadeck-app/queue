@@ -110,22 +110,15 @@ describe('queue cli version', () => {
 });
 
 describe('queue cli logs', () => {
-	it('calls cliLogsCommand without follow by default', async () => {
-		const { cliLogsCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
-		await run(['cli', 'logs']);
-		expect(cliLogsCommand).toHaveBeenCalledWith(tmpDir, { follow: false });
+	it('queue cli logs exits 0 and outputs no-log-file message when no log exists', async () => {
+		const { stdout, exitCode } = await run(['cli', 'logs']);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain('No log file for today');
 	});
 
-	it('calls cliLogsCommand with follow: true when --follow passed', async () => {
-		const { cliLogsCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
-		await run(['cli', 'logs', '--follow']);
-		expect(cliLogsCommand).toHaveBeenCalledWith(tmpDir, { follow: true });
-	});
-
-	it('top-level `queue logs` alias also calls cliLogsCommand', async () => {
-		const { cliLogsCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
-		await run(['logs', '--follow']);
-		expect(cliLogsCommand).toHaveBeenCalledWith(tmpDir, { follow: true });
+	it('top-level queue logs exits 0', async () => {
+		const { exitCode } = await run(['logs']);
+		expect(exitCode).toBe(0);
 	});
 });
 
@@ -171,8 +164,8 @@ describe('queue start / waitForDaemon', () => {
 			send: vi.fn().mockResolvedValue({ status: 'ok' }),
 		} as never);
 
-		const { stdout } = await run(['start']);
-		expect(stdout).toContain('already running');
+		const { stderr } = await run(['start']);
+		expect(stderr).toContain('already running');
 	});
 
 	it('exits 1 when daemon fails to start within timeout (isRunning always false)', async () => {

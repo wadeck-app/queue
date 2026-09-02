@@ -5,6 +5,10 @@ import type { WalEntry } from '../storage/Wal.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { getErrorMessage } from '../errors.js';
 
+interface DispatchLogger {
+  logDispatch(entry: { event: string; subscriberId: string; status: 'success' | 'failed' | 'dlq'; durationMs?: number; error?: string; attempts?: number }): void;
+}
+
 export class AsyncDispatcher {
   private readonly cliTransport = new CliTransport();
   private readonly httpTransport = new HttpTransport();
@@ -12,6 +16,7 @@ export class AsyncDispatcher {
   constructor(
     private readonly walUpdater: (id: string, updates: Partial<WalEntry>) => void,
     private readonly dlqMover: (entry: WalEntry, lastError: string) => void,
+    private readonly logger?: DispatchLogger,
   ) {}
 
   async dispatch(
@@ -44,17 +49,20 @@ export class AsyncDispatcher {
 
         if (result.success) {
           this.walUpdater(walEntry.id, { status: 'acked', ackedAt: new Date().toISOString() });
+          this.logger?.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', durationMs: result.durationMs });
         } else {
           const newAttempts = walEntry.attempts + 1;
           const lastError = result.error ?? 'unknown error';
           this.walUpdater(walEntry.id, { status: 'failed', lastError, attempts: newAttempts });
           if (newAttempts < sub.retries) {
+            this.logger?.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', durationMs: result.durationMs, error: lastError, attempts: newAttempts });
             try {
               RetryScheduler.scheduleRetry({ ...walEntry, attempts: newAttempts });
             } catch (err) {
               process.stderr.write(`[queue] AsyncDispatcher: ${getErrorMessage(err)}\n`);
             }
           } else {
+            this.logger?.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', durationMs: result.durationMs, error: lastError, attempts: newAttempts });
             this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError);
           }
         }

@@ -84,6 +84,73 @@ function getConfigDir(): string {
   return process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
 }
 
+function formatLogLine(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return trimmed;
+  }
+  const ts = typeof entry['ts'] === 'string' ? entry['ts'].slice(11, 19) : '??:??:??';
+  if (typeof entry['msg'] === 'string') {
+    // CLI invocation
+    const msg = (entry['msg'] as string).replace(/^cmd: /, '');
+    return `[${ts}] ${msg}`;
+  }
+  if (entry['type'] === 'dispatch') {
+    const status = entry['status'] as string;
+    const sub = entry['subscriberId'] as string;
+    const dur = entry['durationMs'] !== undefined ? ` (${entry['durationMs']}ms)` : '';
+    const err = entry['error'] ? ` — ${entry['error']}` : '';
+    const attempts = entry['attempts'] !== undefined ? ` (attempts: ${entry['attempts']})` : '';
+    if (status === 'success') return `[${ts}] ✓ ${sub}${dur}`;
+    if (status === 'failed') return `[${ts}] ✗ ${sub}${err}${dur}`;
+    if (status === 'dlq')    return `[${ts}] ⚠ dlq ${sub}${err}${attempts}`;
+  }
+  return trimmed;
+}
+
+async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = {}): Promise<void> {
+  const { existsSync: fsExists, readFileSync: fsRead, watchFile, statSync, openSync, readSync, closeSync, unwatchFile } = await import('node:fs');
+  const { join: pJoin } = await import('node:path');
+  const today = new Date().toISOString().slice(0, 10);
+  const logFile = pJoin(configDir, 'logs', `${today}.ndjson`);
+  if (!fsExists(logFile)) {
+    process.stdout.write(`No log file for today: ${logFile}\n`);
+    if (!opts.follow) return;
+  }
+  let offset = 0;
+  if (fsExists(logFile)) {
+    const content = fsRead(logFile, 'utf8');
+    for (const line of content.split('\n')) {
+      const formatted = formatLogLine(line);
+      if (formatted) process.stdout.write(formatted + '\n');
+    }
+    offset = Buffer.byteLength(content, 'utf8');
+  }
+  if (!opts.follow) return;
+  process.stderr.write(`[queue] Following ${logFile}\n`);
+  await new Promise<void>((resolve) => {
+    watchFile(logFile, { interval: 250 }, () => {
+      if (!fsExists(logFile)) return;
+      const size = statSync(logFile).size;
+      if (size <= offset) return;
+      const buf = Buffer.alloc(size - offset);
+      const fd = openSync(logFile, 'r');
+      readSync(fd, buf, 0, buf.length, offset);
+      closeSync(fd);
+      offset = size;
+      for (const line of buf.toString('utf8').split('\n')) {
+        const formatted = formatLogLine(line);
+        if (formatted) process.stdout.write(formatted + '\n');
+      }
+    });
+    process.on('SIGINT', () => { unwatchFile(logFile); resolve(); });
+  });
+}
+
 function formatUptime(sec: number): string {
   if (sec < 60) return `${sec}s`;
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
@@ -495,13 +562,13 @@ async function main(): Promise<void> {
     const client = createQueueClient(configDir);
     const running = await client.isRunning().catch(() => false);
     if (running) {
-      process.stdout.write('[ok] daemon already running\n');
+      process.stderr.write('[ok] daemon already running\n');
       return;
     }
     spawnDaemon(configDir);
     const started = await waitForDaemon(configDir, 5000);
     if (started) {
-      process.stdout.write('[ok] daemon started\n');
+      process.stderr.write('[ok] daemon started\n');
     } else {
       process.stderr.write('[fail] daemon failed to start within 5s\n');
       process.exit(1);
@@ -523,7 +590,7 @@ async function main(): Promise<void> {
 
   // Backward-compatible top-level alias for `queue cli logs`
   if (command === 'logs') {
-    await cliLogsCommand(configDir, { follow: rest.includes('--follow') || rest.includes('-f') });
+    await queueLogsCommand(configDir, { follow: rest.includes('--follow') || rest.includes('-f') });
     return;
   }
 
@@ -583,7 +650,7 @@ async function main(): Promise<void> {
     if (sub === 'logs') {
       const subArgs = rest.slice(1);
       warnUnknownArgs(subArgs, ['--follow', '-f'], 'queue cli logs');
-      await cliLogsCommand(configDir, { follow: subArgs.includes('--follow') || subArgs.includes('-f') });
+      await queueLogsCommand(configDir, { follow: subArgs.includes('--follow') || subArgs.includes('-f') });
       return;
     }
 
