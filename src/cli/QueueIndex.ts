@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
@@ -89,13 +90,36 @@ function spawnDaemon(configDir: string): void {
   const bundleDaemon = fileURLToPath(new URL('./queue-daemon.cjs', import.meta.url));
   const tscDaemon = fileURLToPath(new URL('../daemon/daemon-entry.js', import.meta.url));
   const daemonScript = existsSync(bundleDaemon) ? bundleDaemon : tscDaemon;
-  const child = spawn(process.execPath, [daemonScript], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    env: { ...process.env, QUEUE_CONFIG_DIR: configDir },
-  });
-  child.unref();
+  const daemonEnv = { ...process.env, QUEUE_CONFIG_DIR: configDir };
+
+  if (process.platform === 'win32') {
+    // windowsHide:true on spawn is unreliable on Windows — use wscript.exe SW_HIDE
+    // which hides the window at Win32 API level regardless of process tree depth.
+    const vbsPath = pathJoin(tmpdir(), 'queue-daemon-launch.vbs');
+    const safeNode = process.execPath.replace(/"/g, '""');
+    const safeDaemon = daemonScript.replace(/"/g, '""');
+    const safeConfigDir = configDir.replace(/"/g, '""');
+    writeFileSync(vbsPath, [
+      'Dim oShell',
+      'Set oShell = CreateObject("WScript.Shell")',
+      `oShell.Environment("Process")("QUEUE_CONFIG_DIR") = "${safeConfigDir}"`,
+      `oShell.Run """${safeNode}"" ""${safeDaemon}""", 0, False`,
+    ].join('\r\n'));
+    const child = spawn('wscript.exe', [vbsPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: daemonEnv,
+    });
+    child.unref();
+  } else {
+    const child = spawn(process.execPath, [daemonScript], {
+      detached: true,
+      stdio: 'ignore',
+      env: daemonEnv,
+    });
+    child.unref();
+  }
 }
 
 async function waitForDaemon(configDir: string, timeoutMs = 5000): Promise<boolean> {
