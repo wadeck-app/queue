@@ -30,7 +30,7 @@ export class CliTransport {
     const interpolatedCommand = interpolateCommand(command, envelope);
 
     return new Promise<DispatchResult>((resolve) => {
-      const child = spawn(interpolatedCommand, [], { shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(interpolatedCommand, [], { shell: true, windowsHide: true, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
 
       let stdout = '';
       let stderr = '';
