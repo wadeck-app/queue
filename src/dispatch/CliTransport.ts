@@ -10,12 +10,27 @@ export interface DispatchResult {
   durationMs: number;
 }
 
+/**
+ * Interpolate {{ payload.field }} and {{ field }} placeholders in a command string.
+ * Allows subscribers.yml to reference payload fields directly in the command,
+ * e.g.: flow run triage.yml --input taskId={{ payload.taskId }}
+ */
+function interpolateCommand(command: string, envelope: EventEnvelope): string {
+  const payload = (envelope.payload ?? {}) as Record<string, unknown>;
+  return command.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, path: string) => {
+    const key = path.startsWith('payload.') ? path.slice('payload.'.length) : path;
+    const value = payload[key];
+    return value !== undefined && value !== null ? String(value) : '';
+  });
+}
+
 export class CliTransport {
   async dispatch(command: string, envelope: EventEnvelope, timeoutMs: number): Promise<DispatchResult> {
     const start = Date.now();
+    const interpolatedCommand = interpolateCommand(command, envelope);
 
     return new Promise<DispatchResult>((resolve) => {
-      const child = spawn(command, [], { shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(interpolatedCommand, [], { shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 
       let stdout = '';
       let stderr = '';
