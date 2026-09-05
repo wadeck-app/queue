@@ -25,7 +25,7 @@ try {
 } catch {
   process.stderr.write(`{{CLI_NAME}}: platform package ${pkgName} missing -- installing...\n`);
   try {
-    const out = execSync(`npm install -g ${pkgName}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const out = execSync(`npm install -g ${pkgName}`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     if (out) process.stdout.write(out);
   } catch (installErr) {
     if (installErr.stdout) process.stdout.write(installErr.stdout);
@@ -50,12 +50,34 @@ const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
 // redirected to NUL and swallowing all output. Bypass the launcher for short-lived
 // read-only commands so their output reaches the terminal.
 const PASSTHROUGH_FLAGS = ['--version', '-v', '--pid', '--help', '-h'];
-const _args = process.argv.slice(2);
+const _rawArgs = process.argv.slice(2);
+
+// --cli-background / --cli-foreground: explicit stdio override flags.
+// Strip them before passing args to the underlying command.
+// Last flag wins when both are present.
+var _hasBackground = _rawArgs.includes('--cli-background');
+var _hasForeground = _rawArgs.includes('--cli-foreground');
+var _args = _rawArgs.filter(function(a) { return a !== '--cli-background' && a !== '--cli-foreground'; });
+
+var _stdio;
+if (!_hasBackground && !_hasForeground) {
+  // Auto-detect: pipe context (non-TTY) → NUL handles to prevent AllocConsole()
+  // from libuv when a GUI-parent (flow.exe SUBSYSTEM:WINDOWS) passes PIPE handles.
+  _stdio = process.stdin.isTTY ? 'inherit' : 'ignore';
+} else {
+  // Last flag wins
+  _stdio = 'ignore';
+  for (var _i = 0; _i < _rawArgs.length; _i++) {
+    if (_rawArgs[_i] === '--cli-background') _stdio = 'ignore';
+    if (_rawArgs[_i] === '--cli-foreground') _stdio = 'inherit';
+  }
+}
 
 function _runWithExit(bin, binArgs) {
   try {
     execFileSync(bin, binArgs, {
-      stdio: 'inherit',
+      stdio: _stdio,
+      windowsHide: true,
       env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
     });
   } catch (err) {
@@ -63,11 +85,12 @@ function _runWithExit(bin, binArgs) {
   }
 }
 
-// Bypass the Go launcher for ALL commands including 'start'.
-// The -H windowsgui launcher swallows stdout/stderr of ALL child node processes on Windows.
-// The daemon is spawned independently via wscript.exe SW_HIDE (not managed by the launcher's
-// job object), so the launcher adds no value for 'start' and only swallows its output.
-var _bypassLauncher = true;
+// On Windows bypass the Go launcher for ALL commands except 'start'.
+// Only 'start' needs the launcher (it spawns the daemon background process).
+// Every other command is short-lived and its stdout/stderr must reach the terminal.
+// The GUI launcher (hasConsole=false) swallows stdout/stderr of child node processes,
+// so we run node directly to guarantee output visibility.
+var _bypassLauncher = _args[0] !== 'start';
 
 if (process.platform === 'win32' && _bypassLauncher) {
   _runWithExit(process.execPath, [bundlePath].concat(_args));
