@@ -37,20 +37,38 @@ Usage:
   queue cli --help
 `;
 
-const SUB_GROUP_HELP = `queue sub - Subscriber management commands
+const SUB_GROUP_HELP = `queue sub - Subscriber management
 Usage:
   queue sub list [event] [--json] [--scope global|project]
-  queue sub add <event> --type cli --command "..." [--timeout <d>] [--retries <n>] [--backoff exponential|linear] [--when <expr>] [--scope global|project]
-  queue sub add <event> --type http --url "..." [--method <m>] [--header "key:value"] [--timeout <d>] [--retries <n>] [--backoff exponential|linear] [--when <expr>] [--scope global|project]
+  queue sub add <event> --type cli --command "<cmd>" [options]
+  queue sub add <event> --type http --url "<url>" [options]
   queue sub remove <event> --index <N> [--scope global|project]
-  queue sub edit <event> --index <N> --type cli|http [...] [--scope global|project]
+  queue sub edit <event> --index <N> --type cli|http [options]
+
+Options:
+  --scope global|project   File target: global=$QUEUE_CONFIG_DIR/subscribers.yml (default)
+                           project=.queue/subscribers.yml in cwd
+  --timeout <duration>     30s, 5m, 1h — dispatch timeout (default: 30s)
+  --retries <n>            Max retries before DLQ (default: 5)
+  --backoff <strategy>     exponential|linear (default: exponential)
+  --when <expr>            Filter: payload.field=value or JSONPath $.field
+  --header "key:value"     HTTP only; repeatable for multiple headers
+  --method <verb>          HTTP only (default: POST)
+  --index <N>              0-based subscriber index (required for remove/edit)
 
 Aliases: queue subscribers
-Scopes: global (default) = $QUEUE_CONFIG_DIR/subscribers.yml, project = .queue/subscribers.yml in cwd
 `;
 
 function usage(): void {
   process.stdout.write(`queue v${VERSION}
+
+Concepts:
+  event       Dot-separated string, e.g. test.hello or before.save
+  before.*    Synchronous: blocks caller, returns subscriber result, supports abort
+  other.*     Asynchronous: fire-and-forget, WAL-tracked, retried on failure
+  subscriber  Configured in $QUEUE_CONFIG_DIR/subscribers.yml (global)
+              or .queue/subscribers.yml (project, walks up from cwd)
+
 Usage:
   queue push <event> <json> [--timeout <duration>]
   queue retry --event <id>
@@ -60,9 +78,10 @@ Usage:
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
   queue sub list [event] [--json] [--scope global|project]
-  queue sub add <event> --type cli|http [...] [--scope global|project]
+  queue sub add <event> --type cli --command "<cmd>" [options] [--scope global|project]
+  queue sub add <event> --type http --url "<url>" [options] [--scope global|project]
   queue sub remove <event> --index <N> [--scope global|project]
-  queue sub edit <event> --index <N> [...] [--scope global|project]
+  queue sub edit <event> --index <N> --type cli|http [options] [--scope global|project]
   queue start
   queue stop
   queue logs [--follow]
@@ -70,13 +89,24 @@ Usage:
   queue cli update
   queue cli logs [--follow]
 
+Sub add/edit options:
+  --timeout <duration>          Dispatch timeout, e.g. 30s, 5m (default: 30s)
+  --retries <n>                 Max retries before DLQ (default: 5)
+  --backoff exponential|linear  Retry backoff strategy (default: exponential)
+  --when <expr>                 Filter: payload.field=value or JSONPath $.field
+  --header "key:value"          HTTP only, repeatable
+  --method <verb>               HTTP only (default: POST)
+
+Status --json fields:
+  daemonRunning, pendingCount, dlqCount, uptimeSec, pid, orchAvailable
+
 Exit codes:
   0  success
   1  error
   2  daemon not running
 
 Environment variables:
-  QUEUE_CONFIG_DIR  Override config directory path
+  QUEUE_CONFIG_DIR  Override config directory (default: ~/.config/queue)
 `);
 }
 
