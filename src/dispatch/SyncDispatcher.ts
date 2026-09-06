@@ -33,7 +33,7 @@ export class SyncDispatcher {
         if (!sub.command) {
           return { action: 'aborted', reason: `Subscriber ${sub.subscriberId} missing command` };
         }
-        result = await this.cliTransport.dispatch(sub.command, currentEnvelope, timeoutMs);
+        result = await this.cliTransport.dispatch(sub.command, currentEnvelope, timeoutMs, sub.cwd, sub.env);
       } else {
         if (!sub.url) {
           return { action: 'aborted', reason: `Subscriber ${sub.subscriberId} missing url` };

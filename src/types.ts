@@ -23,4 +23,6 @@ export interface ResolvedSubscriber {
   when?: string;
   timeoutMs: number;
   backoff: 'exponential' | 'linear';
+  cwd?: string;
+  env?: Record<string, string>;
 }

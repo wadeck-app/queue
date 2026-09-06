@@ -38,7 +38,7 @@ export class AsyncDispatcher {
             this.walUpdater(walEntry.id, { status: 'failed', lastError: 'CLI subscriber missing command', attempts: walEntry.attempts + 1 });
             return;
           }
-          result = await this.cliTransport.dispatch(sub.command, envelope, sub.timeoutMs);
+          result = await this.cliTransport.dispatch(sub.command, envelope, sub.timeoutMs, sub.cwd, sub.env);
         } else {
           if (!sub.url) {
             this.walUpdater(walEntry.id, { status: 'failed', lastError: 'HTTP subscriber missing url', attempts: walEntry.attempts + 1 });

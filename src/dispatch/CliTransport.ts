@@ -25,12 +25,13 @@ function interpolateCommand(command: string, envelope: EventEnvelope): string {
 }
 
 export class CliTransport {
-  async dispatch(command: string, envelope: EventEnvelope, timeoutMs: number): Promise<DispatchResult> {
+  async dispatch(command: string, envelope: EventEnvelope, timeoutMs: number, cwd?: string, env?: Record<string, string>): Promise<DispatchResult> {
     const start = Date.now();
     const interpolatedCommand = interpolateCommand(command, envelope);
 
     return new Promise<DispatchResult>((resolve) => {
-      const child = spawn(interpolatedCommand, [], { shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const spawnEnv = env ? { ...process.env, ...env } : undefined;
+      const child = spawn(interpolatedCommand, [], { shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], cwd, env: spawnEnv });
 
       let stdout = '';
       let stderr = '';
