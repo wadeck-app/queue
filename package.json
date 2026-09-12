@@ -16,7 +16,7 @@
   "dependencies": {
     "@wadeck-app/shared-cli": "^2026.8.31-022-55ef14e0",
     "@wadeck-app/shared-updater": "*",
-    "@wadeck-app/singleton-daemon-kit": "2026.8.30-082-8c02b26d",
+    "@wadeck-app/singleton-daemon-kit": "2026.9.8-088-fb2501fa",
     "js-yaml": "^4.1.1",
     "jsonpath-plus": "^10.3.0",
     "zod": "^3.24.0"
@@ -24,7 +24,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.2.0",
-    "@wadeck-app/violations-rules": "^2026.8.30-069-d83fe7ae",
+    "@wadeck-app/violations-rules": "^2026.9.10-104-db0bb684",
     "esbuild": "^0.27.2",
     "rimraf": "^6.0.1",
     "tsx": "^4.7.0",
