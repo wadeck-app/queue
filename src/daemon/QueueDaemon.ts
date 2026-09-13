@@ -17,12 +17,12 @@ import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 export const DAEMON_PORT = 47910;
 export const IDLE_TIMEOUT_MS = 60_000;
 
-export interface PushRequest { event: string; payload: unknown; timeout?: number; }
+export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; }
 export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted'; result?: unknown; reason?: string; subscriberCount?: number; }
 export interface RetryRequest { eventId: string; }
 export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; }
 export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }
-export interface ListSubscribersRequest { event?: string; }
+export interface ListSubscribersRequest { event?: string; cwd: string; }
 export interface SubscriberListResponse { subscribers: ResolvedSubscriber[]; }
 export interface DlqListResponse { entries: DlqEntry[]; }
 export interface DlqReplayRequest { id: string; }
@@ -99,7 +99,7 @@ export async function startDaemon(configDir: string): Promise<void> {
       activeDispatches++;
 
       try {
-        const cwd = process.env['QUEUE_PUSH_CWD'] ?? process.cwd();
+        const cwd = req.cwd;
         const envelope: EventEnvelope = {
           id: crypto.randomUUID(),
           timestamp: new Date().toISOString(),
@@ -227,8 +227,8 @@ export async function startDaemon(configDir: string): Promise<void> {
     },
 
     async 'list-subscribers'(payload?: unknown): Promise<SubscriberListResponse> {
-      const req = payload as ListSubscribersRequest | undefined;
-      const cwd = process.env['QUEUE_PUSH_CWD'] ?? process.cwd();
+      const req = payload as ListSubscribersRequest;
+      const cwd = req.cwd;
       let subscribers: ResolvedSubscriber[];
       try {
         if (req?.event) {

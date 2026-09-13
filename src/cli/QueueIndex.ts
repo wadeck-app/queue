@@ -412,9 +412,7 @@ async function main(): Promise<void> {
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
 
-    process.env['QUEUE_PUSH_CWD'] = process.cwd();
-
-    const response = await client.send('push', { event, payload, timeout });
+    const response = await client.send('push', { event, payload, timeout, cwd: process.cwd() });
 
     if (response.status === 'aborted') {
       process.stderr.write(`[queue] Event aborted: ${response.reason ?? 'unknown reason'}\n`);
@@ -497,7 +495,7 @@ async function main(): Promise<void> {
     const event = rest.find(arg => !arg.startsWith('--'));
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
-    const response = await client.send('list-subscribers', { event });
+    const response = await client.send('list-subscribers', { event, cwd: process.cwd() });
     if (process.stdout.isTTY && !jsonFlag) {
       if (response.subscribers.length === 0) {
         process.stdout.write('[ok] no subscribers\n');
@@ -703,7 +701,7 @@ async function main(): Promise<void> {
         // No --scope: delegate to daemon (same as queue list-subscribers)
         await ensureDaemon(configDir);
         const client = createQueueClient(configDir);
-        const response = await client.send('list-subscribers', { event: eventArg });
+        const response = await client.send('list-subscribers', { event: eventArg, cwd: process.cwd() });
         if (process.stdout.isTTY && !jsonFlag) {
           if (response.subscribers.length === 0) {
             process.stdout.write('[ok] no subscribers\n');
