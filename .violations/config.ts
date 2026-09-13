@@ -6,6 +6,7 @@ export default {
     'node_modules/**',
     'dist/**',
     'dist-bundle/**',
+    'dist-types/**',
     'packages/**',
   ],
   rules: {},
