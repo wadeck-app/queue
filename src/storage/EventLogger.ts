@@ -1,25 +1,53 @@
-import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { EventMeta } from '../types.js';
 
-export interface DispatchRecord {
-  subscriberId: string;
-  status: 'acked' | 'failed' | 'filter-miss';
-  durationMs: number;
-  error?: string;
-  filterMatch: boolean;
-}
-
-export interface EventLogEntry {
-  id: string;
-  timestamp: string;
+export interface DispatchLogEntry {
   event: string;
-  meta: EventMeta;
-  mode: 'async' | 'sync';
-  dispatches: DispatchRecord[];
+  subscriberId: string;
+  status: 'success' | 'failed' | 'dlq';
+  target?: string;
+  durationMs?: number;
+  error?: string;
+  attempts?: number;
+  /** Tail of the subscriber's stdout, see OutputCapture.forLog for the retention policy. */
+  stdout?: string;
+  /** Tail of the subscriber's stderr, see OutputCapture.forLog for the retention policy. */
+  stderr?: string;
 }
 
-export class EventLogger {
+export interface FilterMissLogEntry {
+  event: string;
+  subscriberId: string;
+  /** The raw `when:` expression from subscribers.yml. */
+  filter: string;
+  reason: string;
+  /** The path that was looked up, when the filter has one. */
+  path?: string;
+  expected?: string;
+  /** The value actually found at `path`, absent when nothing was found. */
+  actual?: string;
+}
+
+export interface DiagnosticLogEntry {
+  /** Emitting component, e.g. 'AsyncDispatcher' or 'QueueDaemon.push'. */
+  source: string;
+  message: string;
+}
+
+/**
+ * Sink for everything the daemon must make observable.
+ *
+ * The daemon is spawned with stdio:'ignore' (see QueueIndex.spawnDaemon), so any
+ * process.stderr.write inside the daemon is lost. Daemon-internal diagnostics must go through
+ * this interface so they land in <configDir>/logs/<date>.ndjson and show up in `queue logs`.
+ */
+export interface QueueLogWriter {
+  logDispatch(entry: DispatchLogEntry): void;
+  logFilterMiss(entry: FilterMissLogEntry): void;
+  logDiagnostic(entry: DiagnosticLogEntry): void;
+}
+
+export class EventLogger implements QueueLogWriter {
   private readonly logsDir: string;
 
   constructor(logsDir: string) {
@@ -36,40 +64,21 @@ export class EventLogger {
     return new Date().toISOString().slice(0, 10);
   }
 
-  append(entry: EventLogEntry): void {
+  private write(type: 'dispatch' | 'filter-miss' | 'diagnostic', entry: object): void {
     this.ensureDir();
     const file = join(this.logsDir, `${this.currentDateStr()}.ndjson`);
-    appendFileSync(file, JSON.stringify(entry) + '\n', 'utf-8');
+    appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), type, ...entry }) + '\n', 'utf-8');
   }
 
-  logDispatch(entry: {
-    event: string;
-    subscriberId: string;
-    status: 'success' | 'failed' | 'dlq';
-    target?: string;
-    durationMs?: number;
-    error?: string;
-    attempts?: number;
-  }): void {
-    this.ensureDir();
-    const file = join(this.logsDir, `${this.currentDateStr()}.ndjson`);
-    appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), type: 'dispatch', ...entry }) + '\n', 'utf-8');
+  logDispatch(entry: DispatchLogEntry): void {
+    this.write('dispatch', entry);
   }
 
-  readDay(date: string): EventLogEntry[] {
-    const file = join(this.logsDir, `${date}.ndjson`);
-    if (!existsSync(file)) return [];
-    const content = readFileSync(file, 'utf-8');
-    const entries: EventLogEntry[] = [];
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        entries.push(JSON.parse(trimmed) as EventLogEntry);
-      } catch {
-        // skip malformed
-      }
-    }
-    return entries;
+  logFilterMiss(entry: FilterMissLogEntry): void {
+    this.write('filter-miss', entry);
+  }
+
+  logDiagnostic(entry: DiagnosticLogEntry): void {
+    this.write('diagnostic', entry);
   }
 }

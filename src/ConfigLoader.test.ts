@@ -322,3 +322,58 @@ subscribers:
     expect(subs[1]!.command).toBe('echo project');
   });
 });
+
+describe('ConfigLoader - subscriber validation', () => {
+  let projectDir: string;
+  let globalDir: string;
+  let loader: ConfigLoader;
+
+  beforeEach(() => {
+    projectDir = makeTmpDir();
+    globalDir = makeTmpDir();
+    loader = new ConfigLoader(globalDir);
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true });
+  });
+
+  it("cli subscriber without command is rejected at load time, naming event and index", () => {
+    const filePath = writeSubscribersYml(projectDir, `
+subscribers:
+  onTest:
+    - type: cli
+      command: echo ok
+    - type: cli
+      when: payload.exitCode=1
+`);
+    expect(() => loader.getSubscribers('onTest', projectDir)).toThrow(/subscriber 'onTest' index 1/);
+    expect(() => loader.getSubscribers('onTest', projectDir)).toThrow(/type 'cli' requires a 'command' field/);
+    // the message must point at the offending file and give a fix
+    expect(() => loader.getSubscribers('onTest', projectDir)).toThrow(filePath);
+    expect(() => loader.getSubscribers('onTest', projectDir)).toThrow(/queue sub edit onTest --index 1/);
+  });
+
+  it('http subscriber without url is rejected at load time', () => {
+    writeSubscribersYml(projectDir, `
+subscribers:
+  onTest:
+    - type: http
+      method: POST
+`);
+    expect(() => loader.getSubscribers('onTest', projectDir)).toThrow(/type 'http' requires a 'url' field/);
+  });
+
+  it('valid subscribers still load', () => {
+    writeSubscribersYml(projectDir, `
+subscribers:
+  onTest:
+    - type: cli
+      command: echo ok
+    - type: http
+      url: http://localhost:1234/hook
+`);
+    expect(loader.getSubscribers('onTest', projectDir)).toHaveLength(2);
+  });
+});

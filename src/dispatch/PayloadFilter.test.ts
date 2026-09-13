@@ -44,3 +44,60 @@ describe('PayloadFilter', () => {
     expect(PayloadFilter.matches('$.meta.nonExistentField', envelope)).toBe(false);
   });
 });
+
+describe('PayloadFilter.evaluate', () => {
+  it('match carries no reason', () => {
+    expect(PayloadFilter.evaluate('meta.projectName=agent-fleet', makeEnvelope())).toEqual({ matched: true });
+  });
+
+  it('value mismatch reports path, expected and actual', () => {
+    const result = PayloadFilter.evaluate('meta.projectName=other-project', makeEnvelope());
+    expect(result).toEqual({
+      matched: false,
+      reason: 'value mismatch',
+      path: 'meta.projectName',
+      expected: 'other-project',
+      actual: 'agent-fleet',
+    });
+  });
+
+  it('numeric mismatch reports the actual number', () => {
+    const result = PayloadFilter.evaluate('payload.exitCode=1', makeEnvelope({ payload: { exitCode: 0 } }));
+    expect(result).toMatchObject({ matched: false, reason: 'value mismatch', expected: '1', actual: '0' });
+  });
+
+  it('unknown path reports the path that was looked up and no actual value', () => {
+    const result = PayloadFilter.evaluate('payload.typoField=1', makeEnvelope());
+    expect(result).toEqual({
+      matched: false,
+      reason: 'path not found in envelope',
+      path: 'payload.typoField',
+      expected: '1',
+    });
+  });
+
+  it("filter without '=' explains the expected syntax", () => {
+    const result = PayloadFilter.evaluate('payload.exitCode', makeEnvelope());
+    expect(result.matched).toBe(false);
+    expect(result.reason).toContain("no '=' found");
+    expect(result.reason).toContain('payload.exitCode=1');
+  });
+
+  it('JSONPath matching nothing reports the expression', () => {
+    const result = PayloadFilter.evaluate('$.meta.nonExistentField', makeEnvelope());
+    expect(result).toMatchObject({
+      matched: false,
+      reason: 'JSONPath matched nothing',
+      path: '$.meta.nonExistentField',
+    });
+  });
+
+  it('JSONPath matching a falsy value is reported as a miss with the value', () => {
+    const result = PayloadFilter.evaluate('$.payload.exitCode', makeEnvelope({ payload: { exitCode: 0 } }));
+    expect(result).toMatchObject({
+      matched: false,
+      reason: 'JSONPath matched a falsy value',
+      actual: '0',
+    });
+  });
+});

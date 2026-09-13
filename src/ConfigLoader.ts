@@ -109,6 +109,7 @@ export interface SubscriberConfig {
 }
 
 interface ResolveContext {
+  filePath: string;
   fileDir: string;
   globalCwd?: string;
   globalEnv?: Record<string, string>;
@@ -116,7 +117,29 @@ interface ResolveContext {
   eventEnv?: Record<string, string>;
 }
 
+/**
+ * Rejects a subscriber that can never dispatch, at load time, rather than letting the daemon
+ * discover it per event. Silence here used to produce a WAL entry stuck in 'failed' with no log line.
+ */
+function assertDispatchable(event: string, index: number, raw: SubscriberConfig, filePath: string): void {
+  const location = `subscriber '${event}' index ${index} in ${filePath}`;
+  if (raw.type === 'cli' && !raw.command) {
+    throw new Error(
+      `[queue] Invalid ${location}: type 'cli' requires a 'command' field.\n` +
+      `Fix: add 'command: <shell command>' or run: queue sub edit ${event} --index ${index} --type cli --command "<cmd>"`
+    );
+  }
+  if (raw.type === 'http' && !raw.url) {
+    throw new Error(
+      `[queue] Invalid ${location}: type 'http' requires a 'url' field.\n` +
+      `Fix: add 'url: <endpoint>' or run: queue sub edit ${event} --index ${index} --type http --url "<url>"`
+    );
+  }
+}
+
 function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: ResolveContext): ResolvedSubscriber {
+  assertDispatchable(event, index, raw, ctx.filePath);
+
   // cwd resolution: subscriber > event > global > file default (project root)
   const fileDefaultCwd = defaultCwdForDir(ctx.fileDir);
   const baseCwd = ctx.globalCwd
@@ -165,7 +188,8 @@ export class ConfigLoader {
     const addFromYml = (yml: SubscribersYml | null, filePath: string): void => {
       if (!yml) return;
       const fileDir = dirname(filePath);
-      const globalCtx: Pick<ResolveContext, 'fileDir' | 'globalCwd' | 'globalEnv'> = {
+      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'globalCwd' | 'globalEnv'> = {
+        filePath,
         fileDir,
         globalCwd: yml.cwd,
         globalEnv: yml.env,

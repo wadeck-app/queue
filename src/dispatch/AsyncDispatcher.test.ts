@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AsyncDispatcher } from './AsyncDispatcher.js';
 import { CliTransport } from './CliTransport.js';
+import { MAX_CAPTURED_BYTES } from './OutputCapture.js';
 import type { WalEntry } from '../storage/Wal.js';
+import type { QueueLogWriter } from '../storage/EventLogger.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
+
+function makeLogger(): QueueLogWriter {
+  return { logDispatch: vi.fn(), logFilterMiss: vi.fn(), logDiagnostic: vi.fn() };
+}
 
 function makeEnvelope(): EventEnvelope {
   return {
@@ -42,12 +48,14 @@ function makeWalEntry(subscriberId: string): WalEntry {
 describe('AsyncDispatcher', () => {
   let walUpdater: (id: string, updates: Partial<WalEntry>) => void;
   let dlqMover: (entry: WalEntry, lastError: string) => void;
+  let logger: QueueLogWriter;
   let dispatcher: AsyncDispatcher;
 
   beforeEach(() => {
     walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
     dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
-    dispatcher = new AsyncDispatcher(walUpdater, dlqMover);
+    logger = makeLogger();
+    dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger);
   });
 
   it('parallel dispatch: both subscribers called', async () => {
@@ -121,5 +129,115 @@ describe('AsyncDispatcher', () => {
       expect.objectContaining({ id: w.id, attempts: 3 }),
       'err',
     );
+  });
+});
+
+describe('AsyncDispatcher - diagnosability', () => {
+  let walUpdater: (id: string, updates: Partial<WalEntry>) => void;
+  let dlqMover: (entry: WalEntry, lastError: string) => void;
+  let logger: QueueLogWriter;
+  let dispatcher: AsyncDispatcher;
+
+  beforeEach(() => {
+    walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
+    dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
+    logger = makeLogger();
+    dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger);
+  });
+
+  it('failed dispatch logs the child stdout and stderr', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
+      success: false,
+      error: 'exited with code 3',
+      stdout: 'starting…',
+      stderr: "Cannot find module 'extension-points/extension-points.json'",
+      durationMs: 7,
+    });
+
+    const w = makeWalEntry('sub-1');
+    await dispatcher.dispatch([makeSub('sub-1')], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'failed',
+      error: 'exited with code 3',
+      stdout: 'starting…',
+      stderr: "Cannot find module 'extension-points/extension-points.json'",
+    }));
+  });
+
+  it('dlq dispatch logs the child stderr', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
+      success: false, error: 'exited with code 3', stderr: 'Daemon did not start within 10000ms', durationMs: 1,
+    });
+
+    const w = makeWalEntry('sub-1');
+    await dispatcher.dispatch([{ ...makeSub('sub-1'), retries: 0 }], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'dlq',
+      stderr: 'Daemon did not start within 10000ms',
+    }));
+  });
+
+  it('chatty failing subscriber output is truncated with a marker', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
+      success: false, error: 'exited with code 1', stderr: 'n'.repeat(MAX_CAPTURED_BYTES * 2), durationMs: 1,
+    });
+
+    const w = makeWalEntry('sub-1');
+    await dispatcher.dispatch([makeSub('sub-1')], makeEnvelope(), new Map([['sub-1', w]]));
+
+    const entry = vi.mocked(logger.logDispatch).mock.calls[0]![0];
+    expect(entry.stderr).toContain('[truncated: kept last');
+    expect(entry.stderr!.length).toBeLessThan(MAX_CAPTURED_BYTES + 100);
+  });
+
+  it('successful dispatch keeps a non-empty stderr but drops stdout', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
+      success: true, stdout: 'lots of output', stderr: 'deprecation warning', durationMs: 1,
+    });
+
+    const w = makeWalEntry('sub-1');
+    await dispatcher.dispatch([makeSub('sub-1')], makeEnvelope(), new Map([['sub-1', w]]));
+
+    const entry = vi.mocked(logger.logDispatch).mock.calls[0]![0];
+    expect(entry.status).toBe('success');
+    expect(entry.stderr).toBe('deprecation warning');
+    expect(entry.stdout).toBeUndefined();
+  });
+
+  it("cli subscriber without command is logged as failed, not silently dropped", async () => {
+    const sub: ResolvedSubscriber = { ...makeSub('sub-1'), command: undefined };
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([sub], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed' }));
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      subscriberId: 'sub-1',
+      status: 'failed',
+      error: expect.stringContaining("type 'cli' but no 'command' field") as unknown as string,
+    }));
+  });
+
+  it('http subscriber without url is logged as failed', async () => {
+    const sub: ResolvedSubscriber = { ...makeSub('sub-1'), type: 'http', command: undefined, url: undefined };
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([sub], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'failed',
+      error: expect.stringContaining("type 'http' but no 'url' field") as unknown as string,
+    }));
+  });
+
+  it('missing WAL entry is logged as a diagnostic instead of stderr', async () => {
+    await dispatcher.dispatch([makeSub('sub-1')], makeEnvelope(), new Map());
+
+    expect(logger.logDiagnostic).toHaveBeenCalledWith({
+      source: 'AsyncDispatcher',
+      message: expect.stringContaining('no WAL entry for subscriber sub-1') as unknown as string,
+    });
   });
 });

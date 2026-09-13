@@ -14,6 +14,7 @@ import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import { runSelfCheck } from '@wadeck-app/shared-cli';
 import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
+import { LogFormatter } from './LogFormatter.js';
 import { getErrorMessage } from '../errors.js';
 import type { SubscriberConfig } from '../ConfigLoader.js';
 import { SubscribersYmlSchema } from '../ConfigLoader.js';
@@ -114,35 +115,6 @@ function getConfigDir(): string {
   return process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
 }
 
-function formatLogLine(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return '';
-  let entry: Record<string, unknown>;
-  try {
-    entry = JSON.parse(trimmed) as Record<string, unknown>;
-  } catch {
-    return trimmed;
-  }
-  const ts = typeof entry['ts'] === 'string' ? entry['ts'].slice(11, 19) : '??:??:??';
-  if (typeof entry['msg'] === 'string') {
-    // CLI invocation
-    const msg = (entry['msg'] as string).replace(/^cmd: /, '');
-    return `[${ts}] ${msg}`;
-  }
-  if (entry['type'] === 'dispatch') {
-    const status = entry['status'] as string;
-    const sub = entry['subscriberId'] as string;
-    const tgt = entry['target'] ? ` → ${entry['target']}` : '';
-    const dur = entry['durationMs'] !== undefined ? ` (${entry['durationMs']}ms)` : '';
-    const err = entry['error'] ? ` — ${entry['error']}` : '';
-    const attempts = entry['attempts'] !== undefined ? ` (attempts: ${entry['attempts']})` : '';
-    if (status === 'success') return `[${ts}] ✓ ${sub}${tgt}${dur}`;
-    if (status === 'failed') return `[${ts}] ✗ ${sub}${tgt}${err}${dur}`;
-    if (status === 'dlq')    return `[${ts}] ⚠ dlq ${sub}${tgt}${err}${attempts}`;
-  }
-  return trimmed;
-}
-
 async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = {}): Promise<void> {
   const { existsSync: fsExists, readFileSync: fsRead, watchFile, statSync, openSync, readSync, closeSync, unwatchFile } = await import('node:fs');
   const { join: pJoin } = await import('node:path');
@@ -156,7 +128,7 @@ async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = 
   if (fsExists(logFile)) {
     const content = fsRead(logFile, 'utf8');
     for (const line of content.split('\n')) {
-      const formatted = formatLogLine(line);
+      const formatted = LogFormatter.format(line);
       if (formatted) process.stdout.write(formatted + '\n');
     }
     offset = Buffer.byteLength(content, 'utf8');
@@ -174,7 +146,7 @@ async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = 
       closeSync(fd);
       offset = size;
       for (const line of buf.toString('utf8').split('\n')) {
-        const formatted = formatLogLine(line);
+        const formatted = LogFormatter.format(line);
         if (formatted) process.stdout.write(formatted + '\n');
       }
     });

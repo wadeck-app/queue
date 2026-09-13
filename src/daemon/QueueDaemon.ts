@@ -45,7 +45,7 @@ export async function startDaemon(configDir: string): Promise<void> {
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
   const configLoader = new ConfigLoader(configDir);
-  const syncDispatcher = new SyncDispatcher();
+  const syncDispatcher = new SyncDispatcher(eventLogger);
   const startedAt = Date.now();
   const asyncDispatcher = new AsyncDispatcher(
     (id, updates) => wal.updateEntry(id, updates),
@@ -80,7 +80,9 @@ export async function startDaemon(configDir: string): Promise<void> {
     if (wal.pendingCount() === 0 && activeDispatches === 0) {
       if (!idleCountdown) {
         idleCountdown = setTimeout(() => {
-          daemonHandle?.stop('idle' as ShutdownReason).catch(() => {});
+          daemonHandle?.stop('idle' as ShutdownReason).catch((err: unknown) => {
+            eventLogger.logDiagnostic({ source: 'QueueDaemon.idleShutdown', message: `idle stop failed: ${getErrorMessage(err)}` });
+          });
         }, IDLE_TIMEOUT_MS);
       }
     } else {
@@ -109,10 +111,32 @@ export async function startDaemon(configDir: string): Promise<void> {
           },
         };
 
-        const subscribers = configLoader.getSubscribers(req.event, cwd);
+        let subscribers: ResolvedSubscriber[];
+        try {
+          subscribers = configLoader.getSubscribers(req.event, cwd);
+        } catch (err) {
+          // Invalid subscribers.yml: surface it to the caller AND to the log file
+          const reason = getErrorMessage(err);
+          eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `config error for event ${req.event}: ${reason}` });
+          return { status: 'aborted', reason };
+        }
+
         const filtered = subscribers.filter(sub => {
           if (!sub.when) return true;
-          return PayloadFilter.matches(sub.when, envelope);
+          const evaluation = PayloadFilter.evaluate(sub.when, envelope);
+          if (!evaluation.matched) {
+            // Durable trace: the daemon's stderr is discarded, a `when:` typo would be invisible
+            eventLogger.logFilterMiss({
+              event: req.event,
+              subscriberId: sub.subscriberId,
+              filter: sub.when,
+              reason: evaluation.reason ?? 'unknown reason',
+              path: evaluation.path,
+              expected: evaluation.expected,
+              actual: evaluation.actual,
+            });
+          }
+          return evaluation.matched;
         });
 
         if (req.event.startsWith('before')) {
@@ -143,7 +167,7 @@ export async function startDaemon(configDir: string): Promise<void> {
 
         // Fire and forget
         asyncDispatcher.dispatch(filtered, envelope, walEntries).catch((err: unknown) => {
-          process.stderr.write(`[queue] AsyncDispatcher error: ${getErrorMessage(err)}\n`);
+          eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `AsyncDispatcher error for event ${req.event}: ${getErrorMessage(err)}` });
         });
 
         return { status: 'queued', subscriberCount: filtered.length };
@@ -159,9 +183,21 @@ export async function startDaemon(configDir: string): Promise<void> {
       if (!entry) return { status: 'not-found' };
 
       const cwd = entry.meta.cwd;
-      const subscribers = configLoader.getSubscribers(entry.event, cwd);
+      let subscribers: ResolvedSubscriber[];
+      try {
+        subscribers = configLoader.getSubscribers(entry.event, cwd);
+      } catch (err) {
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
+        return { status: 'error' };
+      }
       const sub = subscribers.find(s => s.subscriberId === entry.subscriberId);
-      if (!sub) return { status: 'error' };
+      if (!sub) {
+        eventLogger.logDiagnostic({
+          source: 'QueueDaemon.retry',
+          message: `subscriber ${entry.subscriberId} no longer exists in subscribers.yml for event ${entry.event}; WAL entry ${entry.id} cannot be retried`,
+        });
+        return { status: 'error' };
+      }
 
       const envelope: EventEnvelope = {
         id: entry.id,
@@ -174,7 +210,7 @@ export async function startDaemon(configDir: string): Promise<void> {
       const walEntries = new Map([[sub.subscriberId, entry]]);
       activeDispatches++;
       asyncDispatcher.dispatch([sub], envelope, walEntries).catch((err: unknown) => {
-        process.stderr.write(`[queue] retry dispatch error: ${getErrorMessage(err)}\n`);
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `retry dispatch error for ${entry.subscriberId} (WAL ${entry.id}): ${getErrorMessage(err)}` });
       }).finally(() => { activeDispatches--; });
 
       return { status: 'ok' };
@@ -194,11 +230,17 @@ export async function startDaemon(configDir: string): Promise<void> {
       const req = payload as ListSubscribersRequest | undefined;
       const cwd = process.env['QUEUE_PUSH_CWD'] ?? process.cwd();
       let subscribers: ResolvedSubscriber[];
-      if (req?.event) {
-        subscribers = configLoader.getSubscribers(req.event, cwd);
-      } else {
-        const all = configLoader.load(cwd);
-        subscribers = Array.from(all.values()).flat();
+      try {
+        if (req?.event) {
+          subscribers = configLoader.getSubscribers(req.event, cwd);
+        } else {
+          const all = configLoader.load(cwd);
+          subscribers = Array.from(all.values()).flat();
+        }
+      } catch (err) {
+        // Rethrow so the client reports it, but leave a durable trace first
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.list-subscribers', message: `config error: ${getErrorMessage(err)}` });
+        throw err;
       }
       return { subscribers };
     },
@@ -226,19 +268,33 @@ export async function startDaemon(configDir: string): Promise<void> {
       wal.append(walEntry);
       dlq.remove(entry.id);
 
-      const subscribers = configLoader.getSubscribers(entry.event, entry.meta.cwd);
-      const sub = subscribers.find(s => s.subscriberId === entry.subscriberId);
-      if (sub) {
-        const envelope: EventEnvelope = {
-          id: walEntry.id,
-          timestamp: walEntry.timestamp,
-          event: walEntry.event,
-          payload: walEntry.payload,
-          meta: walEntry.meta,
-        };
-        const walEntries = new Map([[sub.subscriberId, walEntry]]);
-        asyncDispatcher.dispatch([sub], envelope, walEntries).catch(() => {});
+      let subscribers: ResolvedSubscriber[];
+      try {
+        subscribers = configLoader.getSubscribers(entry.event, entry.meta.cwd);
+      } catch (err) {
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
+        return { status: 'ok' };
       }
+      const sub = subscribers.find(s => s.subscriberId === entry.subscriberId);
+      if (!sub) {
+        eventLogger.logDiagnostic({
+          source: 'QueueDaemon.dlq-replay',
+          message: `subscriber ${entry.subscriberId} no longer exists in subscribers.yml for event ${entry.event}; WAL entry ${walEntry.id} stays pending`,
+        });
+        return { status: 'ok' };
+      }
+
+      const envelope: EventEnvelope = {
+        id: walEntry.id,
+        timestamp: walEntry.timestamp,
+        event: walEntry.event,
+        payload: walEntry.payload,
+        meta: walEntry.meta,
+      };
+      const walEntries = new Map([[sub.subscriberId, walEntry]]);
+      asyncDispatcher.dispatch([sub], envelope, walEntries).catch((err: unknown) => {
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `replay dispatch error for ${entry.subscriberId} (WAL ${walEntry.id}): ${getErrorMessage(err)}` });
+      });
 
       return { status: 'ok' };
     },
@@ -266,8 +322,12 @@ export async function startDaemon(configDir: string): Promise<void> {
         for (const entry of pending) {
           try {
             RetryScheduler.scheduleRetry(entry);
-          } catch {
-            // orch may not be available; best-effort
+          } catch (err) {
+            // orch may not be available; best-effort, but the skipped entry must be traceable
+            eventLogger.logDiagnostic({
+              source: 'QueueDaemon.onStart',
+              message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
+            });
           }
         }
       },
@@ -279,8 +339,11 @@ export async function startDaemon(configDir: string): Promise<void> {
         for (const entry of pending) {
           try {
             RetryScheduler.scheduleRetry(entry, true);
-          } catch {
-            // best-effort
+          } catch (err) {
+            eventLogger.logDiagnostic({
+              source: 'QueueDaemon.onShutdown',
+              message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
+            });
           }
         }
       },
