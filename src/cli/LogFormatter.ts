@@ -13,7 +13,7 @@ export class LogFormatter {
     if (trimmed === '') return '';
     let entry: Record<string, unknown>;
     try {
-      entry = JSON.parse(trimmed) as Record<string, unknown>;
+      entry = JSON.parse(trimmed);
     } catch {
       return trimmed;
     }
@@ -27,7 +27,7 @@ export class LogFormatter {
     if (entry['type'] === 'dispatch') return LogFormatter.formatDispatch(ts, entry);
     if (entry['type'] === 'filter-miss') return LogFormatter.formatFilterMiss(ts, entry);
     if (entry['type'] === 'diagnostic') {
-      return `[${ts}] ℹ ${String(entry['source'])}: ${String(entry['message'])}`;
+      return `[${ts}] [info] ${String(entry['source'])}: ${String(entry['message'])}`;
     }
     return trimmed;
   }
@@ -35,15 +35,15 @@ export class LogFormatter {
   private static formatDispatch(ts: string, entry: Record<string, unknown>): string {
     const status = entry['status'] as string;
     const sub = entry['subscriberId'] as string;
-    const tgt = entry['target'] ? ` → ${String(entry['target'])}` : '';
+    const tgt = entry['target'] ? ` -> ${String(entry['target'])}` : '';
     const dur = entry['durationMs'] !== undefined ? ` (${String(entry['durationMs'])}ms)` : '';
-    const err = entry['error'] ? ` — ${String(entry['error'])}` : '';
+    const err = entry['error'] ? ` - ${String(entry['error'])}` : '';
     const attempts = entry['attempts'] !== undefined ? ` (attempts: ${String(entry['attempts'])})` : '';
     const output = LogFormatter.formatOutput(entry);
 
-    if (status === 'success') return `[${ts}] ✓ ${sub}${tgt}${dur}${output}`;
-    if (status === 'failed') return `[${ts}] ✗ ${sub}${tgt}${err}${dur}${output}`;
-    if (status === 'dlq') return `[${ts}] ⚠ dlq ${sub}${tgt}${err}${attempts}${output}`;
+    if (status === 'success') return `[${ts}] [ok] ${sub}${tgt}${dur}${output}`;
+    if (status === 'failed') return `[${ts}] [fail] ${sub}${tgt}${err}${dur}${output}`;
+    if (status === 'dlq') return `[${ts}] [warn] dlq ${sub}${tgt}${err}${attempts}${output}`;
     return JSON.stringify(entry);
   }
 
@@ -68,6 +68,6 @@ export class LogFormatter {
     const expected = entry['expected'] !== undefined ? ` expected "${String(entry['expected'])}"` : '';
     const actual = entry['actual'] !== undefined ? `, found "${String(entry['actual'])}"` : '';
     const details = `${path}${expected}${actual}`;
-    return `[${ts}] ⊘ filter-miss ${sub} when "${filter}" — ${reason}${details === '' ? '' : `:${details}`}`;
+    return `[${ts}] [miss] filter-miss ${sub} when "${filter}" - ${reason}${details === '' ? '' : `:${details}`}`;
   }
 }

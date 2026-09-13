@@ -10,7 +10,7 @@ function readRecords(logsDir: string): Record<string, unknown>[] {
   return content
     .split('\n')
     .filter(line => line.trim() !== '')
-    .map(line => JSON.parse(line) as Record<string, unknown>);
+    .map((line): Record<string, unknown> => JSON.parse(line));
 }
 
 describe('EventLogger', () => {

@@ -74,7 +74,7 @@ describe('AsyncDispatcher', () => {
     expect(walUpdater).toHaveBeenCalledWith(w2.id, expect.objectContaining({ status: 'acked' }));
   });
 
-  it('failed subscriber → WAL status updated to failed', async () => {
+  it('failed subscriber: WAL status updated to failed', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'exit code 1', durationMs: 1 });
 
     const sub = makeSub('sub-1');
@@ -86,7 +86,7 @@ describe('AsyncDispatcher', () => {
     expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed' }));
   });
 
-  it('retries=0 + failure → dlqMover called immediately', async () => {
+  it('retries=0 + failure: dlqMover called immediately', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'exit code 1', durationMs: 1 });
 
     const sub = { ...makeSub('sub-1'), retries: 0 };
@@ -118,7 +118,7 @@ describe('AsyncDispatcher', () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'err', durationMs: 1 });
 
     const sub = { ...makeSub('sub-1'), retries: 2 };
-    // Simulate entry that has already failed twice (attempts=2 >= retries=2 → DLQ)
+    // Simulate entry that has already failed twice (attempts=2 >= retries=2, moves to DLQ)
     const w = { ...makeWalEntry('sub-1'), attempts: 2 };
     const walEntries = new Map([['sub-1', w]]);
 

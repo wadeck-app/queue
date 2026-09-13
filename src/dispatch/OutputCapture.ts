@@ -27,7 +27,7 @@ export class OutputCapture {
   }
 
   /**
-   * Failure: both streams are kept — the cause is usually on stderr, but subscribers routinely
+   * Failure: both streams are kept - the cause is usually on stderr, but subscribers routinely
    * print their errors on stdout.
    * Success: only a non-empty stderr is kept (warnings a human should still see). stdout is dropped
    * on purpose: it is the sync-dispatch protocol channel and a chatty subscriber would bloat the

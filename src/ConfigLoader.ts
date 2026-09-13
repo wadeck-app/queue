@@ -148,7 +148,7 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   const eventCwd = ctx.eventCwd ? resolveCwd(ctx.fileDir, ctx.eventCwd) : baseCwd;
   const resolvedCwd = raw.cwd ? resolveCwd(ctx.fileDir, raw.cwd) : eventCwd;
 
-  // env resolution: merge from least to most specific (global → event → subscriber)
+  // env resolution: merge from least to most specific (global -> event -> subscriber)
   const mergedEnv: Record<string, string> | undefined = (() => {
     const layers = [ctx.globalEnv, ctx.eventEnv, raw.env].filter(Boolean) as Record<string, string>[];
     if (layers.length === 0) return undefined;

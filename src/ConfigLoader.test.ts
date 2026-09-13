@@ -148,7 +148,7 @@ describe('ConfigLoader - env resolution', () => {
     rmSync(globalDir, { recursive: true, force: true });
   });
 
-  it('no env configured → env is undefined', () => {
+  it('no env configured: env is undefined', () => {
     writeSubscribersYml(projectDir, `
 subscribers:
   onTest:

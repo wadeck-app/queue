@@ -61,7 +61,7 @@ export class SyncDispatcher {
       const stdout = result.stdout?.trim() ?? '';
 
       if (stdout === '') {
-        // Empty stdout → pass-through
+        // Empty stdout: pass-through
         // A non-empty stderr on success is still recorded: it is often the only hint of a problem
         if (captured.stderr !== undefined) {
           this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });

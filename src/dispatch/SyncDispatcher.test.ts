@@ -39,14 +39,14 @@ describe('SyncDispatcher', () => {
     dispatcher = new SyncDispatcher(logger);
   });
 
-  it('empty stdout → pass-through with original payload', async () => {
+  it('empty stdout: pass-through with original payload', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: true, stdout: '', durationMs: 1 });
     const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
     expect(result.action).toBe('continue');
     expect(result.payload).toEqual({ title: 'original' });
   });
 
-  it('invalid JSON on stdout → abort with reason', async () => {
+  it('invalid JSON on stdout: abort with reason', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: true, stdout: 'not-json', durationMs: 1 });
     const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
     expect(result.action).toBe('aborted');
@@ -64,7 +64,7 @@ describe('SyncDispatcher', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('timeout → abort with reason', async () => {
+  it('timeout: abort with reason', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'timeout after 5s', durationMs: 5000 });
     const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
     expect(result.action).toBe('aborted');
