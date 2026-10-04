@@ -133,3 +133,55 @@ describe('daemon lifecycle (integration)', () => {
     runCli(['stop']);
   }, 30_000);
 });
+
+describe('queue history (integration)', () => {
+  const event = 'onHistoryIntegration.test';
+
+  beforeAll(() => {
+    runCli(['sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"']);
+    runCli(['sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"', '--when', 'payload.skip=true']);
+    runCli(['start']);
+  });
+
+  afterAll(() => {
+    runCli(['stop']);
+    runCli(['sub', 'remove', event, '--index', '1']);
+    runCli(['sub', 'remove', event, '--index', '0']);
+  });
+
+  it('records a trigger with a matched subscriber and a filtered subscriber', async () => {
+    runCli(['push', event, JSON.stringify({ skip: false })]);
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const { stdout, exitCode } = runCli(['history', '--event', event, '--json']);
+    expect(exitCode).toBe(0);
+    const entries = JSON.parse(stdout) as Array<{ event: string; totalCount: number; matchedCount: number; subscribers: Array<{ status: string }> }>;
+
+    expect(entries).toHaveLength(1);
+    const [entry] = entries;
+    expect(entry!.totalCount).toBe(2);
+    expect(entry!.matchedCount).toBe(1);
+    expect(entry!.subscribers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: 'success' }),
+        expect.objectContaining({ status: 'filtered' }),
+      ]),
+    );
+  }, 15_000);
+
+  it('--status filtered narrows to events with a filtered subscriber', () => {
+    const { stdout } = runCli(['history', '--event', event, '--status', 'filtered', '--json']);
+    const entries = JSON.parse(stdout) as unknown[];
+    expect(entries.length).toBeGreaterThan(0);
+  });
+
+  it('records a trigger-only entry when no subscriber is configured for the event', async () => {
+    runCli(['push', 'unconfigured.history.integration.event', '{}']);
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const { stdout } = runCli(['history', '--event', 'unconfigured.history.integration.event', '--json']);
+    const entries = JSON.parse(stdout) as Array<{ totalCount: number; matchedCount: number; subscribers: unknown[] }>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ totalCount: 0, matchedCount: 0, subscribers: [] });
+  }, 15_000);
+});

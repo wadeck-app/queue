@@ -15,6 +15,9 @@ import { runSelfCheck } from '@wadeck-app/shared-cli';
 import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
 import { LogFormatter } from './LogFormatter.js';
+import { HistoryReader } from './HistoryReader.js';
+import { HistoryFormatter } from './HistoryFormatter.js';
+import type { HistoryFilter } from './HistoryReader.js';
 import { getErrorMessage } from '../errors.js';
 import type { SubscriberConfig } from '../ConfigLoader.js';
 import { SubscribersYmlSchema } from '../ConfigLoader.js';
@@ -35,6 +38,7 @@ Usage:
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
+  queue cli history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--json]
   queue cli --help
 `;
 
@@ -69,6 +73,9 @@ Concepts:
   other.*     Asynchronous: fire-and-forget, WAL-tracked, retried on failure
   subscriber  Configured in $QUEUE_CONFIG_DIR/subscribers.yml (global)
               or .queue/subscribers.yml (project, walks up from cwd)
+  logs        Verbose per-dispatch debug trail (stdout/stderr), today's file only
+  history     Terse audit trail: which events were triggered, which subscribers listened,
+              with what outcome; spans all available days
 
 Usage:
   queue push <event> <json> [--timeout <duration>]
@@ -86,9 +93,11 @@ Usage:
   queue start
   queue stop
   queue logs [--follow]
+  queue history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--json]
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
+  queue cli history [options]       (same options as queue history)
 
 Sub add/edit options:
   --timeout <duration>          Dispatch timeout, e.g. 30s, 5m (default: 30s)
@@ -152,6 +161,78 @@ async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = 
     });
     process.on('SIGINT', () => { unwatchFile(logFile); resolve(); });
   });
+}
+
+const HISTORY_STATUSES = ['success', 'failed', 'dlq', 'filtered'] as const;
+
+function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; errors: string[] } {
+  const errors: string[] = [];
+  const getArg = (flag: string): string | undefined => {
+    const idx = args.indexOf(flag);
+    if (idx === -1) return undefined;
+    const next = args[idx + 1];
+    if (!next || next.startsWith('--')) return undefined;
+    return next;
+  };
+
+  const filter: HistoryFilter = {};
+
+  const eventVal = getArg('--event');
+  if (eventVal) filter.event = eventVal;
+
+  const subscriberVal = getArg('--subscriber');
+  if (subscriberVal) filter.subscriberId = subscriberVal;
+
+  const statusVal = getArg('--status');
+  if (statusVal) {
+    if (!(HISTORY_STATUSES as readonly string[]).includes(statusVal)) {
+      errors.push(`--status must be one of ${HISTORY_STATUSES.join('|')}, got: ${statusVal}`);
+    } else {
+      filter.status = statusVal as HistoryFilter['status'];
+    }
+  }
+
+  const sinceVal = getArg('--since');
+  if (sinceVal) {
+    try {
+      filter.sinceMs = Date.now() - parseDuration(sinceVal.replace(/^-/, ''));
+    } catch (err) {
+      errors.push(`Invalid --since: ${getErrorMessage(err)} (expected Jira-style relative time, e.g. -3d, -2h, -30m)`);
+    }
+  }
+
+  return { filter, json: args.includes('--json'), errors };
+}
+
+async function queueHistoryCommand(configDir: string, args: string[]): Promise<void> {
+  warnUnknownArgs(
+    args,
+    ['--event', '--subscriber', '--status', '--since', '--json'],
+    'queue history',
+    new Set(['--event', '--subscriber', '--status', '--since']),
+  );
+  const { filter, json, errors } = parseHistoryFlags(args);
+  if (errors.length > 0) {
+    for (const err of errors) process.stderr.write(`[fail] ${err}\n`);
+    process.exit(1);
+  }
+
+  const reader = new HistoryReader(pathJoin(configDir, 'history'));
+  const entries = reader.read(filter);
+
+  if (json) {
+    process.stdout.write(JSON.stringify(entries, null, 2) + '\n');
+    return;
+  }
+
+  if (entries.length === 0) {
+    process.stdout.write('No history entries match.\n');
+    return;
+  }
+
+  for (const entry of entries) {
+    process.stdout.write(HistoryFormatter.format(entry) + '\n');
+  }
 }
 
 function formatUptime(sec: number): string {
@@ -595,6 +676,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Top-level alias for `queue cli history`
+  if (command === 'history') {
+    await queueHistoryCommand(configDir, rest);
+    return;
+  }
+
   if (command === 'cli') {
     const sub = rest[0];
 
@@ -655,6 +742,11 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (sub === 'history') {
+      await queueHistoryCommand(configDir, rest.slice(1));
+      return;
+    }
+
     if (sub === 'version') {
       warnUnknownArgs(rest.slice(1), [], 'queue cli version');
       const channel = readChannelFromConfig(configDir);
@@ -674,7 +766,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    process.stderr.write(`Unknown cli subcommand: ${sub}\nUse: queue cli version|self-check|update|logs\n`);
+    process.stderr.write(`Unknown cli subcommand: ${sub}\nUse: queue cli version|self-check|update|logs|history\n`);
     process.exit(1);
   }
 

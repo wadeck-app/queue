@@ -4,10 +4,15 @@ import { CliTransport } from './CliTransport.js';
 import { MAX_CAPTURED_BYTES } from './OutputCapture.js';
 import type { WalEntry } from '../storage/Wal.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
+import type { HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 
 function makeLogger(): QueueLogWriter {
   return { logDispatch: vi.fn(), logFilterMiss: vi.fn(), logDiagnostic: vi.fn() };
+}
+
+function makeHistoryLog(): HistoryWriter {
+  return { logTrigger: vi.fn(), logOutcome: vi.fn(), logFiltered: vi.fn() };
 }
 
 function makeEnvelope(): EventEnvelope {
@@ -49,13 +54,15 @@ describe('AsyncDispatcher', () => {
   let walUpdater: (id: string, updates: Partial<WalEntry>) => void;
   let dlqMover: (entry: WalEntry, lastError: string) => void;
   let logger: QueueLogWriter;
+  let historyLog: HistoryWriter;
   let dispatcher: AsyncDispatcher;
 
   beforeEach(() => {
     walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
     dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
     logger = makeLogger();
-    dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger);
+    historyLog = makeHistoryLog();
+    dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger, historyLog);
   });
 
   it('parallel dispatch: both subscribers called', async () => {
@@ -72,6 +79,8 @@ describe('AsyncDispatcher', () => {
     expect(spy).toHaveBeenCalledTimes(2);
     expect(walUpdater).toHaveBeenCalledWith(w1.id, expect.objectContaining({ status: 'acked' }));
     expect(walUpdater).toHaveBeenCalledWith(w2.id, expect.objectContaining({ status: 'acked' }));
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-1', status: 'success' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-2', status: 'success' });
   });
 
   it('failed subscriber: WAL status updated to failed', async () => {
@@ -136,13 +145,15 @@ describe('AsyncDispatcher - diagnosability', () => {
   let walUpdater: (id: string, updates: Partial<WalEntry>) => void;
   let dlqMover: (entry: WalEntry, lastError: string) => void;
   let logger: QueueLogWriter;
+  let historyLog: HistoryWriter;
   let dispatcher: AsyncDispatcher;
 
   beforeEach(() => {
     walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
     dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
     logger = makeLogger();
-    dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger);
+    historyLog = makeHistoryLog();
+    dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger, historyLog);
   });
 
   it('failed dispatch logs the child stdout and stderr', async () => {
@@ -218,6 +229,7 @@ describe('AsyncDispatcher - diagnosability', () => {
       status: 'failed',
       error: expect.stringContaining("type 'cli' but no 'command' field") as unknown as string,
     }));
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-1', status: 'failed' });
   });
 
   it('http subscriber without url is logged as failed', async () => {

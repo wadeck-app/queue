@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
+import { HistoryLog } from '../storage/HistoryLog.js';
 import { ConfigLoader, resolveProjectName } from '../ConfigLoader.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
 import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
@@ -44,8 +45,9 @@ export async function startDaemon(configDir: string): Promise<void> {
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
+  const historyLog = new HistoryLog(join(configDir, 'history'));
   const configLoader = new ConfigLoader(configDir);
-  const syncDispatcher = new SyncDispatcher(eventLogger);
+  const syncDispatcher = new SyncDispatcher(eventLogger, historyLog);
   const startedAt = Date.now();
   const asyncDispatcher = new AsyncDispatcher(
     (id, updates) => wal.updateEntry(id, updates),
@@ -63,6 +65,7 @@ export async function startDaemon(configDir: string): Promise<void> {
       wal.updateEntry(walEntry.id, { status: 'dlq' });
     },
     eventLogger,
+    historyLog,
   );
 
   let activeDispatches = 0;
@@ -135,8 +138,18 @@ export async function startDaemon(configDir: string): Promise<void> {
               expected: evaluation.expected,
               actual: evaluation.actual,
             });
+            historyLog.logFiltered({ eventId: envelope.id, event: req.event, subscriberId: sub.subscriberId });
           }
           return evaluation.matched;
+        });
+
+        // Recorded even with zero subscribers so `queue history` surfaces events nobody listens to
+        historyLog.logTrigger({
+          eventId: envelope.id,
+          event: req.event,
+          project: envelope.meta.projectName,
+          matchedCount: filtered.length,
+          totalCount: subscribers.length,
         });
 
         if (req.event.startsWith('before')) {

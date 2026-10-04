@@ -2,6 +2,7 @@ import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
 import { OutputCapture } from './OutputCapture.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
+import type { HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 
 export interface SyncResult {
@@ -23,6 +24,8 @@ export class SyncDispatcher {
   constructor(
     // Required: the daemon has no usable stderr, an absent logger would make every failure invisible
     private readonly logger: QueueLogWriter,
+    // Terse audit trail for `queue history`, written unconditionally unlike logger.logDispatch
+    private readonly historyLog: HistoryWriter,
   ) {}
 
   async dispatch(
@@ -38,12 +41,12 @@ export class SyncDispatcher {
       let result;
       if (sub.type === 'cli') {
         if (!sub.command) {
-          return this.abort(envelope.event, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
+          return this.abort(envelope, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
         }
         result = await this.cliTransport.dispatch(sub.command, currentEnvelope, timeoutMs, sub.cwd, sub.env);
       } else {
         if (!sub.url) {
-          return this.abort(envelope.event, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);
+          return this.abort(envelope, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);
         }
         result = await this.httpTransport.dispatch(sub.url, sub.method ?? 'POST', sub.headers, currentEnvelope, timeoutMs);
       }
@@ -55,7 +58,7 @@ export class SyncDispatcher {
         const reason = result.error?.startsWith('timeout')
           ? `subscriber timeout after ${Math.round(timeoutMs / 1000)}s`
           : result.error ?? 'dispatch failed';
-        return this.abort(envelope.event, sub, reason, target, result.durationMs, captured);
+        return this.abort(envelope, sub, reason, target, result.durationMs, captured);
       }
 
       const stdout = result.stdout?.trim() ?? '';
@@ -66,6 +69,8 @@ export class SyncDispatcher {
         if (captured.stderr !== undefined) {
           this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
         }
+        // History records every successful outcome, unlike logDispatch's noise-reduction above
+        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success' });
         continue;
       }
 
@@ -74,7 +79,7 @@ export class SyncDispatcher {
         parsed = JSON.parse(stdout) as SubscriberResponse;
       } catch {
         return this.abort(
-          envelope.event,
+          envelope,
           sub,
           'subscriber returned invalid JSON',
           target,
@@ -84,12 +89,14 @@ export class SyncDispatcher {
       }
 
       if (parsed.action === 'abort') {
+        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success' });
         return { action: 'aborted', reason: parsed.reason ?? 'aborted by subscriber' };
       }
 
       if (captured.stderr !== undefined) {
         this.logger.logDispatch({ event: sub.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
       }
+      this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success' });
 
       if (parsed.payload !== undefined) {
         currentPayload = parsed.payload;
@@ -101,7 +108,7 @@ export class SyncDispatcher {
 
   /** Aborts the chain and persists the reason with the subscriber output, not only to the caller. */
   private abort(
-    event: string,
+    envelope: EventEnvelope,
     sub: ResolvedSubscriber,
     reason: string,
     target?: string,
@@ -109,7 +116,7 @@ export class SyncDispatcher {
     captured: { stdout?: string; stderr?: string } = {},
   ): SyncResult {
     this.logger.logDispatch({
-      event,
+      event: envelope.event,
       subscriberId: sub.subscriberId,
       status: 'failed',
       target: target ?? sub.command ?? sub.url ?? '',
@@ -117,6 +124,7 @@ export class SyncDispatcher {
       error: reason,
       ...captured,
     });
+    this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed' });
     return { action: 'aborted', reason };
   }
 }

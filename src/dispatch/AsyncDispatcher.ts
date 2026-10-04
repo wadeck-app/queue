@@ -4,6 +4,7 @@ import { RetryScheduler } from './RetryScheduler.js';
 import { OutputCapture } from './OutputCapture.js';
 import type { WalEntry } from '../storage/Wal.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
+import type { HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { getErrorMessage } from '../errors.js';
 
@@ -16,6 +17,8 @@ export class AsyncDispatcher {
     private readonly dlqMover: (entry: WalEntry, lastError: string) => void,
     // Required: the daemon has no usable stderr, an absent logger would make every failure invisible
     private readonly logger: QueueLogWriter,
+    // Terse audit trail for `queue history`, written unconditionally unlike logger.logDispatch
+    private readonly historyLog: HistoryWriter,
   ) {}
 
   async dispatch(
@@ -37,13 +40,13 @@ export class AsyncDispatcher {
         let result;
         if (sub.type === 'cli') {
           if (!sub.command) {
-            this.failConfig(walEntry, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
+            this.failConfig(envelope, walEntry, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
             return;
           }
           result = await this.cliTransport.dispatch(sub.command, envelope, sub.timeoutMs, sub.cwd, sub.env);
         } else {
           if (!sub.url) {
-            this.failConfig(walEntry, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);
+            this.failConfig(envelope, walEntry, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);
             return;
           }
           result = await this.httpTransport.dispatch(sub.url, sub.method ?? 'POST', sub.headers, envelope, sub.timeoutMs);
@@ -54,12 +57,14 @@ export class AsyncDispatcher {
         if (result.success) {
           this.walUpdater(walEntry.id, { status: 'acked', ackedAt: new Date().toISOString() });
           this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
+          this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'success' });
         } else {
           const newAttempts = walEntry.attempts + 1;
           const lastError = result.error ?? 'unknown error';
           this.walUpdater(walEntry.id, { status: 'failed', lastError, attempts: newAttempts });
           if (newAttempts < sub.retries) {
             this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
+            this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed' });
             try {
               RetryScheduler.scheduleRetry({ ...walEntry, attempts: newAttempts });
             } catch (err) {
@@ -70,6 +75,7 @@ export class AsyncDispatcher {
             }
           } else {
             this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
+            this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq' });
             this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError);
           }
         }
@@ -78,7 +84,7 @@ export class AsyncDispatcher {
   }
 
   /** Misconfigured subscriber: fail the WAL entry and make the reason visible in the log file. */
-  private failConfig(walEntry: WalEntry, sub: ResolvedSubscriber, error: string): void {
+  private failConfig(envelope: EventEnvelope, walEntry: WalEntry, sub: ResolvedSubscriber, error: string): void {
     const attempts = walEntry.attempts + 1;
     this.walUpdater(walEntry.id, { status: 'failed', lastError: error, attempts });
     this.logger.logDispatch({
@@ -88,5 +94,6 @@ export class AsyncDispatcher {
       error,
       attempts,
     });
+    this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed' });
   }
 }

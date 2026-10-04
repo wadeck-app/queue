@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SyncDispatcher } from './SyncDispatcher.js';
 import { CliTransport } from './CliTransport.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
+import type { HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 
 function makeLogger(): QueueLogWriter {
   return { logDispatch: vi.fn(), logFilterMiss: vi.fn(), logDiagnostic: vi.fn() };
+}
+
+function makeHistoryLog(): HistoryWriter {
+  return { logTrigger: vi.fn(), logOutcome: vi.fn(), logFiltered: vi.fn() };
 }
 
 function makeEnvelope(): EventEnvelope {
@@ -32,11 +37,13 @@ function makeSub(id: string, command = 'echo ok'): ResolvedSubscriber {
 
 describe('SyncDispatcher', () => {
   let logger: QueueLogWriter;
+  let historyLog: HistoryWriter;
   let dispatcher: SyncDispatcher;
 
   beforeEach(() => {
     logger = makeLogger();
-    dispatcher = new SyncDispatcher(logger);
+    historyLog = makeHistoryLog();
+    dispatcher = new SyncDispatcher(logger, historyLog);
   });
 
   it('empty stdout: pass-through with original payload', async () => {
@@ -44,6 +51,7 @@ describe('SyncDispatcher', () => {
     const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
     expect(result.action).toBe('continue');
     expect(result.payload).toEqual({ title: 'original' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success' });
   });
 
   it('invalid JSON on stdout: abort with reason', async () => {
@@ -62,6 +70,7 @@ describe('SyncDispatcher', () => {
     expect(result.action).toBe('aborted');
     expect(result.reason).toBe('nope');
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success' });
   });
 
   it('timeout: abort with reason', async () => {
@@ -87,11 +96,13 @@ describe('SyncDispatcher', () => {
 
 describe('SyncDispatcher - diagnosability', () => {
   let logger: QueueLogWriter;
+  let historyLog: HistoryWriter;
   let dispatcher: SyncDispatcher;
 
   beforeEach(() => {
     logger = makeLogger();
-    dispatcher = new SyncDispatcher(logger);
+    historyLog = makeHistoryLog();
+    dispatcher = new SyncDispatcher(logger, historyLog);
   });
 
   it('failed dispatch persists stdout and stderr, not only the abort reason', async () => {
@@ -110,6 +121,7 @@ describe('SyncDispatcher - diagnosability', () => {
       stdout: 'checking…',
       stderr: 'Daemon did not start within 10000ms',
     }));
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'failed' });
   });
 
   it('invalid JSON abort persists the offending stdout', async () => {
@@ -133,12 +145,13 @@ describe('SyncDispatcher - diagnosability', () => {
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
   });
 
-  it('success with empty stderr logs nothing', async () => {
+  it('success with empty stderr logs nothing to the verbose log, but is still recorded in history', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: true, stdout: '', stderr: '', durationMs: 1 });
 
     await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
 
     expect(logger.logDispatch).not.toHaveBeenCalled();
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success' });
   });
 
   it('success with a non-empty stderr is recorded', async () => {
