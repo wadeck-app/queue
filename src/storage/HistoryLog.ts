@@ -24,8 +24,7 @@ export interface FilteredHistoryEntry {
   subscriberId: string;
   /** The raw `when:` expression from subscribers.yml, so a filtered entry says why it was skipped. */
   filter: string;
-  path?: string;
-  expected?: string;
+  /** Value actually found at the filter's path, when one was found. path/expected are already in `filter`, so they aren't duplicated here. */
   actual?: string;
 }
 

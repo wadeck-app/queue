@@ -25,10 +25,7 @@ export class HistoryFormatter {
 
   private static formatFilterDetail(sub: HistorySubscriberOutcome): string {
     if (!sub.filter) return '';
-    const path = sub.path !== undefined ? ` path "${sub.path}"` : '';
-    const expected = sub.expected !== undefined ? ` expected "${sub.expected}"` : '';
-    const actual = sub.actual !== undefined ? `, found "${sub.actual}"` : '';
-    const details = `${path}${expected}${actual}`;
-    return ` when "${sub.filter}"${details === '' ? '' : ` -${details}`}`;
+    const found = sub.actual !== undefined ? ` (found "${sub.actual}")` : '';
+    return ` when "${sub.filter}"${found}`;
   }
 }

@@ -58,8 +58,6 @@ describe('HistoryLog', () => {
       event: 'onTicket.created',
       subscriberId: 'onTicket.created[1]',
       filter: 'payload.exitCode=0',
-      path: 'payload.exitCode',
-      expected: '0',
       actual: '1',
     });
 
@@ -68,8 +66,6 @@ describe('HistoryLog', () => {
       eventId: 'ev-1',
       subscriberId: 'onTicket.created[1]',
       filter: 'payload.exitCode=0',
-      path: 'payload.exitCode',
-      expected: '0',
       actual: '1',
     });
   });

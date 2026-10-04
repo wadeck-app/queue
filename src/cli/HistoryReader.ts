@@ -8,8 +8,6 @@ export interface HistorySubscriberOutcome {
   target?: string;
   /** The raw `when:` expression, for filtered outcomes. */
   filter?: string;
-  path?: string;
-  expected?: string;
   actual?: string;
 }
 
@@ -122,8 +120,6 @@ export class HistoryReader {
         subscriberId: record['subscriberId'] as string,
         status: 'filtered',
         filter: record['filter'] as string | undefined,
-        path: record['path'] as string | undefined,
-        expected: record['expected'] as string | undefined,
         actual: record['actual'] as string | undefined,
       });
     }

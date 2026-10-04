@@ -143,8 +143,6 @@ export async function startDaemon(configDir: string): Promise<void> {
               event: req.event,
               subscriberId: sub.subscriberId,
               filter: sub.when,
-              path: evaluation.path,
-              expected: evaluation.expected,
               actual: evaluation.actual,
             });
           }
