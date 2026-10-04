@@ -29,8 +29,8 @@ describe('HistoryReader', () => {
   it('groups trigger, outcome and filtered records by eventId', () => {
     writeDay(historyDir, '2026-01-01', [
       { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onTicket.created', project: 'queue', matchedCount: 1, totalCount: 2 },
-      { ts: '2026-01-01T10:00:00.100Z', type: 'filtered', eventId: 'ev-1', event: 'onTicket.created', subscriberId: 'onTicket.created[1]' },
-      { ts: '2026-01-01T10:00:00.200Z', type: 'outcome', eventId: 'ev-1', event: 'onTicket.created', subscriberId: 'onTicket.created[0]', status: 'success' },
+      { ts: '2026-01-01T10:00:00.100Z', type: 'filtered', eventId: 'ev-1', event: 'onTicket.created', subscriberId: 'onTicket.created[1]', filter: 'payload.exitCode=0', path: 'payload.exitCode', expected: '0', actual: '1' },
+      { ts: '2026-01-01T10:00:00.200Z', type: 'outcome', eventId: 'ev-1', event: 'onTicket.created', subscriberId: 'onTicket.created[0]', status: 'success', target: 'echo ok' },
     ]);
 
     const [entry] = new HistoryReader(historyDir).read();
@@ -44,8 +44,8 @@ describe('HistoryReader', () => {
     });
     expect(entry!.subscribers).toEqual(
       expect.arrayContaining([
-        { subscriberId: 'onTicket.created[0]', status: 'success' },
-        { subscriberId: 'onTicket.created[1]', status: 'filtered' },
+        { subscriberId: 'onTicket.created[0]', status: 'success', target: 'echo ok' },
+        { subscriberId: 'onTicket.created[1]', status: 'filtered', filter: 'payload.exitCode=0', path: 'payload.exitCode', expected: '0', actual: '1' },
       ]),
     );
   });

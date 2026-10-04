@@ -70,7 +70,7 @@ export class SyncDispatcher {
           this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
         }
         // History records every successful outcome, unlike logDispatch's noise-reduction above
-        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success' });
+        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target });
         continue;
       }
 
@@ -89,14 +89,14 @@ export class SyncDispatcher {
       }
 
       if (parsed.action === 'abort') {
-        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success' });
+        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target });
         return { action: 'aborted', reason: parsed.reason ?? 'aborted by subscriber' };
       }
 
       if (captured.stderr !== undefined) {
         this.logger.logDispatch({ event: sub.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
       }
-      this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success' });
+      this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target });
 
       if (parsed.payload !== undefined) {
         currentPayload = parsed.payload;
@@ -115,16 +115,17 @@ export class SyncDispatcher {
     durationMs?: number,
     captured: { stdout?: string; stderr?: string } = {},
   ): SyncResult {
+    const resolvedTarget = target ?? sub.command ?? sub.url ?? '';
     this.logger.logDispatch({
       event: envelope.event,
       subscriberId: sub.subscriberId,
       status: 'failed',
-      target: target ?? sub.command ?? sub.url ?? '',
+      target: resolvedTarget,
       durationMs,
       error: reason,
       ...captured,
     });
-    this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed' });
+    this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed', target: resolvedTarget });
     return { action: 'aborted', reason };
   }
 }

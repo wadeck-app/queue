@@ -14,12 +14,19 @@ export interface OutcomeHistoryEntry {
   event: string;
   subscriberId: string;
   status: 'success' | 'failed' | 'dlq';
+  /** Resolved command or URL, so a failing/dlq'd outcome in `queue history` says what actually ran. */
+  target?: string;
 }
 
 export interface FilteredHistoryEntry {
   eventId: string;
   event: string;
   subscriberId: string;
+  /** The raw `when:` expression from subscribers.yml, so a filtered entry says why it was skipped. */
+  filter: string;
+  path?: string;
+  expected?: string;
+  actual?: string;
 }
 
 /**

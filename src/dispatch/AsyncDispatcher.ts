@@ -57,14 +57,14 @@ export class AsyncDispatcher {
         if (result.success) {
           this.walUpdater(walEntry.id, { status: 'acked', ackedAt: new Date().toISOString() });
           this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
-          this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'success' });
+          this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', target });
         } else {
           const newAttempts = walEntry.attempts + 1;
           const lastError = result.error ?? 'unknown error';
           this.walUpdater(walEntry.id, { status: 'failed', lastError, attempts: newAttempts });
           if (newAttempts < sub.retries) {
             this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
-            this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed' });
+            this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target });
             try {
               RetryScheduler.scheduleRetry({ ...walEntry, attempts: newAttempts });
             } catch (err) {
@@ -75,7 +75,7 @@ export class AsyncDispatcher {
             }
           } else {
             this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
-            this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq' });
+            this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target });
             this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError);
           }
         }
@@ -94,6 +94,6 @@ export class AsyncDispatcher {
       error,
       attempts,
     });
-    this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed' });
+    this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target: sub.command ?? sub.url });
   }
 }

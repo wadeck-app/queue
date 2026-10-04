@@ -51,7 +51,7 @@ describe('SyncDispatcher', () => {
     const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
     expect(result.action).toBe('continue');
     expect(result.payload).toEqual({ title: 'original' });
-    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success', target: 'echo ok' });
   });
 
   it('invalid JSON on stdout: abort with reason', async () => {
@@ -70,7 +70,7 @@ describe('SyncDispatcher', () => {
     expect(result.action).toBe('aborted');
     expect(result.reason).toBe('nope');
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success', target: 'echo ok' });
   });
 
   it('timeout: abort with reason', async () => {
@@ -121,7 +121,7 @@ describe('SyncDispatcher - diagnosability', () => {
       stdout: 'checking…',
       stderr: 'Daemon did not start within 10000ms',
     }));
-    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'failed' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'failed', target: 'echo ok' });
   });
 
   it('invalid JSON abort persists the offending stdout', async () => {
@@ -151,7 +151,7 @@ describe('SyncDispatcher - diagnosability', () => {
     await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
 
     expect(logger.logDispatch).not.toHaveBeenCalled();
-    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'success', target: 'echo ok' });
   });
 
   it('success with a non-empty stderr is recorded', async () => {

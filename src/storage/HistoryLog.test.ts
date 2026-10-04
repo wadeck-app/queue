@@ -43,22 +43,34 @@ describe('HistoryLog', () => {
     expect(typeof records[0]!['ts']).toBe('string');
   });
 
-  it('logOutcome persists eventId, subscriberId and status, without stdout/stderr fields', () => {
-    history.logOutcome({ eventId: 'ev-1', event: 'onTicket.created', subscriberId: 'onTicket.created[0]', status: 'success' });
+  it('logOutcome persists eventId, subscriberId, status and target, without stdout/stderr fields', () => {
+    history.logOutcome({ eventId: 'ev-1', event: 'onTicket.created', subscriberId: 'onTicket.created[0]', status: 'success', target: 'echo ok' });
 
     const record = readRecords(historyDir)[0]!;
-    expect(record).toMatchObject({ type: 'outcome', eventId: 'ev-1', subscriberId: 'onTicket.created[0]', status: 'success' });
+    expect(record).toMatchObject({ type: 'outcome', eventId: 'ev-1', subscriberId: 'onTicket.created[0]', status: 'success', target: 'echo ok' });
     expect(record['stdout']).toBeUndefined();
     expect(record['stderr']).toBeUndefined();
   });
 
-  it('logFiltered persists eventId and subscriberId', () => {
-    history.logFiltered({ eventId: 'ev-1', event: 'onTicket.created', subscriberId: 'onTicket.created[1]' });
+  it('logFiltered persists eventId, subscriberId and filter detail', () => {
+    history.logFiltered({
+      eventId: 'ev-1',
+      event: 'onTicket.created',
+      subscriberId: 'onTicket.created[1]',
+      filter: 'payload.exitCode=0',
+      path: 'payload.exitCode',
+      expected: '0',
+      actual: '1',
+    });
 
     expect(readRecords(historyDir)[0]).toMatchObject({
       type: 'filtered',
       eventId: 'ev-1',
       subscriberId: 'onTicket.created[1]',
+      filter: 'payload.exitCode=0',
+      path: 'payload.exitCode',
+      expected: '0',
+      actual: '1',
     });
   });
 

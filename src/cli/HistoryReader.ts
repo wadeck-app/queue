@@ -4,6 +4,13 @@ import { join } from 'node:path';
 export interface HistorySubscriberOutcome {
   subscriberId: string;
   status: 'success' | 'failed' | 'dlq' | 'filtered';
+  /** Resolved command or URL for success/failed/dlq outcomes. */
+  target?: string;
+  /** The raw `when:` expression, for filtered outcomes. */
+  filter?: string;
+  path?: string;
+  expected?: string;
+  actual?: string;
 }
 
 export interface HistoryEntry {
@@ -101,13 +108,24 @@ export class HistoryReader {
     if (type === 'outcome') {
       entry.ts = entry.ts ?? ts;
       entry.event = entry.event ?? (record['event'] as string);
-      entry.subscribers.push({ subscriberId: record['subscriberId'] as string, status: record['status'] as HistorySubscriberOutcome['status'] });
+      entry.subscribers.push({
+        subscriberId: record['subscriberId'] as string,
+        status: record['status'] as HistorySubscriberOutcome['status'],
+        target: record['target'] as string | undefined,
+      });
       return;
     }
     if (type === 'filtered') {
       entry.ts = entry.ts ?? ts;
       entry.event = entry.event ?? (record['event'] as string);
-      entry.subscribers.push({ subscriberId: record['subscriberId'] as string, status: 'filtered' });
+      entry.subscribers.push({
+        subscriberId: record['subscriberId'] as string,
+        status: 'filtered',
+        filter: record['filter'] as string | undefined,
+        path: record['path'] as string | undefined,
+        expected: record['expected'] as string | undefined,
+        actual: record['actual'] as string | undefined,
+      });
     }
   }
 

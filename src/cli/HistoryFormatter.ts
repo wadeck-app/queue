@@ -16,9 +16,19 @@ export class HistoryFormatter {
   }
 
   private static formatSubscriber(sub: HistorySubscriberOutcome): string {
-    if (sub.status === 'success') return `[ok] ${sub.subscriberId}`;
-    if (sub.status === 'failed') return `[fail] ${sub.subscriberId}`;
-    if (sub.status === 'dlq') return `[warn] dlq ${sub.subscriberId}`;
-    return `[miss] filtered ${sub.subscriberId}`;
+    const tgt = sub.target ? ` -> ${sub.target}` : '';
+    if (sub.status === 'success') return `[ok] ${sub.subscriberId}${tgt}`;
+    if (sub.status === 'failed') return `[fail] ${sub.subscriberId}${tgt}`;
+    if (sub.status === 'dlq') return `[warn] dlq ${sub.subscriberId}${tgt}`;
+    return `[miss] filtered ${sub.subscriberId}${HistoryFormatter.formatFilterDetail(sub)}`;
+  }
+
+  private static formatFilterDetail(sub: HistorySubscriberOutcome): string {
+    if (!sub.filter) return '';
+    const path = sub.path !== undefined ? ` path "${sub.path}"` : '';
+    const expected = sub.expected !== undefined ? ` expected "${sub.expected}"` : '';
+    const actual = sub.actual !== undefined ? `, found "${sub.actual}"` : '';
+    const details = `${path}${expected}${actual}`;
+    return ` when "${sub.filter}"${details === '' ? '' : ` -${details}`}`;
   }
 }

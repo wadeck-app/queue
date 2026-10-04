@@ -79,8 +79,8 @@ describe('AsyncDispatcher', () => {
     expect(spy).toHaveBeenCalledTimes(2);
     expect(walUpdater).toHaveBeenCalledWith(w1.id, expect.objectContaining({ status: 'acked' }));
     expect(walUpdater).toHaveBeenCalledWith(w2.id, expect.objectContaining({ status: 'acked' }));
-    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-1', status: 'success' });
-    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-2', status: 'success' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-1', status: 'success', target: 'echo ok' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-2', status: 'success', target: 'echo ok' });
   });
 
   it('failed subscriber: WAL status updated to failed', async () => {

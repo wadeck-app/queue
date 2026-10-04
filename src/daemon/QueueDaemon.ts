@@ -138,7 +138,15 @@ export async function startDaemon(configDir: string): Promise<void> {
               expected: evaluation.expected,
               actual: evaluation.actual,
             });
-            historyLog.logFiltered({ eventId: envelope.id, event: req.event, subscriberId: sub.subscriberId });
+            historyLog.logFiltered({
+              eventId: envelope.id,
+              event: req.event,
+              subscriberId: sub.subscriberId,
+              filter: sub.when,
+              path: evaluation.path,
+              expected: evaluation.expected,
+              actual: evaluation.actual,
+            });
           }
           return evaluation.matched;
         });
