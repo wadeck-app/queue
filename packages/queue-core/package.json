@@ -10,7 +10,7 @@
     "test": "vitest run --bail=1",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "clean": "rimraf dist dist-types"
+    "clean": "rimraf dist"
   },
   "dependencies": {
     "@wadeck-app/singleton-daemon-kit": "latest",

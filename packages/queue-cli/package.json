@@ -7,6 +7,7 @@
     "build": "tsc --build tsconfig.json",
     "bundle": "tsx ci/scripts/bundle.ts",
     "build-launcher": "node ci/scripts/build-launcher.mjs",
+    "pretest": "cd ../queue-core && npm run build",
     "test": "vitest run --bail=1",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
