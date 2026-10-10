@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { runQueueCommand } from './QueueIndex.js';
-import { getErrorMessage } from '../errors.js';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 afterEach(() => {
   vi.restoreAllMocks();

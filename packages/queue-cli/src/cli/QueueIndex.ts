@@ -19,9 +19,8 @@ import { HistoryReader } from './HistoryReader.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { HistoryFormatter } from './HistoryFormatter.js';
 import type { HistoryFilter, HistoryEntry } from './HistoryReader.js';
-import { getErrorMessage } from '../errors.js';
-import type { SubscriberConfig } from '../ConfigLoader.js';
-import { SubscribersYmlSchema } from '../ConfigLoader.js';
+import { getErrorMessage, SubscribersYmlSchema } from '@wadeck-app/queue-core';
+import type { SubscriberConfig } from '@wadeck-app/queue-core';
 
 declare const __QUEUE_CLI_VERSION__: string;
 

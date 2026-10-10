@@ -7,7 +7,6 @@ export default {
     'dist/**',
     'dist-bundle/**',
     'dist-types/**',
-    'packages/**',
   ],
   rules: {},
 } satisfies ViolationsConfig

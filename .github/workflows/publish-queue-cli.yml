@@ -87,10 +87,10 @@ jobs:
                   BUNDLE_VERSION: ${{ steps.version.outputs.version }}
 
             - name: Generate platform package directories
-              run: bash ci/scripts/generate-platform-packages.sh
+              run: bash packages/queue-cli/ci/scripts/generate-platform-packages.sh
 
             - name: Copy artifacts to platform packages
-              run: bash ci/scripts/copy-binaries.sh
+              run: bash packages/queue-cli/ci/scripts/copy-binaries.sh
 
             - name: Set version in all packages
               run: |

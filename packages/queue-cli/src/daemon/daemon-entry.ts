@@ -1,8 +1,6 @@
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { join } from 'node:path';
-import { startDaemon } from './QueueDaemon.js';
-import { EventLogger } from '../storage/EventLogger.js';
-import { getErrorMessage } from '../errors.js';
+import { startDaemon, EventLogger, getErrorMessage } from '@wadeck-app/queue-core';
 
 const configDir = process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
 startDaemon(configDir).catch((err: unknown) => {

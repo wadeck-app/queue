@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { runQueueCommand } from './QueueIndex.js';
-import { getErrorMessage } from '../errors.js';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 // --- module mocks (hoisted) ---
 

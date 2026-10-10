@@ -1,33 +1,21 @@
 {
-  "name": "@wadeck-app/queue-cli",
+  "name": "@wadeck-app/queue",
   "version": "0.1.0",
-  "type": "module",
   "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc --build tsconfig.json",
-    "bundle": "tsx ci/scripts/bundle.ts",
-    "build-launcher": "node ci/scripts/build-launcher.mjs",
-    "test": "vitest run --bail=1",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "preversion": "npm test",
-    "clean": "rimraf dist dist-bundle"
-  },
-  "dependencies": {
-    "@wadeck-app/shared-cli": "^2026.10.3-035-1e4adce3",
-    "@wadeck-app/shared-updater": "latest",
-    "@wadeck-app/singleton-daemon-kit": "latest",
-    "js-yaml": "^4.1.1",
-    "jsonpath-plus": "^10.3.0",
-    "zod": "^3.24.0"
+    "build": "npm run build --workspace=packages/queue-core && npm run build --workspace=packages/queue-cli",
+    "test": "npm run test --workspace=packages/queue-core && npm run test --workspace=packages/queue-cli",
+    "build-launcher": "npm run build-launcher --workspace=packages/queue-cli",
+    "bundle": "npm run bundle --workspace=packages/queue-cli",
+    "clean": "npm run clean --workspace=packages/queue-core && npm run clean --workspace=packages/queue-cli",
+    "preversion": "npm test"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
-    "@types/node": "^26.2.0",
     "@wadeck-app/violations-rules": "latest",
-    "esbuild": "^0.27.2",
-    "rimraf": "^6.0.1",
-    "tsx": "^4.7.0",
     "typescript": "^7.0.0",
     "vitest": "^4.0.14"
   },
