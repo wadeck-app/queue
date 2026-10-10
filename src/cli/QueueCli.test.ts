@@ -122,6 +122,15 @@ describe('queue cli logs', () => {
 	});
 });
 
+describe('queue cli history', () => {
+	it('is not a cli subcommand -- history is a domain concept, not CLI tooling, so only top-level `queue history` exists', async () => {
+		const { stderr, exitCode } = await run(['cli', 'history']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toMatch(/Unknown cli subcommand/);
+		expect(stderr).not.toMatch(/Use:.*history/);
+	});
+});
+
 describe('queue cli update', () => {
 	it('exits 1 with error message when updater bundle not found', async () => {
 		const { stderr, exitCode } = await run(['cli', 'update']);

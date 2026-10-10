@@ -16,8 +16,9 @@ import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
 import { LogFormatter } from './LogFormatter.js';
 import { HistoryReader } from './HistoryReader.js';
+import { diffNewEntries } from './HistoryFollower.js';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import type { HistoryFilter } from './HistoryReader.js';
+import type { HistoryFilter, HistoryEntry } from './HistoryReader.js';
 import { getErrorMessage } from '../errors.js';
 import type { SubscriberConfig } from '../ConfigLoader.js';
 import { SubscribersYmlSchema } from '../ConfigLoader.js';
@@ -38,8 +39,9 @@ Usage:
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
-  queue cli history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--json]
   queue cli --help
+
+history is a domain concept, not CLI tooling -- use 'queue history' (top-level only, no 'queue cli history').
 `;
 
 const SUB_GROUP_HELP = `queue sub - Subscriber management
@@ -93,11 +95,10 @@ Usage:
   queue start
   queue stop
   queue logs [--follow]
-  queue history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--json]
+  queue history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--follow|-f] [--json]
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
-  queue cli history [options]       (same options as queue history)
 
 Sub add/edit options:
   --timeout <duration>          Dispatch timeout, e.g. 30s, 5m (default: 30s)
@@ -207,7 +208,7 @@ function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boole
 async function queueHistoryCommand(configDir: string, args: string[]): Promise<void> {
   warnUnknownArgs(
     args,
-    ['--event', '--subscriber', '--status', '--since', '--json'],
+    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f'],
     'queue history',
     new Set(['--event', '--subscriber', '--status', '--since']),
   );
@@ -218,21 +219,43 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
   }
 
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
-  const entries = reader.read(filter);
+  const follow = args.includes('--follow') || args.includes('-f');
 
-  if (json) {
-    process.stdout.write(JSON.stringify(entries, null, 2) + '\n');
+  if (!follow) {
+    const entries = reader.read(filter);
+    if (json) {
+      process.stdout.write(JSON.stringify(entries, null, 2) + '\n');
+      return;
+    }
+    if (entries.length === 0) {
+      process.stdout.write('No history entries match.\n');
+      return;
+    }
+    for (const entry of entries) {
+      process.stdout.write(HistoryFormatter.format(entry) + '\n');
+    }
     return;
   }
 
-  if (entries.length === 0) {
-    process.stdout.write('No history entries match.\n');
-    return;
-  }
+  // Follow mode prints one entry per line (chronological), not the array/newest-first shape
+  // of a one-shot read: a live tail is a stream of updates, not a snapshot document.
+  const printEntry = (entry: HistoryEntry): void => {
+    process.stdout.write((json ? JSON.stringify(entry) : HistoryFormatter.format(entry)) + '\n');
+  };
 
-  for (const entry of entries) {
-    process.stdout.write(HistoryFormatter.format(entry) + '\n');
-  }
+  const initial = [...reader.read(filter)].sort((a, b) => a.ts.localeCompare(b.ts));
+  for (const entry of initial) printEntry(entry);
+  let snapshot = diffNewEntries(new Map(), initial).snapshot;
+
+  process.stderr.write(`[queue] Following ${pathJoin(configDir, 'history')}\n`);
+  await new Promise<void>((resolve) => {
+    const interval = setInterval(() => {
+      const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
+      snapshot = next;
+      for (const entry of changed) printEntry(entry);
+    }, 500);
+    process.on('SIGINT', () => { clearInterval(interval); resolve(); });
+  });
 }
 
 function formatUptime(sec: number): string {
@@ -676,7 +699,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Top-level alias for `queue cli history`
+  // Domain concept (audit trail), not CLI tooling -- top-level only, no `queue cli history`.
   if (command === 'history') {
     await queueHistoryCommand(configDir, rest);
     return;
@@ -742,11 +765,6 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (sub === 'history') {
-      await queueHistoryCommand(configDir, rest.slice(1));
-      return;
-    }
-
     if (sub === 'version') {
       warnUnknownArgs(rest.slice(1), [], 'queue cli version');
       const channel = readChannelFromConfig(configDir);
@@ -766,7 +784,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    process.stderr.write(`Unknown cli subcommand: ${sub}\nUse: queue cli version|self-check|update|logs|history\n`);
+    process.stderr.write(`Unknown cli subcommand: ${sub}\nUse: queue cli version|self-check|update|logs\n`);
     process.exit(1);
   }
 
