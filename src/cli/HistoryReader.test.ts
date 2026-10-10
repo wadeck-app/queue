@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HistoryReader } from './HistoryReader.js';
@@ -169,5 +169,48 @@ describe('HistoryReader', () => {
   it('throws on a malformed record instead of silently skipping it', () => {
     writeFileSync(join(historyDir, '2026-01-01.ndjson'), 'not json\n', 'utf-8');
     expect(() => new HistoryReader(historyDir).read()).toThrow(/Malformed history record/);
+  });
+
+  describe('per-file caching (queue history --follow polls the same reader repeatedly)', () => {
+    it('serves a file from cache when its mtime is unchanged, instead of re-parsing it', () => {
+      const filePath = join(historyDir, '2026-01-01.ndjson');
+      writeDay(historyDir, '2026-01-01', [
+        { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 0, totalCount: 0 },
+      ]);
+      const originalMtime = statSync(filePath).mtime;
+
+      const reader = new HistoryReader(historyDir);
+      reader.read();
+
+      // Corrupt the file without touching mtime: if read() re-parsed it, this would throw.
+      writeFileSync(filePath, 'not json\n', 'utf-8');
+      utimesSync(filePath, originalMtime, originalMtime);
+
+      expect(() => reader.read()).not.toThrow();
+      expect(reader.read()[0]).toMatchObject({ eventId: 'ev-1' });
+    });
+
+    it('re-reads a file once its mtime changes', () => {
+      const filePath = join(historyDir, '2026-01-01.ndjson');
+      writeDay(historyDir, '2026-01-01', [
+        { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 1, totalCount: 1 },
+      ]);
+
+      const reader = new HistoryReader(historyDir);
+      const [before] = reader.read();
+      expect(before!.subscribers).toEqual([]);
+
+      writeFileSync(
+        filePath,
+        JSON.stringify({ ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 1, totalCount: 1 }) + '\n' +
+        JSON.stringify({ ts: '2026-01-01T10:00:00.100Z', type: 'outcome', eventId: 'ev-1', event: 'onA', subscriberId: 'onA[0]', status: 'success' }) + '\n',
+        'utf-8',
+      );
+      const future = new Date(Date.now() + 60_000);
+      utimesSync(filePath, future, future);
+
+      const [after] = reader.read();
+      expect(after!.subscribers).toHaveLength(1);
+    });
   });
 });

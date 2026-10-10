@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface HistorySubscriberOutcome {
@@ -51,22 +51,18 @@ interface Accumulator {
 }
 
 export class HistoryReader {
+  // Keyed by filename, so `queue history --follow` -- which holds one reader across many
+  // polls -- only re-reads/re-parses a day file once its mtime actually changes, instead of
+  // paying full directory I/O + JSON.parse on every tick as history grows.
+  private readonly fileCache = new Map<string, { mtimeMs: number; records: Record<string, unknown>[] }>();
+
   constructor(private readonly historyDir: string) {}
 
   read(filter: HistoryFilter = {}): HistoryEntry[] {
     const acc = new Map<string, Accumulator>();
 
     for (const file of this.listFiles()) {
-      const content = readFileSync(join(this.historyDir, file), 'utf-8');
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed === '') continue;
-        let record: Record<string, unknown>;
-        try {
-          record = JSON.parse(trimmed);
-        } catch (err) {
-          throw new Error(`Malformed history record in ${file}: ${trimmed} (${(err as Error).message})`);
-        }
+      for (const record of this.readFileRecords(file)) {
         this.applyRecord(acc, record);
       }
     }
@@ -97,6 +93,31 @@ export class HistoryReader {
   private listFiles(): string[] {
     if (!existsSync(this.historyDir)) return [];
     return readdirSync(this.historyDir).filter(f => DATE_FILE.test(f)).sort();
+  }
+
+  private readFileRecords(file: string): Record<string, unknown>[] {
+    const filePath = join(this.historyDir, file);
+    // Rounded: utimes/stat round-trips can shift sub-millisecond precision on some
+    // filesystems even with no real content change, which would defeat the cache.
+    const mtimeMs = Math.round(statSync(filePath).mtimeMs);
+    const cached = this.fileCache.get(file);
+    if (cached && cached.mtimeMs === mtimeMs) {
+      return cached.records;
+    }
+
+    const content = readFileSync(filePath, 'utf-8');
+    const records: Record<string, unknown>[] = [];
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
+      try {
+        records.push(JSON.parse(trimmed));
+      } catch (err) {
+        throw new Error(`Malformed history record in ${file}: ${trimmed} (${(err as Error).message})`);
+      }
+    }
+    this.fileCache.set(file, { mtimeMs, records });
+    return records;
   }
 
   private applyRecord(acc: Map<string, Accumulator>, record: Record<string, unknown>): void {

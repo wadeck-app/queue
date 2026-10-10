@@ -1,5 +1,7 @@
-import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+
+const DATE_FILE = /^(\d{4}-\d{2}-\d{2})\.ndjson$/;
 
 export interface TriggerHistoryEntry {
   eventId: string;
@@ -46,9 +48,14 @@ export interface HistoryWriter {
 
 export class HistoryLog implements HistoryWriter {
   private readonly historyDir: string;
+  private readonly retentionDays: number;
 
-  constructor(historyDir: string) {
+  // Trigger records carry the push payload (for `queue replay`), which can contain secrets
+  // (see threat-model.md) -- unlike WAL/DLQ, nothing else ever clears a history entry, so a
+  // day-based retention window is the only thing bounding how long that payload is kept.
+  constructor(historyDir: string, retentionDays = 30) {
     this.historyDir = historyDir;
+    this.retentionDays = retentionDays;
   }
 
   private ensureDir(): void {
@@ -61,8 +68,22 @@ export class HistoryLog implements HistoryWriter {
     return new Date().toISOString().slice(0, 10);
   }
 
+  private pruneOldFiles(): void {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - this.retentionDays);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    for (const file of readdirSync(this.historyDir)) {
+      const match = DATE_FILE.exec(file);
+      if (match && match[1]! < cutoffStr) {
+        unlinkSync(join(this.historyDir, file));
+      }
+    }
+  }
+
   private write(type: 'trigger' | 'outcome' | 'filtered', entry: object): void {
     this.ensureDir();
+    this.pruneOldFiles();
     const file = join(this.historyDir, `${this.currentDateStr()}.ndjson`);
     appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), type, ...entry }) + '\n', 'utf-8');
   }

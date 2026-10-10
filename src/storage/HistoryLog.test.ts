@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HistoryLog } from './HistoryLog.js';
@@ -101,5 +101,45 @@ describe('HistoryLog', () => {
     const records = readRecords(historyDir);
     expect(records).toHaveLength(2);
     expect(records.every(r => r['eventId'] === 'ev-1')).toBe(true);
+  });
+
+  describe('retention (payloads must not accumulate forever -- see threat-model.md)', () => {
+    it('deletes day files older than the retention window on write', () => {
+      writeFileSync(join(historyDir, '2020-01-01.ndjson'), '{}\n', 'utf-8');
+      writeFileSync(join(historyDir, '2020-01-02.ndjson'), '{}\n', 'utf-8');
+
+      new HistoryLog(historyDir, 7).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
+
+      expect(existsSync(join(historyDir, '2020-01-01.ndjson'))).toBe(false);
+      expect(existsSync(join(historyDir, '2020-01-02.ndjson'))).toBe(false);
+    });
+
+    it('keeps day files within the retention window', () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      writeFileSync(join(historyDir, `${yesterday}.ndjson`), '{}\n', 'utf-8');
+
+      new HistoryLog(historyDir, 30).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
+
+      expect(existsSync(join(historyDir, `${yesterday}.ndjson`))).toBe(true);
+      expect(existsSync(join(historyDir, `${today}.ndjson`))).toBe(true);
+    });
+
+    it('ignores non-day-file entries in the history directory', () => {
+      writeFileSync(join(historyDir, 'not-a-day-file.txt'), 'irrelevant', 'utf-8');
+
+      new HistoryLog(historyDir, 7).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
+
+      expect(existsSync(join(historyDir, 'not-a-day-file.txt'))).toBe(true);
+      expect(readdirSync(historyDir)).toContain('not-a-day-file.txt');
+    });
+
+    it('defaults to a 30-day retention window', () => {
+      writeFileSync(join(historyDir, '2020-01-01.ndjson'), '{}\n', 'utf-8');
+
+      new HistoryLog(historyDir).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
+
+      expect(existsSync(join(historyDir, '2020-01-01.ndjson'))).toBe(false);
+    });
   });
 });
