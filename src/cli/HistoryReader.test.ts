@@ -60,6 +60,35 @@ describe('HistoryReader', () => {
     expect(entry!.subscribers).toEqual([]);
   });
 
+  it('reads the payload and replayOf recorded on the trigger, for queue replay', () => {
+    writeDay(historyDir, '2026-01-01', [
+      { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onTicket.created', matchedCount: 0, totalCount: 0, payload: { title: 'original' }, replayOf: 'ev-0' },
+    ]);
+
+    const [entry] = new HistoryReader(historyDir).read();
+    expect(entry).toMatchObject({ payload: { title: 'original' }, replayOf: 'ev-0' });
+  });
+
+  describe('findByEventId', () => {
+    it('returns the entry with the matching eventId', () => {
+      writeDay(historyDir, '2026-01-01', [
+        { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 0, totalCount: 0, payload: { a: 1 } },
+        { ts: '2026-01-01T11:00:00.000Z', type: 'trigger', eventId: 'ev-2', event: 'onB', matchedCount: 0, totalCount: 0, payload: { b: 2 } },
+      ]);
+
+      const entry = new HistoryReader(historyDir).findByEventId('ev-2');
+      expect(entry).toMatchObject({ eventId: 'ev-2', event: 'onB', payload: { b: 2 } });
+    });
+
+    it('returns undefined when no entry matches', () => {
+      writeDay(historyDir, '2026-01-01', [
+        { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 0, totalCount: 0 },
+      ]);
+
+      expect(new HistoryReader(historyDir).findByEventId('does-not-exist')).toBeUndefined();
+    });
+  });
+
   it('marks outcome/filtered records with no matching trigger as orphan, instead of dropping them', () => {
     writeDay(historyDir, '2026-01-01', [
       { ts: '2026-01-01T10:00:00.000Z', type: 'outcome', eventId: 'wal-1', event: 'onTicket.created', subscriberId: 'onTicket.created[0]', status: 'success' },

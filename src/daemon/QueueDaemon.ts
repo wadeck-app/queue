@@ -18,8 +18,8 @@ import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 export const DAEMON_PORT = 47910;
 export const IDLE_TIMEOUT_MS = 60_000;
 
-export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; }
-export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted'; result?: unknown; reason?: string; subscriberCount?: number; }
+export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; replayOf?: string; }
+export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted'; result?: unknown; reason?: string; subscriberCount?: number; eventId?: string; }
 export interface RetryRequest { eventId: string; }
 export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; }
 export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }
@@ -121,7 +121,7 @@ export async function startDaemon(configDir: string): Promise<void> {
           // Invalid subscribers.yml: surface it to the caller AND to the log file
           const reason = getErrorMessage(err);
           eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `config error for event ${req.event}: ${reason}` });
-          return { status: 'aborted', reason };
+          return { status: 'aborted', reason, eventId: envelope.id };
         }
 
         const filtered = subscribers.filter(sub => {
@@ -156,15 +156,17 @@ export async function startDaemon(configDir: string): Promise<void> {
           project: envelope.meta.projectName,
           matchedCount: filtered.length,
           totalCount: subscribers.length,
+          payload: req.payload,
+          replayOf: req.replayOf,
         });
 
         if (req.event.startsWith('before')) {
           const timeoutMs = req.timeout ?? 30_000;
           const syncResult = await syncDispatcher.dispatch(filtered, envelope, timeoutMs);
           if (syncResult.action === 'aborted') {
-            return { status: 'aborted', reason: syncResult.reason };
+            return { status: 'aborted', reason: syncResult.reason, eventId: envelope.id };
           }
-          return { status: 'dispatched', result: syncResult.payload };
+          return { status: 'dispatched', result: syncResult.payload, eventId: envelope.id };
         }
 
         // Async (onXxx)
@@ -189,7 +191,7 @@ export async function startDaemon(configDir: string): Promise<void> {
           eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `AsyncDispatcher error for event ${req.event}: ${getErrorMessage(err)}` });
         });
 
-        return { status: 'queued', subscriberCount: filtered.length };
+        return { status: 'queued', subscriberCount: filtered.length, eventId: envelope.id };
       } finally {
         activeDispatches--;
       }

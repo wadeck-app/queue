@@ -23,6 +23,10 @@ export interface HistoryEntry {
   subscribers: HistorySubscriberOutcome[];
   /** True when no `trigger` record was found for this eventId (e.g. a retry, which reuses the WAL entry id rather than the original push's eventId). */
   orphan: boolean;
+  /** Original push payload, so `queue replay <eventId>` can resubmit it unchanged. Absent for orphan entries. */
+  payload?: unknown;
+  /** Set when this trigger was created by `queue replay`, pointing at the eventId it replays. */
+  replayOf?: string;
 }
 
 export interface HistoryFilter {
@@ -41,6 +45,8 @@ interface Accumulator {
   project?: string;
   totalCount?: number;
   matchedCount?: number;
+  payload?: unknown;
+  replayOf?: string;
   subscribers: HistorySubscriberOutcome[];
 }
 
@@ -74,11 +80,18 @@ export class HistoryReader {
       matchedCount: a.matchedCount,
       subscribers: a.subscribers,
       orphan: a.totalCount === undefined,
+      payload: a.payload,
+      replayOf: a.replayOf,
     }));
 
     return entries
       .filter(e => this.matches(e, filter))
       .sort((a, b) => b.ts.localeCompare(a.ts));
+  }
+
+  /** Looks up a single entry by its exact eventId, for `queue replay <eventId>`. */
+  findByEventId(eventId: string): HistoryEntry | undefined {
+    return this.read().find(e => e.eventId === eventId);
   }
 
   private listFiles(): string[] {
@@ -101,6 +114,8 @@ export class HistoryReader {
       entry.project = record['project'] as string | undefined;
       entry.matchedCount = record['matchedCount'] as number;
       entry.totalCount = record['totalCount'] as number;
+      entry.payload = record['payload'];
+      entry.replayOf = record['replayOf'] as string | undefined;
       return;
     }
     if (type === 'outcome') {

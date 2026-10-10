@@ -185,3 +185,44 @@ describe('queue history (integration)', () => {
     expect(entries[0]).toMatchObject({ totalCount: 0, matchedCount: 0, subscribers: [] });
   }, 15_000);
 });
+
+describe('queue replay (integration)', () => {
+  const event = 'onReplayIntegration.test';
+
+  beforeAll(() => {
+    runCli(['sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"']);
+    runCli(['start']);
+  });
+
+  afterAll(() => {
+    runCli(['stop']);
+    runCli(['sub', 'remove', event, '--index', '0']);
+  });
+
+  it('replays a past event with its original payload under a new eventId, linked via replayOf', async () => {
+    const pushResult = runCli(['push', event, JSON.stringify({ marker: 'replay-me' })]);
+    expect(pushResult.exitCode).toBe(0);
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const originalEntries = JSON.parse(runCli(['history', '--event', event, '--json']).stdout) as Array<{ eventId: string; payload?: { marker?: string } }>;
+    const original = originalEntries.find(e => e.payload?.marker === 'replay-me');
+    expect(original).toBeDefined();
+
+    const replay = runCli(['replay', original!.eventId]);
+    expect(replay.exitCode, `stderr: ${replay.stderr}`).toBe(0);
+    expect(replay.stdout).toMatch(/replayed/);
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const allEntries = JSON.parse(runCli(['history', '--event', event, '--json']).stdout) as Array<{ eventId: string; replayOf?: string; payload?: unknown }>;
+    const replayed = allEntries.find(e => e.replayOf === original!.eventId);
+    expect(replayed).toBeDefined();
+    expect(replayed!.payload).toEqual({ marker: 'replay-me' });
+  }, 15_000);
+
+  it('fails with an actionable error for an unknown eventId', () => {
+    const { exitCode, stderr } = runCli(['replay', 'does-not-exist-eventid']);
+    expect(exitCode).toBe(1);
+    expect(stderr).toMatch(/No history entry found/);
+  });
+});

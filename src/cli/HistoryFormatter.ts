@@ -5,11 +5,12 @@ export class HistoryFormatter {
   static format(entry: HistoryEntry): string {
     const time = entry.ts.slice(11, 19);
     const project = entry.project ? `, project: ${entry.project}` : '';
+    const replay = entry.replayOf ? `, replay of ${entry.replayOf}` : '';
     const header = entry.orphan
-      ? `[${time}] ${entry.event} (eventId ${entry.eventId}${project}) - orphan outcome, no trigger record (likely a retry)`
+      ? `[${time}] ${entry.event} (eventId ${entry.eventId}${project}${replay}) - orphan outcome, no trigger record (likely a retry)`
       : entry.totalCount === 0
-        ? `[${time}] ${entry.event} (eventId ${entry.eventId}${project}) - no subscribers configured`
-        : `[${time}] ${entry.event} (eventId ${entry.eventId}${project}) - ${entry.matchedCount}/${entry.totalCount} matched`;
+        ? `[${time}] ${entry.event} (eventId ${entry.eventId}${project}${replay}) - no subscribers configured`
+        : `[${time}] ${entry.event} (eventId ${entry.eventId}${project}${replay}) - ${entry.matchedCount}/${entry.totalCount} matched`;
 
     const lines = entry.subscribers.map(sub => `    ${HistoryFormatter.formatSubscriber(sub)}`);
     return [header, ...lines].join('\n');

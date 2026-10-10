@@ -70,6 +70,24 @@ describe('HistoryLog', () => {
     });
   });
 
+  it('logTrigger persists the payload and replayOf, for `queue replay` to resubmit later', () => {
+    history.logTrigger({
+      eventId: 'ev-2',
+      event: 'onTicket.created',
+      matchedCount: 1,
+      totalCount: 1,
+      payload: { title: 'original' },
+      replayOf: 'ev-1',
+    });
+
+    expect(readRecords(historyDir)[0]).toMatchObject({
+      type: 'trigger',
+      eventId: 'ev-2',
+      payload: { title: 'original' },
+      replayOf: 'ev-1',
+    });
+  });
+
   it('creates the history directory when missing', () => {
     const nestedDir = join(historyDir, 'nested', 'history');
     new HistoryLog(nestedDir).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });

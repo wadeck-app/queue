@@ -82,6 +82,8 @@ Concepts:
 Usage:
   queue push <event> <json> [--timeout <duration>]
   queue retry --event <id>
+  queue replay <eventId>    Resubmit a past event's payload (from 'queue history') as a new event,
+                             tagged replayOf <eventId>. For manual testing, not delivery guarantees.
   queue status [--json]
   queue list-subscribers [event] [--json]
   queue dlq list
@@ -552,6 +554,38 @@ async function main(): Promise<void> {
     } else {
       process.stdout.write(JSON.stringify(response) + '\n');
     }
+    return;
+  }
+
+  if (command === 'replay') {
+    const eventId = rest[0];
+    if (!eventId) {
+      process.stderr.write('Usage: queue replay <eventId>\n');
+      process.exit(1);
+    }
+
+    const reader = new HistoryReader(pathJoin(configDir, 'history'));
+    const entry = reader.findByEventId(eventId);
+    if (!entry) {
+      process.stderr.write(`[fail] No history entry found for eventId ${eventId}\n`);
+      process.exit(1);
+    }
+    if (entry.payload === undefined) {
+      process.stderr.write(
+        `[fail] No payload recorded for eventId ${eventId} -- it predates 'queue replay' support, or it's an orphan outcome with no trigger record\n`
+      );
+      process.exit(1);
+    }
+
+    await ensureDaemon(configDir);
+    const client = createQueueClient(configDir);
+    const response = await client.send('push', { event: entry.event, payload: entry.payload, cwd: process.cwd(), replayOf: eventId });
+
+    if (response.status === 'aborted') {
+      process.stderr.write(`[queue] Replay aborted: ${response.reason ?? 'unknown reason'}\n`);
+      process.exit(1);
+    }
+    process.stdout.write(`[ok] replayed '${entry.event}' as eventId ${response.eventId ?? '?'} (replay of ${eventId})\n`);
     return;
   }
 

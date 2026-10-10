@@ -7,6 +7,10 @@ export interface TriggerHistoryEntry {
   project?: string;
   matchedCount: number;
   totalCount: number;
+  /** Original push payload, so `queue replay <eventId>` can resubmit it unchanged. */
+  payload?: unknown;
+  /** Set when this trigger was created by `queue replay`, pointing at the eventId it replays. */
+  replayOf?: string;
 }
 
 export interface OutcomeHistoryEntry {
