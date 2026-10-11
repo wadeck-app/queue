@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ModuleContext, ModuleRouteHandler } from './moduleContext.js';
+import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 const {
   mockGetStatus,
@@ -32,10 +32,21 @@ vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 
 import backend from './backend.js';
 
+// backend.ts narrows req to just the shape it reads (params/query/body) via its own cast;
+// a real FastifyRequest has 25+ properties we don't need to fake for these unit tests.
+function fakeReq(partial: Record<string, unknown> = {}): Parameters<ModuleRouteHandler>[0] {
+  return partial as unknown as Parameters<ModuleRouteHandler>[0];
+}
+
+// Same rationale as fakeReq: backend.ts only calls reply.code(n).send(body).
 function fakeReply() {
   const send = vi.fn((body: unknown) => body);
   const code = vi.fn((_status: number) => ({ send }));
   return { code, send };
+}
+
+function asReply(reply: ReturnType<typeof fakeReply>): Parameters<ModuleRouteHandler>[1] {
+  return reply as unknown as Parameters<ModuleRouteHandler>[1];
 }
 
 function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; ctx: ModuleContext } {
@@ -77,7 +88,7 @@ describe('backend', () => {
     backend(ctx);
     mockGetStatus.mockResolvedValue({ daemonRunning: true, pendingCount: 1, dlqCount: 0 });
     const reply = fakeReply();
-    await routes.get('GET /status')!({}, reply);
+    await routes.get('GET /status')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(200);
     expect(reply.send).toHaveBeenCalledWith({ daemonRunning: true, pendingCount: 1, dlqCount: 0 });
   });
@@ -87,7 +98,7 @@ describe('backend', () => {
     backend(ctx);
     mockReplayEvent.mockRejectedValue(new Error('No history entry found for eventId x'));
     const reply = fakeReply();
-    await routes.get('POST /history/:eventId/replay')!({ params: { eventId: 'x' } }, reply);
+    await routes.get('POST /history/:eventId/replay')!(fakeReq({ params: { eventId: 'x' } }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(409);
     expect(reply.send).toHaveBeenCalledWith({ error: 'No history entry found for eventId x' });
   });
@@ -97,7 +108,7 @@ describe('backend', () => {
     backend(ctx);
     mockListDlq.mockRejectedValue(new Error('Daemon is not running'));
     const reply = fakeReply();
-    await routes.get('GET /dlq')!({}, reply);
+    await routes.get('GET /dlq')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(503);
   });
 
@@ -106,7 +117,7 @@ describe('backend', () => {
     backend(ctx);
     mockPushEvent.mockResolvedValue({ status: 'queued', eventId: 'e1' });
     const reply = fakeReply();
-    await routes.get('POST /push')!({ body: { event: 'onFoo', payload: { a: 1 } } }, reply);
+    await routes.get('POST /push')!(fakeReq({ body: { event: 'onFoo', payload: { a: 1 } } }), asReply(reply));
     expect(mockPushEvent).toHaveBeenCalledWith(expect.any(String), 'onFoo', { a: 1 }, { cwd: undefined, timeout: undefined });
     expect(reply.code).toHaveBeenCalledWith(200);
   });

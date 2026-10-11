@@ -1,4 +1,4 @@
-import type { ModuleContext } from './moduleContext.js';
+import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 import { getQueueConfigDir } from './configDir.js';
 import { getStatus } from './status.js';
 import { listHistory, getHistoryEntry } from './history.js';
