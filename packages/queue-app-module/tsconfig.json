@@ -14,7 +14,7 @@
     "sourceMap": true,
     "inlineSources": true,
     "noEmitOnError": true,
-    "outDir": "dist",
+    "outDir": "api-backend/dist",
     "rootDir": "src",
     "types": ["vitest/globals", "node"]
   },

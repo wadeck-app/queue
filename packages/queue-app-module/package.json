@@ -3,15 +3,15 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./api-backend/dist/index.js",
+  "types": "./api-backend/dist/index.d.ts",
   "scripts": {
     "build": "tsc --build tsconfig.json",
     "pretest": "cd ../queue-core && npm run build",
     "test": "vitest run --bail=1",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "clean": "rimraf dist"
+    "clean": "rimraf api-backend/dist"
   },
   "dependencies": {
     "@wadeck-app/queue-core": "*",
