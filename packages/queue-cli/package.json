@@ -15,6 +15,7 @@
     "clean": "rimraf dist dist-bundle"
   },
   "dependencies": {
+    "@wadeck-app/app-module-queue": "*",
     "@wadeck-app/queue-core": "*",
     "@wadeck-app/shared-cli": "latest",
     "@wadeck-app/shared-updater": "latest",

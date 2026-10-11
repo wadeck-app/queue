@@ -1,9 +1,19 @@
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startDaemon, EventLogger, getErrorMessage } from '@wadeck-app/queue-core';
 
 const configDir = process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
-startDaemon(configDir).catch((err: unknown) => {
+
+// Bundle layout: app-module/manifest.json sits next to queue-daemon.cjs (see ci/scripts/bundle.ts).
+// TSC dev layout: sibling packages/app-module-queue/manifest.json, three levels up from
+// packages/queue-cli/dist/daemon/daemon-entry.js.
+const bundleManifest = fileURLToPath(new URL('./app-module/manifest.json', import.meta.url));
+const devManifest = fileURLToPath(new URL('../../../app-module-queue/manifest.json', import.meta.url));
+const manifestPath = existsSync(bundleManifest) ? bundleManifest : devManifest;
+
+startDaemon(configDir, { appCoreModule: { id: 'queue', manifestPath } }).catch((err: unknown) => {
   const message = `Failed to start: ${getErrorMessage(err)}`;
   // The daemon is spawned with stdio:'ignore', so stderr alone would lose the startup failure
   try {

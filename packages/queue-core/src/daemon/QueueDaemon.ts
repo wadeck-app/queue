@@ -14,6 +14,7 @@ import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
 import type { DlqEntry } from '../storage/DlqStore.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
+import { registerWithAppCore } from './AppCoreRegistration.js';
 
 export const DAEMON_PORT = 47910;
 export const IDLE_TIMEOUT_MS = 60_000;
@@ -41,7 +42,9 @@ export type QueueCommands = {
   'dlq-clear': (payload?: unknown) => DlqClearResponse;
 };
 
-export async function startDaemon(configDir: string): Promise<void> {
+export interface AppCoreModuleOptions { id: string; manifestPath: string; }
+
+export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions }): Promise<void> {
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
@@ -350,6 +353,16 @@ export async function startDaemon(configDir: string): Promise<void> {
               message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
             });
           }
+        }
+
+        // Re-register with app-core on every start/restart (unconditional, idempotent --
+        // confirmed with app-core-owner: /register always reloads the manifest fresh).
+        // Best-effort: never blocks or fails daemon startup.
+        if (options?.appCoreModule) {
+          const { id, manifestPath } = options.appCoreModule;
+          registerWithAppCore(id, manifestPath, entry => eventLogger.logDiagnostic(entry)).catch((err: unknown) => {
+            eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `app-core registration failed: ${getErrorMessage(err)}` });
+          });
         }
       },
       onShutdown: (_reason: ShutdownReason) => {

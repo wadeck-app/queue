@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
 import { execSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, mkdirSync, cpSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -74,7 +74,37 @@ await Promise.all([
     external: [],
     supported: { 'top-level-await': false },
   }),
+  build({
+    // app-module-queue's backend runs inside app-core's process via backendEntryPath, never
+    // imported by queue itself -- bundled here (not just tsc-compiled) so it ships self-contained
+    // with queue-cli, since app-module-queue is a private, unpublished workspace package.
+    entryPoints: [join(rootDir, '../app-module-queue/src/backend.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    target: 'node22',
+    // .cjs, not .js: this file lands under queue-cli's own package.json tree ("type": "module"),
+    // which would make Node treat a bare .js CJS bundle (uses require()) as ESM and crash on load.
+    outfile: join(rootDir, 'dist-bundle/app-module/api-backend/dist/backend.cjs'),
+    banner: sharedBanner,
+    define: sharedDefine,
+    external: [],
+    supported: { 'top-level-await': false },
+  }),
 ]);
+
+// Static app-module assets (manifest + DSL views) read by app-core at registration/render time --
+// plain file copies, not bundled.
+const appModuleSrcDir = join(rootDir, '../app-module-queue');
+const appModuleOutDir = join(rootDir, 'dist-bundle/app-module');
+mkdirSync(appModuleOutDir, { recursive: true });
+cpSync(join(appModuleSrcDir, 'dsl-frontend'), join(appModuleOutDir, 'dsl-frontend'), { recursive: true });
+
+// manifest.json's backendEntryPath is ".../backend.js" for the dev (unbundled, ESM) tree -- the
+// bundled artifact is .cjs instead (see comment above), so rewrite that one field on the copy.
+const appManifest = JSON.parse(readFileSync(join(appModuleSrcDir, 'manifest.json'), 'utf-8')) as { backendEntryPath: string };
+appManifest.backendEntryPath = './api-backend/dist/backend.cjs';
+writeFileSync(join(appModuleOutDir, 'manifest.json'), JSON.stringify(appManifest, null, 2));
 
 const updaterSize = statSync(updaterOutfile).size;
 if (updaterSize > MAX_UPDATER_SIZE) {
