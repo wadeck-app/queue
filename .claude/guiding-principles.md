@@ -1,0 +1,39 @@
+# Guiding Principles — queue
+
+## `before*` events are synchronous and can abort; `on*` events are async fire-and-forget
+
+This is a core protocol contract. `before*` events call `SyncDispatcher`, block until all subscribers respond within the timeout, and can return `{ action: 'aborted' }`. `on*` events are written to the WAL immediately and dispatched by `AsyncDispatcher` without blocking the caller. Never invert this.
+
+## WAL is the source of truth for in-flight events
+
+An event is not considered dispatched until the WAL entry is updated to `status: 'done'` or moved to the DLQ. Do not remove WAL entries prematurely. The WAL is replayed on daemon startup to reschedule any `pending` entries.
+
+## Config is merged: global first, then project-local
+
+`~/.config/queue/subscribers.yml` is loaded first; `.queue/subscribers.yml` in the project tree is merged on top. Subscribers from both apply. Never document or implement a "project overrides global" semantics — they accumulate.
+
+## Errors must be loud, not silent
+
+YAML parse errors in `subscribers.yml` throw with the file path and a fix hint. Zod validation failures throw with the full error and a schema hint. Do not silently skip invalid subscribers or return empty results.
+
+## Deploy via CI, never via local `node_modules` editing
+
+The deployment contract is: `git commit` + `git push` → CI publishes → `queue cli update`. Never validate behavior by editing `node_modules` or running `node dist-bundle/queue.cjs` directly. Test with the globally installed `queue` binary after `npm install -g`.
+
+## `QUEUE_CONFIG_DIR` env var is the only supported config location override
+
+Do not add other config location mechanisms. Document this env var in `--help` output.
+
+## Retry defaults: 5 retries, exponential backoff, 30s timeout
+
+These are the defaults in `ConfigLoader.toResolved()`. Any change to defaults is a breaking change for existing subscribers that don't override them explicitly.
+
+## Idle shutdown: 60s after queue is empty and no active dispatches
+
+`IDLE_TIMEOUT_MS = 60_000` in `QueueDaemon.ts`. The daemon self-terminates when `wal.pendingCount() === 0 && activeDispatches === 0`. On shutdown, pending WAL entries are rescheduled synchronously via `RetryScheduler.scheduleRetry(entry, true)`.
+
+## From lessons learned
+
+- Never validate behavior with `node dist-bundle/queue.cjs` directly — the correct workflow is `git commit && git push` → CI passes → `npm install -g @wadeck-app/queue-cli` → test with `queue <cmd>`; the Go launcher, file resolution paths, and published package content all diverge from the local bundle.
+- Never edit `node_modules` manually to simulate a deployment — changes made there are not representative of what CI publishes.
+- `generate-platform-packages.sh` controls the `files` field of each platform package — a binary present in `dist-bundle/` but absent from that script will not be distributed even after `copy-binaries.sh` runs.
