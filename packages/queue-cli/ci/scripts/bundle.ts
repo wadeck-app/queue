@@ -78,15 +78,24 @@ await Promise.all([
     // app-module-queue's backend runs inside app-core's process via backendEntryPath, never
     // imported by queue itself -- bundled here (not just tsc-compiled) so it ships self-contained
     // with queue-cli, since app-module-queue is a private, unpublished workspace package.
+    //
+    // Stays CJS (switching to format:'esm' broke singleton-daemon-kit's dynamic require() of
+    // node:fs/promises -- esbuild's ESM output has no require() to fall back on). The actual bug
+    // this footer fixes: app-core's loader.ts does `(await import(specifier))` then checks
+    // `typeof mod.default === 'function'`. Confirmed by direct reproduction: Node's CJS/ESM
+    // interop for a plain esbuild CJS bundle (module.exports = { default: fn }) makes the ESM
+    // import()'s `mod.default` equal the WHOLE exports object, not the inner fn -- cjs-module-lexer
+    // doesn't statically detect esbuild's `default` property pattern as a true named export here.
+    // The standard fix: collapse module.exports to just the function itself via a footer, so both
+    // require() and import() see a plain callable default -- no wrapper object to misinterpret.
     entryPoints: [join(rootDir, '../app-module-queue/src/backend.ts')],
     bundle: true,
     format: 'cjs',
     platform: 'node',
     target: 'node22',
-    // .cjs, not .js: this file lands under queue-cli's own package.json tree ("type": "module"),
-    // which would make Node treat a bare .js CJS bundle (uses require()) as ESM and crash on load.
     outfile: join(rootDir, 'dist-bundle/app-module/api-backend/dist/backend.cjs'),
     banner: sharedBanner,
+    footer: { js: 'module.exports = module.exports.default;' },
     define: sharedDefine,
     external: [],
     supported: { 'top-level-await': false },
@@ -100,8 +109,8 @@ const appModuleOutDir = join(rootDir, 'dist-bundle/app-module');
 mkdirSync(appModuleOutDir, { recursive: true });
 cpSync(join(appModuleSrcDir, 'dsl-frontend'), join(appModuleOutDir, 'dsl-frontend'), { recursive: true });
 
-// manifest.json's backendEntryPath is ".../backend.js" for the dev (unbundled, ESM) tree -- the
-// bundled artifact is .cjs instead (see comment above), so rewrite that one field on the copy.
+// manifest.json's backendEntryPath is ".../backend.js" for the dev (unbundled, tsc ESM) tree --
+// the bundled artifact is .cjs instead (see comment above), so rewrite that one field on the copy.
 const appManifest = JSON.parse(readFileSync(join(appModuleSrcDir, 'manifest.json'), 'utf-8')) as { backendEntryPath: string };
 appManifest.backendEntryPath = './api-backend/dist/backend.cjs';
 writeFileSync(join(appModuleOutDir, 'manifest.json'), JSON.stringify(appManifest, null, 2));
