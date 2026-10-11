@@ -1,4 +1,4 @@
-import type { HistoryEntry, HistorySubscriberOutcome } from './HistoryReader.js';
+import type { HistoryEntry, HistorySubscriberOutcome } from '@wadeck-app/queue-core';
 
 /** Renders `HistoryEntry[]` for `queue history`, parallel to LogFormatter but for the terse history journal. */
 export class HistoryFormatter {

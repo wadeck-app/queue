@@ -1,4 +1,4 @@
-import type { HistoryEntry } from './HistoryReader.js';
+import type { HistoryEntry } from '@wadeck-app/queue-core';
 
 /**
  * Diffs a fresh `HistoryReader.read()` result against a prior snapshot for `queue history --follow`.

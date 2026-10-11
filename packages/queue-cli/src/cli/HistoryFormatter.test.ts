@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import type { HistoryEntry } from './HistoryReader.js';
+import type { HistoryEntry } from '@wadeck-app/queue-core';
 
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
   return {

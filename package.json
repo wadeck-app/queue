@@ -7,11 +7,11 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace=packages/queue-core && npm run build --workspace=packages/queue-cli",
-    "test": "npm run test --workspace=packages/queue-core && npm run test --workspace=packages/queue-cli",
+    "build": "npm run build --workspace=packages/queue-core && npm run build --workspace=packages/queue-cli && npm run build --workspace=packages/queue-app-module",
+    "test": "npm run test --workspace=packages/queue-core && npm run test --workspace=packages/queue-cli && npm run test --workspace=packages/queue-app-module",
     "build-launcher": "npm run build-launcher --workspace=packages/queue-cli",
     "bundle": "npm run bundle --workspace=packages/queue-cli",
-    "clean": "npm run clean --workspace=packages/queue-core && npm run clean --workspace=packages/queue-cli",
+    "clean": "npm run clean --workspace=packages/queue-core && npm run clean --workspace=packages/queue-cli && npm run clean --workspace=packages/queue-app-module",
     "preversion": "npm test"
   },
   "devDependencies": {

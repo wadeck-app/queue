@@ -1,0 +1,29 @@
+{
+  "name": "@wadeck-app/queue-app-module",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --build tsconfig.json",
+    "pretest": "cd ../queue-core && npm run build",
+    "test": "vitest run --bail=1",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@wadeck-app/queue-core": "*",
+    "@wadeck-app/singleton-daemon-kit": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^7.0.0",
+    "vitest": "^4.0.14"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
