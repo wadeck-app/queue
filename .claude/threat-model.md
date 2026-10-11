@@ -14,6 +14,7 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 | `logs/` | Low–Medium — subscriber execution output | May contain secrets printed by subscribers |
 | `history/` | Medium — every trigger record stores the push payload verbatim (for `queue replay`), same sensitivity as WAL/DLQ | Bounded by `HistoryLog`'s day-based retention window (default 30 days, pruned on every write), unlike WAL (cleared on completion) or DLQ (bounded via `maxSize` eviction) which clear/evict individual entries |
 | Daemon port (47910) | Medium — any local process can send RPC commands | Localhost only |
+| `relay.yml` (`QUEUE_CONFIG_DIR`) | High — holds the relay Consumer token (high-entropy bearer credential for the remote webhook relay) | Same filesystem trust boundary as `subscribers.yml` |
 
 ## Threats and mitigations
 
@@ -50,6 +51,12 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 
 - **Threat:** HTTP subscribers receive the full event payload. If the target URL is untrusted or the request is logged by a proxy, payload data is exposed.
 - **Mitigation:** None in the tool. Callers control the URL and headers. Use `when:` filters to limit which payloads are forwarded.
+
+### Relay-sourced events pushed into the daemon (queue-relay-client)
+
+- **Threat:** The relay client (`packages/queue-relay-client` + per-Source plugins like `packages/plugin-github`) pushes events it received from a remote relay into the local daemon via the same `push` RPC any local process can already call. A compromised or malicious relay could push arbitrary payloads.
+- **Mitigation:** The relay already authenticates the webhook source (HMAC verification, GitHub's `X-Hub-Signature-256`) and the relay connection itself is token-authenticated (`relay.yml`'s Consumer token) — this is a trust transfer, not a new attack surface: pushing a relay-sourced event is no more privileged than any other local process calling `push` directly (same accepted risk as "Local process calling daemon RPC" above).
+- **Risk accepted:** Same single-user local trust model; the relay's own auth (out of this tool's scope) is the actual control point.
 
 ## Out-of-scope threats
 

@@ -4,6 +4,8 @@
 
 This is a single-machine local daemon. No cross-machine event routing, no pub/sub over a network, no persistent broker.
 
+**Carve-out:** `packages/queue-relay-client` (+ per-Source plugins like `packages/plugin-github`) makes Queue a *consumer* of one external push source (a GitHub/Slack/Jira webhook relay) — it does not turn Queue's own daemon into a distributed broker. No daemon-to-daemon routing is added; the relay client is just another local process calling the existing `push` RPC, same as the CLI or `app-module-queue` already do.
+
 ## Event ordering guarantees
 
 Events are dispatched in submission order within a single push, but cross-push ordering is not guaranteed. No ordered delivery or message sequencing primitives.

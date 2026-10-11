@@ -2,6 +2,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -14,13 +15,16 @@ import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import { runSelfCheck } from '@wadeck-app/shared-cli';
 import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
+import { createRelayClient } from './RelayClient.js';
 import { LogFormatter } from './LogFormatter.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, SubscribersYmlSchema, HistoryReader } from '@wadeck-app/queue-core';
+import { getErrorMessage, SubscribersYmlSchema, HistoryReader, spawnDetachedProcess } from '@wadeck-app/queue-core';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 
 declare const __QUEUE_CLI_VERSION__: string;
+
+const require = createRequire(import.meta.url);
 
 const VERSION = typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CLI_VERSION__ : '0.1.0-dev';
 
@@ -29,6 +33,13 @@ Usage:
   queue dlq list
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
+`;
+
+const RELAY_GROUP_HELP = `queue relay - GitHub/Slack/Jira webhook relay client
+Usage:
+  queue relay start   Start the relay client as a background process (reads relay.yml from QUEUE_CONFIG_DIR)
+  queue relay stop    Stop the relay client
+  queue relay status  Show whether the relay client is running and connected
 `;
 
 const CLI_GROUP_HELP = `queue cli - CLI management commands
@@ -93,6 +104,7 @@ Usage:
   queue sub edit <event> --index <N> --type cli|http [options] [--scope global|project]
   queue start
   queue stop
+  queue relay start|stop|status [--json]   Webhook relay client (reads relay.yml from QUEUE_CONFIG_DIR)
   queue logs [--follow]
   queue history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--follow|-f] [--json]
   queue cli self-check
@@ -326,6 +338,97 @@ async function ensureDaemon(configDir: string): Promise<void> {
       process.exit(1);
     }
   }
+}
+
+function spawnRelayDaemon(configDir: string): void {
+  // Not yet bundled into a standalone .cjs next to queue.cjs (ci/scripts/bundle.ts
+  // doesn't produce one -- a follow-up). require.resolve walks node_modules the
+  // standard way regardless of where npm workspaces hoists the package, so this
+  // works whether @wadeck-app/queue-relay-client lands in the root node_modules
+  // or nested under queue-cli's own.
+  const relayDaemonScript = require.resolve('@wadeck-app/queue-relay-client/dist/relay-daemon-entry.js');
+  spawnDetachedProcess(relayDaemonScript, { QUEUE_CONFIG_DIR: configDir });
+}
+
+async function waitForRelayDaemon(configDir: string, timeoutMs = 5000): Promise<boolean> {
+  const client = createRelayClient(configDir);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      if (await client.isRunning()) return true;
+    } catch {
+      // not yet
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return false;
+}
+
+async function relayCommand(configDir: string, rest: string[]): Promise<void> {
+  const sub = rest[0];
+
+  if (sub === '--help' || sub === '-h' || !sub) {
+    process.stdout.write(RELAY_GROUP_HELP);
+    return;
+  }
+
+  if (sub === 'start') {
+    const client = createRelayClient(configDir);
+    const running = await client.isRunning().catch(() => false);
+    if (running) {
+      process.stderr.write('[ok] relay client already running\n');
+      return;
+    }
+    spawnRelayDaemon(configDir);
+    const started = await waitForRelayDaemon(configDir, 5000);
+    if (started) {
+      process.stderr.write('[ok] relay client started\n');
+    } else {
+      process.stderr.write('[fail] relay client failed to start within 5s\n');
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === 'stop') {
+    const client = createRelayClient(configDir);
+    try {
+      // 'quit' is a built-in daemon command; cast to bypass typing
+      await (client.send as (cmd: string, payload?: unknown) => Promise<unknown>)('quit', undefined);
+      process.stdout.write('[ok] relay client stopped\n');
+    } catch {
+      process.stderr.write('[fail] relay client not running or failed to stop\n');
+    }
+    return;
+  }
+
+  if (sub === 'status') {
+    const jsonFlag = rest.includes('--json');
+    const client = createRelayClient(configDir);
+    const running = await client.isRunning().catch(() => false);
+    if (!running) {
+      const data = { relayRunning: false, connected: false };
+      if (process.stdout.isTTY && !jsonFlag) {
+        process.stdout.write('[fail] relay client: not running\n');
+      } else {
+        process.stdout.write(JSON.stringify(data) + '\n');
+      }
+      return;
+    }
+    const response = await client.send('status', undefined);
+    if (process.stdout.isTTY && !jsonFlag) {
+      process.stdout.write('[ok]  relay client: running\n');
+      process.stdout.write(`      connected:    ${response.connected ? 'yes' : 'no'}\n`);
+      process.stdout.write(`      uptime:       ${formatUptime(response.uptimeSec)}\n`);
+      process.stdout.write(`      pid:          ${response.pid}\n`);
+    } else {
+      process.stdout.write(JSON.stringify({ relayRunning: true, ...response }) + '\n');
+    }
+    return;
+  }
+
+  process.stderr.write(`Unknown relay subcommand: ${sub}\nUse: queue relay start|stop|status\n`);
+  process.exit(1);
 }
 
 function resolveSubsFile(configDir: string, scope: string): string {
@@ -721,6 +824,11 @@ async function main(): Promise<void> {
     } catch {
       process.stderr.write('[fail] daemon not running or failed to stop\n');
     }
+    return;
+  }
+
+  if (command === 'relay') {
+    await relayCommand(configDir, rest);
     return;
   }
 

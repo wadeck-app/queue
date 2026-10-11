@@ -7,7 +7,7 @@
     "build": "tsc --build tsconfig.json",
     "bundle": "tsx ci/scripts/bundle.ts",
     "build-launcher": "node ci/scripts/build-launcher.mjs",
-    "pretest": "cd ../queue-core && npm run build",
+    "pretest": "cd ../queue-core && npm run build && cd ../queue-relay-client && npm run build",
     "test": "vitest run --bail=1",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@wadeck-app/app-module-queue": "*",
     "@wadeck-app/queue-core": "*",
+    "@wadeck-app/queue-relay-client": "*",
     "@wadeck-app/shared-cli": "latest",
     "@wadeck-app/shared-updater": "latest",
     "@wadeck-app/singleton-daemon-kit": "latest",

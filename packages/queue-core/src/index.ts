@@ -3,6 +3,7 @@
 export { getErrorMessage } from './errors.js';
 export type { QueueCommands, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse } from './daemon/QueueDaemon.js';
 export { startDaemon } from './daemon/QueueDaemon.js';
+export { spawnDetachedProcess } from './daemon/spawnDetachedProcess.js';
 export type { SubscriberConfig } from './ConfigLoader.js';
 export { SubscribersYmlSchema } from './ConfigLoader.js';
 export { EventLogger } from './storage/EventLogger.js';

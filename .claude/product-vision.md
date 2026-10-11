@@ -7,16 +7,19 @@ A local event-queue daemon and CLI for developer workflow automation. Projects p
 ## Architecture
 
 ```
-queue push <event> <json>
-  → QueueDaemon (singleton, port 47910)
-      → ConfigLoader (global + project subscribers.yml)
-      → PayloadFilter (when: expression filter)
+queue push <event> <json>              queue-relay-client (own daemon, port 47911)
+  → QueueDaemon (singleton, port 47910)      → RelayConnection (WS to remote relay)
+      → ConfigLoader (global + project          → plugin-github / plugin-slack / ... (RelayPlugin)
+         subscribers.yml)                   → wakes QueueDaemon on demand, then calls `push`
+      → PayloadFilter (when: expression filter)        ↑
       → SyncDispatcher (before* events — blocking, can abort)
       → AsyncDispatcher (on* events — WAL + retry)
           → HttpTransport | CliTransport
           → RetryScheduler (on failure)
           → DLQ (after all retries exhausted)
 ```
+
+`queue-relay-client` is a separate always-on process, decoupled from `QueueDaemon`'s intentional 60s idle-shutdown (see guiding-principles.md). It connects to a remote webhook relay over WebSocket, authenticates with a Consumer token, and routes incoming envelopes to per-Source plugin packages (`@wadeck-app/plugin-github`, future `plugin-slack`/`plugin-jira`) via the `RelayPlugin` contract -- each plugin only knows how to map one Source's envelope to a Queue event; `queue-relay-client` itself has no Source-specific code. Managed via `queue relay start|stop|status`.
 
 ## Config model
 
@@ -25,6 +28,7 @@ queue push <event> <json>
 - Project name: inferred from nearest `.queue` marker directory name
 - Subscriber types: `cli` (shell command) or `http` (HTTP request)
 - Conditional dispatch: `when:` field accepts a JSONPath/expression filter against the event payload
+- Relay client config: `relay.yml` in `QUEUE_CONFIG_DIR` (relay URL, Consumer token, which plugin packages to load + their subscription filters) — see `packages/queue-relay-client`
 
 ## Current state (as of 2026-08)
 

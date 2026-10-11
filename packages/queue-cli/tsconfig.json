@@ -19,5 +19,5 @@
     "types": ["vitest/globals", "node"]
   },
   "include": ["src"],
-  "references": [{ "path": "../queue-core" }]
+  "references": [{ "path": "../queue-core" }, { "path": "../queue-relay-client" }]
 }

@@ -1,0 +1,27 @@
+{
+  "name": "@wadeck-app/plugin-github",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --build tsconfig.json",
+    "pretest": "cd ../queue-relay-client && npm run build",
+    "test": "vitest run --bail=1",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@wadeck-app/queue-relay-client": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^7.0.0",
+    "vitest": "^4.0.14"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
