@@ -7,7 +7,7 @@ import { listHistory, getHistoryEntry } from './history.js';
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'queue-app-module-history-'));
+  configDir = mkdtempSync(join(tmpdir(), 'app-module-queue-history-'));
   mkdirSync(join(configDir, 'history'));
 });
 

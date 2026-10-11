@@ -16,7 +16,7 @@ import { DaemonUnreachableError } from './errors.js';
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'queue-app-module-replay-'));
+  configDir = mkdtempSync(join(tmpdir(), 'app-module-queue-replay-'));
   mkdirSync(join(configDir, 'history'));
   mockSend.mockReset();
   mockIsRunning.mockReset();

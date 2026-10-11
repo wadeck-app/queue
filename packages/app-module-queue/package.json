@@ -1,5 +1,5 @@
 {
-  "name": "@wadeck-app/queue-app-module",
+  "name": "@wadeck-app/app-module-queue",
   "version": "0.1.0",
   "type": "module",
   "private": true,

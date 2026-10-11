@@ -67,7 +67,7 @@ beforeEach(() => {
 });
 
 describe('backend', () => {
-  it('registers one route per queue-app-module operation', () => {
+  it('registers one route per app-module-queue operation', () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
     expect([...routes.keys()]).toEqual([

@@ -1,4 +1,4 @@
-// Public API for @wadeck-app/queue-app-module, consumed by app-core's plugin dashboard.
+// Public API for @wadeck-app/app-module-queue, consumed by app-core's plugin dashboard.
 // Depends only on @wadeck-app/queue-core + @wadeck-app/singleton-daemon-kit -- never on
 // queue-cli, so the dashboard never pulls in CLI argument-parsing or the Go-launcher bundle.
 export { getStatus } from './status.js';
