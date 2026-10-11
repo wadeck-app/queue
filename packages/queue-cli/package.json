@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@wadeck-app/queue-core": "*",
-    "@wadeck-app/shared-cli": "^2026.10.3-035-1e4adce3",
+    "@wadeck-app/shared-cli": "latest",
     "@wadeck-app/shared-updater": "latest",
     "@wadeck-app/singleton-daemon-kit": "latest",
     "js-yaml": "^4.1.1",
