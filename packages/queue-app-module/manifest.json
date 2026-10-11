@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "backendEntryPath": "./dist/backend.js",
+  "extensionPoints": [
+    {
+      "kind": "widget",
+      "slot": "dashboard",
+      "label": "Queue Status",
+      "view": { "type": "path", "value": "./views/status-widget.yaml" }
+    },
+    {
+      "kind": "widget",
+      "slot": "dashboard",
+      "label": "Queue DLQ",
+      "view": { "type": "path", "value": "./views/dlq-widget.yaml" }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
+      "label": "Queue History",
+      "view": { "type": "path", "value": "./views/history-page.yaml" }
+    }
+  ]
+}

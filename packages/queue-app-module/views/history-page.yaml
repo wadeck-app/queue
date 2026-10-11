@@ -1,0 +1,16 @@
+# DataTable confirmed schema-backed (packages/dsl-ui/src/schemas/generated-node-schemas.ts,
+# DataTableNodeSchema): rows + columns[{key,label,format?,mono?}], confirmed via dsl-owner
+# research 2026-10-11. format enum includes "datetime", used below for the ts column.
+$sources:
+  history:
+    url: GET /api/modules/queue/history
+
+$type: DataTable
+rows: $sources.history.entries
+columns:
+  - { key: "ts", label: "Time", format: "datetime" }
+  - { key: "event", label: "Event" }
+  - { key: "eventId", label: "Event ID", mono: true }
+  - { key: "project", label: "Project" }
+  - { key: "matchedCount", label: "Matched" }
+  - { key: "totalCount", label: "Total" }
