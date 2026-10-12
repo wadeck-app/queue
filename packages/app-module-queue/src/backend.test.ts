@@ -93,6 +93,30 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ daemonRunning: true, pendingCount: 1, dlqCount: 0 });
   });
 
+  it('GET /history forwards limit/offset query params and sends the full page', () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListHistory.mockReturnValue({ entries: [], total: 42, limit: 5, offset: 10 });
+    const reply = fakeReply();
+    routes.get('GET /history')!(fakeReq({ query: { limit: '5', offset: '10' } }), asReply(reply));
+    expect(mockListHistory).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ event: undefined, subscriberId: undefined }),
+      { limit: 5, offset: 10 },
+    );
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ entries: [], total: 42, limit: 5, offset: 10 });
+  });
+
+  it('GET /history omits limit/offset when not provided, letting listHistory default them', () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListHistory.mockReturnValue({ entries: [], total: 0, limit: 20, offset: 0 });
+    const reply = fakeReply();
+    routes.get('GET /history')!(fakeReq({ query: {} }), asReply(reply));
+    expect(mockListHistory).toHaveBeenCalledWith(expect.any(String), expect.anything(), { limit: undefined, offset: undefined });
+  });
+
   it('POST /history/:eventId/replay returns 409 with the error message on ReplayError', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);

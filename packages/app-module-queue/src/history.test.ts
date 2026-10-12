@@ -21,8 +21,8 @@ function writeDay(date: string, records: Record<string, unknown>[]): void {
 }
 
 describe('listHistory', () => {
-  it('returns an empty array when no history dir content exists', () => {
-    expect(listHistory(configDir)).toEqual([]);
+  it('returns an empty page when no history dir content exists', () => {
+    expect(listHistory(configDir)).toEqual({ entries: [], total: 0, limit: 20, offset: 0 });
   });
 
   it('reads trigger + outcome records into a combined entry', () => {
@@ -30,10 +30,11 @@ describe('listHistory', () => {
       { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 1, totalCount: 1, payload: { a: 1 } },
       { type: 'outcome', ts: '2026-01-01T00:00:01.000Z', eventId: 'e1', event: 'onFoo', subscriberId: 'sub1', status: 'success' },
     ]);
-    const entries = listHistory(configDir);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ eventId: 'e1', event: 'onFoo', payload: { a: 1 }, orphan: false });
-    expect(entries[0].subscribers).toEqual([{ subscriberId: 'sub1', status: 'success', target: undefined }]);
+    const page = listHistory(configDir);
+    expect(page.entries).toHaveLength(1);
+    expect(page.total).toBe(1);
+    expect(page.entries[0]).toMatchObject({ eventId: 'e1', event: 'onFoo', payload: { a: 1 }, orphan: false });
+    expect(page.entries[0].subscribers).toEqual([{ subscriberId: 'sub1', status: 'success', target: undefined }]);
   });
 
   it('applies the event filter', () => {
@@ -41,7 +42,21 @@ describe('listHistory', () => {
       { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0 },
       { type: 'trigger', ts: '2026-01-01T00:00:01.000Z', eventId: 'e2', event: 'onBar', matchedCount: 0, totalCount: 0 },
     ]);
-    expect(listHistory(configDir, { event: 'onBar' }).map(e => e.eventId)).toEqual(['e2']);
+    expect(listHistory(configDir, { event: 'onBar' }).entries.map(e => e.eventId)).toEqual(['e2']);
+  });
+
+  it('applies limit/offset pagination, defaulting to 20', () => {
+    const records = Array.from({ length: 25 }, (_, i) => ({
+      type: 'trigger', ts: `2026-01-01T${String(i).padStart(2, '0')}:00:00.000Z`, eventId: `e${i}`, event: 'onFoo', matchedCount: 0, totalCount: 0,
+    }));
+    writeDay('2026-01-01', records);
+    const defaultPage = listHistory(configDir);
+    expect(defaultPage.entries).toHaveLength(20);
+    expect(defaultPage.total).toBe(25);
+
+    const customPage = listHistory(configDir, {}, { limit: 5, offset: 20 });
+    expect(customPage.entries).toHaveLength(5);
+    expect(customPage.entries[0]!.eventId).toBe('e4');
   });
 });
 

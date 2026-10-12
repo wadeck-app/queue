@@ -19,7 +19,7 @@ import { createRelayClient } from './RelayClient.js';
 import { LogFormatter } from './LogFormatter.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, SubscribersYmlSchema, HistoryReader, spawnDetachedProcess } from '@wadeck-app/queue-core';
+import { getErrorMessage, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess } from '@wadeck-app/queue-core';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 
 declare const __QUEUE_CLI_VERSION__: string;
@@ -106,10 +106,14 @@ Usage:
   queue stop
   queue relay start|stop|status [--json]   Webhook relay client (reads relay.yml from QUEUE_CONFIG_DIR)
   queue logs [--follow]
-  queue history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--follow|-f] [--json]
+  queue history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
+
+History options:
+  --limit, -n <N>   Max entries to show (default: 20, matches flow-cli's history pagination)
+  --offset <N>      Skip the first N matching entries (combine with --limit for paging)
 
 Sub add/edit options:
   --timeout <duration>          Dispatch timeout, e.g. 30s, 5m (default: 30s)
@@ -177,7 +181,7 @@ async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = 
 
 const HISTORY_STATUSES = ['success', 'failed', 'dlq', 'filtered'] as const;
 
-function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; errors: string[] } {
+function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; limit: number; offset: number; errors: string[] } {
   const errors: string[] = [];
   const getArg = (flag: string): string | undefined => {
     const idx = args.indexOf(flag);
@@ -213,17 +217,41 @@ function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boole
     }
   }
 
-  return { filter, json: args.includes('--json'), errors };
+  // --limit/--offset match flow-cli's HistoryCommand.ts convention (-n/--limit, --offset, same
+  // default of 20) -- history pagination should look the same across every CLI in the fleet.
+  let limit = DEFAULT_HISTORY_LIMIT;
+  const limitVal = getArg('--limit') ?? getArg('-n');
+  if (limitVal !== undefined) {
+    const parsed = Number(limitVal);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      errors.push(`--limit must be a positive integer, got: ${limitVal}`);
+    } else {
+      limit = parsed;
+    }
+  }
+
+  let offset = 0;
+  const offsetVal = getArg('--offset');
+  if (offsetVal !== undefined) {
+    const parsed = Number(offsetVal);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      errors.push(`--offset must be a non-negative integer, got: ${offsetVal}`);
+    } else {
+      offset = parsed;
+    }
+  }
+
+  return { filter, json: args.includes('--json'), limit, offset, errors };
 }
 
 async function queueHistoryCommand(configDir: string, args: string[]): Promise<void> {
   warnUnknownArgs(
     args,
-    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f'],
+    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f', '--limit', '-n', '--offset'],
     'queue history',
-    new Set(['--event', '--subscriber', '--status', '--since']),
+    new Set(['--event', '--subscriber', '--status', '--since', '--limit', '-n', '--offset']),
   );
-  const { filter, json, errors } = parseHistoryFlags(args);
+  const { filter, json, limit, offset, errors } = parseHistoryFlags(args);
   if (errors.length > 0) {
     for (const err of errors) process.stderr.write(`[fail] ${err}\n`);
     process.exit(1);
@@ -233,18 +261,25 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
   const follow = args.includes('--follow') || args.includes('-f');
 
   if (!follow) {
-    const entries = reader.read(filter);
+    const page = reader.readPage(filter, { limit, offset });
     if (json) {
-      process.stdout.write(JSON.stringify(entries, null, 2) + '\n');
+      process.stdout.write(JSON.stringify(page, null, 2) + '\n');
       return;
     }
-    if (entries.length === 0) {
+    if (page.entries.length === 0) {
       process.stdout.write('No history entries match.\n');
       return;
     }
-    for (const entry of entries) {
+    for (const entry of page.entries) {
       process.stdout.write(HistoryFormatter.format(entry) + '\n');
     }
+    const shownFrom = page.offset + 1;
+    const shownTo = page.offset + page.entries.length;
+    process.stdout.write(`\nShowing ${shownFrom}-${shownTo} of ${page.total}.`);
+    if (shownTo < page.total) {
+      process.stdout.write(` Use --offset ${shownTo} for next page.`);
+    }
+    process.stdout.write('\n');
     return;
   }
 

@@ -213,4 +213,53 @@ describe('HistoryReader', () => {
       expect(after!.subscribers).toHaveLength(1);
     });
   });
+
+  describe('readPage', () => {
+    function writeMany(count: number): void {
+      const records = Array.from({ length: count }, (_, i) => ({
+        ts: `2026-01-01T${String(i).padStart(2, '0')}:00:00.000Z`,
+        type: 'trigger',
+        eventId: `ev-${i}`,
+        event: 'onA',
+        matchedCount: 0,
+        totalCount: 0,
+      }));
+      writeDay(historyDir, '2026-01-01', records);
+    }
+
+    it('defaults to the first 20 entries, newest first', () => {
+      writeMany(25);
+      const page = new HistoryReader(historyDir).readPage();
+      expect(page.entries).toHaveLength(20);
+      expect(page.total).toBe(25);
+      expect(page.limit).toBe(20);
+      expect(page.offset).toBe(0);
+      expect(page.entries[0]!.eventId).toBe('ev-24');
+    });
+
+    it('respects explicit limit/offset', () => {
+      writeMany(25);
+      const page = new HistoryReader(historyDir).readPage({}, { limit: 5, offset: 20 });
+      expect(page.entries).toHaveLength(5);
+      expect(page.total).toBe(25);
+      expect(page.entries.map(e => e.eventId)).toEqual(['ev-4', 'ev-3', 'ev-2', 'ev-1', 'ev-0']);
+    });
+
+    it('applies the filter before paginating', () => {
+      writeDay(historyDir, '2026-01-01', [
+        { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 0, totalCount: 0 },
+        { ts: '2026-01-01T11:00:00.000Z', type: 'trigger', eventId: 'ev-2', event: 'onB', matchedCount: 0, totalCount: 0 },
+      ]);
+      const page = new HistoryReader(historyDir).readPage({ event: 'onB' });
+      expect(page.total).toBe(1);
+      expect(page.entries).toHaveLength(1);
+    });
+
+    it('returns an empty page past the end without error', () => {
+      writeMany(3);
+      const page = new HistoryReader(historyDir).readPage({}, { offset: 100 });
+      expect(page.entries).toEqual([]);
+      expect(page.total).toBe(3);
+    });
+  });
 });

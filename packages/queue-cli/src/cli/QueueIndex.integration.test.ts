@@ -155,10 +155,11 @@ describe('queue history (integration)', () => {
 
     const { stdout, exitCode } = runCli(['history', '--event', event, '--json']);
     expect(exitCode).toBe(0);
-    const entries = JSON.parse(stdout) as Array<{ event: string; totalCount: number; matchedCount: number; subscribers: Array<{ status: string }> }>;
+    const page = JSON.parse(stdout) as { entries: Array<{ event: string; totalCount: number; matchedCount: number; subscribers: Array<{ status: string }> }>; total: number };
 
-    expect(entries).toHaveLength(1);
-    const [entry] = entries;
+    expect(page.entries).toHaveLength(1);
+    expect(page.total).toBe(1);
+    const [entry] = page.entries;
     expect(entry!.totalCount).toBe(2);
     expect(entry!.matchedCount).toBe(1);
     expect(entry!.subscribers).toEqual(
@@ -171,8 +172,8 @@ describe('queue history (integration)', () => {
 
   it('--status filtered narrows to events with a filtered subscriber', () => {
     const { stdout } = runCli(['history', '--event', event, '--status', 'filtered', '--json']);
-    const entries = JSON.parse(stdout) as unknown[];
-    expect(entries.length).toBeGreaterThan(0);
+    const page = JSON.parse(stdout) as { entries: unknown[] };
+    expect(page.entries.length).toBeGreaterThan(0);
   });
 
   it('records a trigger-only entry when no subscriber is configured for the event', async () => {
@@ -180,9 +181,9 @@ describe('queue history (integration)', () => {
     await new Promise(resolve => setTimeout(resolve, 300));
 
     const { stdout } = runCli(['history', '--event', 'unconfigured.history.integration.event', '--json']);
-    const entries = JSON.parse(stdout) as Array<{ totalCount: number; matchedCount: number; subscribers: unknown[] }>;
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ totalCount: 0, matchedCount: 0, subscribers: [] });
+    const page = JSON.parse(stdout) as { entries: Array<{ totalCount: number; matchedCount: number; subscribers: unknown[] }> };
+    expect(page.entries).toHaveLength(1);
+    expect(page.entries[0]).toMatchObject({ totalCount: 0, matchedCount: 0, subscribers: [] });
   }, 15_000);
 });
 
@@ -204,8 +205,8 @@ describe('queue replay (integration)', () => {
     expect(pushResult.exitCode).toBe(0);
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    const originalEntries = JSON.parse(runCli(['history', '--event', event, '--json']).stdout) as Array<{ eventId: string; payload?: { marker?: string } }>;
-    const original = originalEntries.find(e => e.payload?.marker === 'replay-me');
+    const originalPage = JSON.parse(runCli(['history', '--event', event, '--json']).stdout) as { entries: Array<{ eventId: string; payload?: { marker?: string } }> };
+    const original = originalPage.entries.find(e => e.payload?.marker === 'replay-me');
     expect(original).toBeDefined();
 
     const replay = runCli(['replay', original!.eventId]);
@@ -214,8 +215,8 @@ describe('queue replay (integration)', () => {
 
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    const allEntries = JSON.parse(runCli(['history', '--event', event, '--json']).stdout) as Array<{ eventId: string; replayOf?: string; payload?: unknown }>;
-    const replayed = allEntries.find(e => e.replayOf === original!.eventId);
+    const allPage = JSON.parse(runCli(['history', '--event', event, '--json']).stdout) as { entries: Array<{ eventId: string; replayOf?: string; payload?: unknown }> };
+    const replayed = allPage.entries.find(e => e.replayOf === original!.eventId);
     expect(replayed).toBeDefined();
     expect(replayed!.payload).toEqual({ marker: 'replay-me' });
   }, 15_000);

@@ -1,4 +1,5 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 import { getQueueConfigDir } from './configDir.js';
 import { getStatus } from './status.js';
 import { listHistory, getHistoryEntry } from './history.js';
@@ -23,19 +24,28 @@ export default function (ctx: ModuleContext): void {
 
   ctx.registerRoute('GET', '/history', (req, reply) => {
     const query = (req as { query?: QueryParams }).query ?? {};
-    const entries = listHistory(configDir, {
-      event: query['event'],
-      subscriberId: query['subscriberId'],
-      status: query['status'] as 'success' | 'failed' | 'dlq' | 'filtered' | undefined,
-      sinceMs: query['sinceMs'] ? Number(query['sinceMs']) : undefined,
-    });
-    return reply.code(200).send({ entries });
+    const page = listHistory(
+      configDir,
+      {
+        event: query['event'],
+        subscriberId: query['subscriberId'],
+        status: query['status'] as 'success' | 'failed' | 'dlq' | 'filtered' | undefined,
+        sinceMs: query['sinceMs'] ? Number(query['sinceMs']) : undefined,
+      },
+      {
+        limit: query['limit'] ? Number(query['limit']) : undefined,
+        offset: query['offset'] ? Number(query['offset']) : undefined,
+      },
+    );
+    return reply.code(200).send(page);
   });
 
   ctx.registerRoute('GET', '/history/:eventId', (req, reply) => {
     const { eventId } = (req as { params: { eventId: string } }).params;
     const entry = getHistoryEntry(configDir, eventId);
-    if (!entry) return reply.code(404).send({ error: `No history entry for eventId ${eventId}` });
+    if (!entry) {
+      return reply.code(404).send({ error: `No history entry for eventId ${eventId}` });
+    }
     return reply.code(200).send(entry);
   });
 
@@ -44,7 +54,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(await replayEvent(configDir, eventId));
     } catch (err) {
-      return reply.code(409).send({ error: err instanceof Error ? err.message : String(err) });
+      return reply.code(409).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -52,7 +62,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send({ entries: await listDlq(configDir) });
     } catch (err) {
-      return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
+      return reply.code(503).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -61,7 +71,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(await replayDlqEntry(configDir, id));
     } catch (err) {
-      return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
+      return reply.code(503).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -70,7 +80,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(await clearDlqEntry(configDir, id));
     } catch (err) {
-      return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
+      return reply.code(503).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -80,7 +90,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send({ subscribers: await listSubscribers(configDir, cwd, query['event']) });
     } catch (err) {
-      return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
+      return reply.code(503).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -89,7 +99,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(await pushEvent(configDir, body.event, body.payload, { cwd: body.cwd, timeout: body.timeout }));
     } catch (err) {
-      return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
+      return reply.code(503).send({ error: getErrorMessage(err) });
     }
   });
 }

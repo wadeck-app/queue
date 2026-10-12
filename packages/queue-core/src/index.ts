@@ -8,6 +8,7 @@ export type { SubscriberConfig } from './ConfigLoader.js';
 export { SubscribersYmlSchema } from './ConfigLoader.js';
 export { EventLogger } from './storage/EventLogger.js';
 export { HistoryReader } from './storage/HistoryReader.js';
-export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome } from './storage/HistoryReader.js';
+export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage } from './storage/HistoryReader.js';
+export { DEFAULT_HISTORY_LIMIT } from './storage/HistoryReader.js';
 export type { DlqEntry } from './storage/DlqStore.js';
 export type { ResolvedSubscriber } from './types.js';

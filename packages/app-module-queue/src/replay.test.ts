@@ -28,7 +28,9 @@ afterEach(() => {
 
 function writeTrigger(eventId: string, event: string, payload?: unknown): void {
   const record: Record<string, unknown> = { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId, event, matchedCount: 0, totalCount: 0 };
-  if (payload !== undefined) record.payload = payload;
+  if (payload !== undefined) {
+    record.payload = payload;
+  }
   writeFileSync(join(configDir, 'history', '2026-01-01.ndjson'), JSON.stringify(record) + '\n');
 }
 

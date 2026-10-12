@@ -36,6 +36,18 @@ export interface HistoryFilter {
   sinceMs?: number;
 }
 
+export interface HistoryPage {
+  entries: HistoryEntry[];
+  /** Total entries matching the filter, before slicing -- for a "Showing X-Y of Z" footer. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Matches flow-cli's HistoryCommand.ts convention (-n/--limit, --offset, same default) -- history
+ * pagination should look the same across every CLI in the fleet, not reinvent a shape per project. */
+export const DEFAULT_HISTORY_LIMIT = 20;
+
 const DATE_FILE = /^\d{4}-\d{2}-\d{2}\.ndjson$/;
 
 interface Accumulator {
@@ -88,6 +100,19 @@ export class HistoryReader {
   /** Looks up a single entry by its exact eventId, for `queue replay <eventId>`. */
   findByEventId(eventId: string): HistoryEntry | undefined {
     return this.read().find(e => e.eventId === eventId);
+  }
+
+  /**
+   * Paginated read, newest-first -- the default entry point for any one-shot listing (CLI or
+   * HTTP). `--follow`/live-tail intentionally bypasses this and calls `read()` directly: tailing
+   * and paging are different operations (same split flow-cli and task-cli both make), slicing a
+   * live tail by page would just make entries disappear as new ones arrive.
+   */
+  readPage(filter: HistoryFilter = {}, pagination: { limit?: number; offset?: number } = {}): HistoryPage {
+    const limit = pagination.limit ?? DEFAULT_HISTORY_LIMIT;
+    const offset = pagination.offset ?? 0;
+    const all = this.read(filter);
+    return { entries: all.slice(offset, offset + limit), total: all.length, limit, offset };
   }
 
   private listFiles(): string[] {
