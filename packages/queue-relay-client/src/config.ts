@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { z } from 'zod';
 import { getErrorMessage } from '@wadeck-app/queue-core';
+import { resolveRelayToken } from './secrets.js';
 
 const SubscriptionConfigSchema = z.object({
   eventType: z.array(z.string()).optional(),
@@ -71,16 +72,25 @@ export const RelayConfigSchema = z.object({
         });
       }
     }),
-  token: z.string().min(1),
+  /** Token is resolved from env/secrets after this schema validates; may be undefined during parsing. */
+  token: z.string().min(1).optional(),
   plugins: z.array(PluginConfigSchema).default([]),
 });
 
-export type RelayConfig = z.infer<typeof RelayConfigSchema>;
+export type RelayConfig = Omit<z.infer<typeof RelayConfigSchema>, 'token'> & {
+  /** Always present after loadRelayConfig succeeds; resolved from env/secrets or relay.yml. */
+  token: string;
+  /** Indicates where the token came from. */
+  tokenSource?: 'env' | 'secrets' | 'relay.yml';
+};
 export type PluginConfig = z.infer<typeof PluginConfigSchema>;
 export type SubscriptionConfig = z.infer<typeof SubscriptionConfigSchema>;
 
-/** Re-read every time, same "no caching, no file-watcher" philosophy ConfigLoader.ts uses for subscribers.yml. */
-export function loadRelayConfig(configDir: string): RelayConfig | null {
+/**
+ * Re-read every time, same "no caching, no file-watcher" philosophy ConfigLoader.ts uses for subscribers.yml.
+ * Resolves the relay token from env/secrets and returns the config with tokenSource set.
+ */
+export function loadRelayConfig(configDir: string): (RelayConfig & { tokenSource: 'env' | 'secrets' | 'relay.yml' }) | null {
   const filePath = join(configDir, 'relay.yml');
   if (!existsSync(filePath)) return null;
 
@@ -98,8 +108,22 @@ export function loadRelayConfig(configDir: string): RelayConfig | null {
   if (!result.success) {
     throw new Error(
       `[queue-relay-client] Invalid relay.yml at ${filePath}:\n${result.error.toString()}\n` +
-      `Expected { relayUrl, token, plugins: [{ module, subscriptions: [{ eventType?, payloadMatch?, queueEvent? }] }] }.`
+      `Expected { relayUrl, plugins: [{ module, subscriptions: [{ eventType?, payloadMatch?, queueEvent? }] }] }; ` +
+      `token is resolved from environment or _secrets_/.env.local, not from relay.yml (see docs).`
     );
   }
-  return result.data;
+
+  // Resolve token from env/secrets
+  const tokenResolution = resolveRelayToken({
+    configDir,
+    relayYmlToken: result.data.token,
+  });
+
+  const config: RelayConfig & { tokenSource: 'env' | 'secrets' | 'relay.yml' } = {
+    ...result.data,
+    token: tokenResolution.token,
+    tokenSource: tokenResolution.source,
+  };
+
+  return config;
 }

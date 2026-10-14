@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -12,9 +12,27 @@ function makeTmpDir(): string {
 
 describe('loadRelayConfig', () => {
   let configDir: string;
+  let originalEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    // Save original env and set test token
+    originalEnv = {};
+    ['QUEUE_RELAY_TOKEN', 'QUEUE_SECRETS_DIR'].forEach((key) => {
+      originalEnv[key] = process.env[key];
+    });
+    process.env['QUEUE_RELAY_TOKEN'] = 'test-token-env';
+  });
 
   afterEach(() => {
     rmSync(configDir, { recursive: true, force: true });
+    // Restore original env
+    Object.entries(originalEnv).forEach(([key, value]) => {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    });
   });
 
   it('returns null when relay.yml does not exist', () => {
@@ -22,11 +40,10 @@ describe('loadRelayConfig', () => {
     expect(loadRelayConfig(configDir)).toBeNull();
   });
 
-  it('parses a valid relay.yml', () => {
+  it('parses a valid relay.yml without token (resolved from env)', () => {
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: wss://relay.example.com/relay-ws
-token: test-token
 plugins:
   - module: "@wadeck-app/plugin-github"
     subscriptions:
@@ -36,9 +53,31 @@ plugins:
     const config = loadRelayConfig(configDir);
     expect(config).not.toBeNull();
     expect(config?.relayUrl).toBe('wss://relay.example.com/relay-ws');
+    expect(config?.token).toBe('test-token-env');
+    expect(config?.tokenSource).toBe('env');
     expect(config?.plugins).toHaveLength(1);
     expect(config?.plugins[0]?.module).toBe('@wadeck-app/plugin-github');
     expect(config?.plugins[0]?.subscriptions[0]?.eventType).toEqual(['pull_request', 'push']);
+  });
+
+  it('still parses relay.yml with token field (backward compat, warns deprecated)', () => {
+    configDir = makeTmpDir();
+    writeFileSync(join(configDir, 'relay.yml'), `
+relayUrl: wss://relay.example.com/relay-ws
+token: test-token-yaml
+plugins:
+  - module: "@wadeck-app/plugin-github"
+    subscriptions:
+      - eventType: [pull_request, push]
+`, 'utf-8');
+
+    // Clear env token to fall back to relay.yml
+    delete process.env['QUEUE_RELAY_TOKEN'];
+
+    const config = loadRelayConfig(configDir);
+    expect(config).not.toBeNull();
+    expect(config?.token).toBe('test-token-yaml');
+    expect(config?.tokenSource).toBe('relay.yml');
   });
 
   it('throws with a fix hint on invalid YAML', () => {
@@ -49,15 +88,24 @@ plugins:
 
   it('throws with a schema hint when relayUrl is missing', () => {
     configDir = makeTmpDir();
-    writeFileSync(join(configDir, 'relay.yml'), 'token: test-token\n', 'utf-8');
+    writeFileSync(join(configDir, 'relay.yml'), 'plugins: []\n', 'utf-8');
     expect(() => loadRelayConfig(configDir)).toThrow(/Invalid relay.yml/);
+  });
+
+  it('throws when token cannot be resolved', () => {
+    configDir = makeTmpDir();
+    delete process.env['QUEUE_RELAY_TOKEN'];
+    writeFileSync(join(configDir, 'relay.yml'), `
+relayUrl: wss://relay.example.com/relay-ws
+plugins: []
+`, 'utf-8');
+    expect(() => loadRelayConfig(configDir)).toThrow(/No relay token found/);
   });
 
   it('parses payloadMatch with string values', () => {
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: wss://relay.example.com/relay-ws
-token: test-token
 plugins:
   - module: "@wadeck-app/plugin-github"
     subscriptions:
@@ -78,7 +126,6 @@ plugins:
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: wss://relay.example.com/relay-ws
-token: test-token
 plugins:
   - module: "@wadeck-app/plugin-github"
     subscriptions:
@@ -97,7 +144,6 @@ plugins:
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: wss://relay.example.com/relay-ws
-token: test-token
 plugins:
   - module: "@wadeck-app/plugin-github"
     subscriptions:
@@ -116,7 +162,6 @@ plugins:
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: wss://relay.example.com/relay-ws
-token: test-token
 plugins:
   - module: "@wadeck-app/plugin-github"
     subscriptions:
@@ -132,7 +177,6 @@ plugins:
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: wss://relay.example.com/relay-ws
-token: test-token
 `, 'utf-8');
 
     const config = loadRelayConfig(configDir);
@@ -143,7 +187,6 @@ token: test-token
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: ws://localhost:1234/relay-ws
-token: test-token
 `, 'utf-8');
 
     const config = loadRelayConfig(configDir);
@@ -154,7 +197,6 @@ token: test-token
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: ws://127.0.0.1:1/relay-ws
-token: test-token
 `, 'utf-8');
 
     const config = loadRelayConfig(configDir);
@@ -165,7 +207,6 @@ token: test-token
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: ws://[::1]:1/relay-ws
-token: test-token
 `, 'utf-8');
 
     const config = loadRelayConfig(configDir);
@@ -176,7 +217,6 @@ token: test-token
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: ws://relay.example.com/relay-ws
-token: test-token
 `, 'utf-8');
 
     expect(() => loadRelayConfig(configDir)).toThrow(
@@ -188,7 +228,6 @@ token: test-token
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: https://relay.example.com/relay-ws
-token: test-token
 `, 'utf-8');
 
     expect(() => loadRelayConfig(configDir)).toThrow(
@@ -200,7 +239,6 @@ token: test-token
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: http://localhost/relay-ws
-token: test-token
 `, 'utf-8');
 
     expect(() => loadRelayConfig(configDir)).toThrow(
@@ -212,7 +250,6 @@ token: test-token
     configDir = makeTmpDir();
     writeFileSync(join(configDir, 'relay.yml'), `
 relayUrl: not a url
-token: test-token
 `, 'utf-8');
 
     expect(() => loadRelayConfig(configDir)).toThrow(
