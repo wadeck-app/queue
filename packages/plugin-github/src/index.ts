@@ -10,6 +10,11 @@ import type { RelayPlugin, RelayEnvelope } from '@wadeck-app/queue-relay-client'
 const plugin: RelayPlugin = {
   source: 'github',
   mapEvent(envelope: RelayEnvelope) {
+    // Return null to drop events without a valid non-empty string eventType.
+    // The relay contract (RelayPlugin) treats null as "deliberately drop this event".
+    if (typeof envelope.eventType !== 'string' || !envelope.eventType.trim()) {
+      return null;
+    }
     return {
       event: `on.github.${envelope.eventType}`,
       payload: envelope.payload,

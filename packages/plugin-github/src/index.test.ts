@@ -32,4 +32,29 @@ describe('plugin-github', () => {
     const envelope = makeEnvelope({ eventType: 'push' });
     expect(plugin.mapEvent(envelope)?.event).toBe('on.github.push');
   });
+
+  it('returns null when eventType is null', () => {
+    const envelope = makeEnvelope({ eventType: null as any });
+    expect(plugin.mapEvent(envelope)).toBeNull();
+  });
+
+  it('returns null when eventType is undefined', () => {
+    const envelope = makeEnvelope({ eventType: undefined as any });
+    expect(plugin.mapEvent(envelope)).toBeNull();
+  });
+
+  it('returns null when eventType is an empty string', () => {
+    const envelope = makeEnvelope({ eventType: '' });
+    expect(plugin.mapEvent(envelope)).toBeNull();
+  });
+
+  it('returns null when eventType is a non-string value', () => {
+    const envelope = makeEnvelope({ eventType: 123 as unknown as string });
+    expect(plugin.mapEvent(envelope)).toBeNull();
+  });
+
+  it('returns null when eventType is a whitespace-only string', () => {
+    const envelope = makeEnvelope({ eventType: '   ' });
+    expect(plugin.mapEvent(envelope)).toBeNull();
+  });
 });
