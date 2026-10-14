@@ -1,11 +1,11 @@
 import { join } from 'node:path';
 import type { RelayStopIO } from './relayStop.js';
 import type { DaemonClient } from '@wadeck-app/singleton-daemon-kit';
-import type { RelayCommands } from '@wadeck-app/queue-relay-client';
+import type { RelayCommands, RelayConfig } from '@wadeck-app/queue-relay-client';
 
 export interface RelayStartDeps {
   client: DaemonClient<RelayCommands>;
-  loadConfig: (configDir: string) => ReturnType<typeof import('@wadeck-app/queue-relay-client/dist/config').loadRelayConfig>;
+  loadConfig: (configDir: string) => (RelayConfig & { tokenSource?: 'env' | 'secrets' | 'relay.yml' }) | null;
   resolveDaemonScript: () => string;
   getQueueDaemonScript: () => string;
   spawn: (script: string, configDir: string, env: Record<string, string>) => void;
@@ -50,15 +50,24 @@ export async function relayStart(deps: RelayStartDeps, configDir: string): Promi
     // Missing relay.yml (case b)
     deps.io.stderr.write(`[fail] No relay.yml in ${configDir}. Create it as:\n`);
     deps.io.stderr.write(`  relayUrl: wss://<relay-host>/relay-ws\n`);
-    deps.io.stderr.write(`  token: <your-relay-consumer-token>\n`);
     deps.io.stderr.write(`  plugins:\n`);
     deps.io.stderr.write(`    - module: '@wadeck-app/plugin-github'\n`);
     deps.io.stderr.write(`      subscriptions:\n`);
     // payloadMatch is a flat top-level equality check today (the relay does not resolve dotted paths)
     deps.io.stderr.write(`        - eventType: [push, pull_request]\n`);
     deps.io.stderr.write(`          payloadMatch: { action: opened }\n`);
+    deps.io.stderr.write(`\nThe relay token is stored in <QUEUE_CONFIG_DIR>/_secrets_/.env.local:\n`);
+    deps.io.stderr.write(`  QUEUE_RELAY_TOKEN=<your-relay-consumer-token>\n`);
     deps.io.stderr.write(`See 'queue relay --help' for more details.\n`);
     return 1;
+  }
+
+  // Warn if token is from relay.yml (deprecated)
+  if (config.tokenSource === 'relay.yml') {
+    deps.io.stderr.write(
+      `[warn] The relay token is read from relay.yml (plaintext). ` +
+      `Move it to ${configDir}/_secrets_/.env.local as QUEUE_RELAY_TOKEN=... and remove it from relay.yml.\n`
+    );
   }
 
   if (config.plugins.length === 0) {

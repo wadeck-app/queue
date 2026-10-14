@@ -5,7 +5,12 @@ interface MockDeps {
   client: {
     isRunning: () => Promise<boolean>;
   };
-  loadConfig: (configDir: string) => { relayUrl: string; token: string; plugins: Array<{ module: string; subscriptions: unknown[] }> } | null;
+  loadConfig: (configDir: string) => {
+    relayUrl: string;
+    token: string;
+    tokenSource?: 'env' | 'secrets' | 'relay.yml';
+    plugins: Array<{ module: string; subscriptions: unknown[] }>;
+  } | null;
   resolveDaemonScript: () => string;
   getQueueDaemonScript: () => string;
   spawn: (script: string, configDir: string, env: Record<string, string>) => void;
@@ -95,6 +100,7 @@ describe('relayStart', () => {
       (deps.loadConfig as any).mockReturnValue({
         relayUrl: 'https://example.com',
         token: 'token123',
+        tokenSource: 'env',
         plugins: [],
       });
 
@@ -115,6 +121,7 @@ describe('relayStart', () => {
       (deps.loadConfig as any).mockReturnValue({
         relayUrl: 'https://example.com',
         token: 'token123',
+        tokenSource: 'env',
         plugins: [{ module: 'plugin', subscriptions: [{ eventType: ['test'] }] }],
       });
       (deps.resolveDaemonScript as any).mockImplementation(() => {
@@ -139,6 +146,7 @@ describe('relayStart', () => {
       (deps.loadConfig as any).mockReturnValue({
         relayUrl: 'https://example.com',
         token: 'token123',
+        tokenSource: 'env',
         plugins: [{ module: 'plugin', subscriptions: [{ eventType: ['test'] }] }],
       });
       (deps.resolveDaemonScript as any).mockReturnValue('/path/to/relay-daemon.js');
@@ -154,6 +162,27 @@ describe('relayStart', () => {
         QUEUE_DAEMON_SCRIPT: '/path/to/queue-daemon.js',
       });
     });
+
+    it('prints warning when token is from relay.yml (deprecated)', async () => {
+      (deps.client.isRunning as any).mockResolvedValue(false);
+      (deps.loadConfig as any).mockReturnValue({
+        relayUrl: 'https://example.com',
+        token: 'token123',
+        tokenSource: 'relay.yml',
+        plugins: [{ module: 'plugin', subscriptions: [{ eventType: ['test'] }] }],
+      });
+      (deps.resolveDaemonScript as any).mockReturnValue('/path/to/relay-daemon.js');
+      (deps.getQueueDaemonScript as any).mockReturnValue('/path/to/queue-daemon.js');
+      (deps.waitForDaemon as any).mockResolvedValue(true);
+
+      const exitCode = await relayStart(deps as any, '/config');
+
+      expect(exitCode).toBe(0);
+      const stderrCalls = (deps.io.stderr.write as any).mock.calls.map((c: any) => c[0]);
+      expect(stderrCalls.join('')).toContain('[warn]');
+      expect(stderrCalls.join('')).toContain('relay token is read from relay.yml');
+      expect(stderrCalls.join('')).toContain('_secrets_/.env.local');
+    });
   });
 
   describe('timeout case', () => {
@@ -162,6 +191,7 @@ describe('relayStart', () => {
       (deps.loadConfig as any).mockReturnValue({
         relayUrl: 'https://example.com',
         token: 'token123',
+        tokenSource: 'env',
         plugins: [{ module: 'plugin', subscriptions: [{ eventType: ['test'] }] }],
       });
       (deps.resolveDaemonScript as any).mockReturnValue('/path/to/relay-daemon.js');
@@ -189,6 +219,7 @@ describe('relayStart', () => {
       (deps.loadConfig as any).mockReturnValue({
         relayUrl: 'https://example.com',
         token: 'token123',
+        tokenSource: 'env',
         plugins: [{ module: 'plugin', subscriptions: [{ eventType: ['test'] }] }],
       });
       (deps.resolveDaemonScript as any).mockReturnValue('/path/to/relay-daemon.js');

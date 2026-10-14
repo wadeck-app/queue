@@ -22,6 +22,7 @@ import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
+import type { RelayStartDeps } from './relayStart.js';
 
 declare const __QUEUE_CLI_VERSION__: string;
 
@@ -38,19 +39,26 @@ Usage:
 
 const RELAY_GROUP_HELP = `queue relay - GitHub/Slack/Jira webhook relay client
 Usage:
-  queue relay start   Start the relay client as a background process (reads relay.yml from QUEUE_CONFIG_DIR)
-  queue relay stop    Stop the relay client
-  queue relay status  Show whether the relay client is running and connected
+  queue relay start                                                Start the relay client as a background process (reads relay.yml from QUEUE_CONFIG_DIR)
+  queue relay stop                                                 Stop the relay client
+  queue relay status                                               Show whether the relay client is running and connected
+  queue relay webhook list [--json]                                List configured webhooks and their health (1 HTTP request)
+  queue relay webhook history [--limit N] [--event TYPE] [--source S] [--verified | --rejected] [--payload] [--json]  Show recent deliveries (1 HTTP request)
 
 relay.yml example (in QUEUE_CONFIG_DIR):
   relayUrl: wss://<relay-host>/relay-ws
-  token: <your-relay-consumer-token>
   plugins:
     - module: '@wadeck-app/plugin-github'
       subscriptions:
         - eventType: [push, pull_request]
           # payloadMatch compares top-level payload keys by equality (dotted paths are not supported yet)
           payloadMatch: { action: opened }
+
+Relay token (stored securely, not in relay.yml):
+  Put your consumer token in <QUEUE_CONFIG_DIR>/_secrets_/.env.local:
+    QUEUE_RELAY_TOKEN=<your-relay-consumer-token>
+  The _secrets_/ folder is git-ignored and protected.
+  You can also export QUEUE_RELAY_TOKEN as an environment variable.
 
 The relay client logs to <QUEUE_CONFIG_DIR>/relay-daemon/relay.log.
 `;
@@ -515,7 +523,7 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
     }
 
     // Inject all dependencies into relayStart
-    const deps = {
+    const deps: RelayStartDeps = {
       client: createRelayClient(configDir),
       loadConfig: (dir: string) => loadRelayConfig(dir),
       resolveDaemonScript: resolveRelayScript,
@@ -586,7 +594,75 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
     return;
   }
 
-  process.stderr.write(`Unknown relay subcommand: ${sub}\nUse: queue relay start|stop|status\n`);
+  if (sub === 'webhook') {
+    // Webhook sub-commands (list, history)
+    const webhookCmd = rest[1];
+
+    if (webhookCmd === '--help' || webhookCmd === '-h' || !webhookCmd) {
+      process.stdout.write(`queue relay webhook - Webhook configuration and delivery history
+Usage:
+  queue relay webhook list [--json]                                List configured webhooks and their health
+  queue relay webhook history [--limit N] [--event TYPE] [--source S] [--verified | --rejected] [--payload] [--json]  Show recent deliveries
+
+Both commands make exactly one HTTP request to the relay, using the relay token (QUEUE_RELAY_TOKEN from the environment or <configDir>/_secrets_/.env.local).
+`);
+      return;
+    }
+
+    // Load config and API client for webhook commands
+    const { loadRelayConfig } = await import('@wadeck-app/queue-relay-client/dist/config.js');
+    const { createRelayApiClient } = await import('@wadeck-app/queue-relay-client/dist/relayApi.js');
+
+    let config;
+    try {
+      config = loadRelayConfig(configDir);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[fail] ${errorMsg}\n`);
+      process.exit(1);
+    }
+
+    if (config === null) {
+      process.stderr.write(`[fail] No relay.yml in ${configDir}. Create it as:\n`);
+      process.stderr.write(`  relayUrl: wss://<relay-host>/relay-ws\n`);
+      process.stderr.write(`  plugins:\n`);
+      process.stderr.write(`    - module: '@wadeck-app/plugin-github'\n`);
+      process.stderr.write(`      subscriptions:\n`);
+      process.stderr.write(`        - eventType: [push, pull_request]\n`);
+      process.exit(1);
+    }
+
+    const apiClient = createRelayApiClient({
+      relayUrl: config.relayUrl,
+      token: config.token,
+    });
+
+    if (webhookCmd === 'list') {
+      const { relayWebhookList } = await import('./relayWebhookList.js');
+      const json = rest.slice(2).includes('--json');
+      const { httpBaseFromRelayUrl } = await import('@wadeck-app/queue-relay-client/dist/relayApi.js');
+      const exitCode = await relayWebhookList(apiClient, { stdout: process.stdout, stderr: process.stderr }, { json, origin: httpBaseFromRelayUrl(config.relayUrl) });
+      if (exitCode !== 0) {
+        process.exit(exitCode);
+      }
+      return;
+    }
+
+    if (webhookCmd === 'history') {
+      const { relayWebhookHistory } = await import('./relayWebhookHistory.js');
+      const json = rest.slice(2).includes('--json');
+      const exitCode = await relayWebhookHistory(apiClient, { stdout: process.stdout, stderr: process.stderr }, { json }, rest.slice(2));
+      if (exitCode !== 0) {
+        process.exit(exitCode);
+      }
+      return;
+    }
+
+    process.stderr.write(`[fail] Unknown webhook command "${webhookCmd}". Use: list | history\n`);
+    process.exit(1);
+  }
+
+  process.stderr.write(`Unknown relay subcommand: ${sub}\nUse: queue relay start|stop|status|webhook\n`);
   process.exit(1);
 }
 
