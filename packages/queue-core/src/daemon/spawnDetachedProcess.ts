@@ -4,6 +4,25 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 /**
+ * Builds the VBScript content for launching a Node.js process with SW_HIDE.
+ * Pure function that can be unit-tested on any OS.
+ */
+export function buildLaunchScript(nodePath: string, scriptPath: string, env: Record<string, string>): string {
+  const safeNode = nodePath.replace(/"/g, '""');
+  const safeScript = scriptPath.replace(/"/g, '""');
+  const envLines = Object.entries(env).map(
+    ([key, value]) => `oShell.Environment("Process")("${key}") = "${value.replace(/"/g, '""')}"`
+  );
+  return [
+    'Dim oShell',
+    'Set oShell = CreateObject("WScript.Shell")',
+    ...envLines,
+    `oShell.Run """${safeNode}"" ""${safeScript}""", 0, False`,
+    'CreateObject("Scripting.FileSystemObject").DeleteFile WScript.ScriptFullName',
+  ].join('\r\n');
+}
+
+/**
  * Spawns `node <scriptPath>` fully detached from the current process, with no
  * visible console window on Windows. Plain `spawn(..., { windowsHide: true })`
  * is unreliable on Windows regardless of process-tree depth; wscript.exe's
@@ -17,17 +36,8 @@ export function spawnDetachedProcess(scriptPath: string, env: Record<string, str
 
   if (process.platform === 'win32') {
     const vbsPath = join(tmpdir(), `queue-spawn-${Date.now()}-${Math.random().toString(36).slice(2)}.vbs`);
-    const safeNode = process.execPath.replace(/"/g, '""');
-    const safeScript = scriptPath.replace(/"/g, '""');
-    const envLines = Object.entries(env).map(
-      ([key, value]) => `oShell.Environment("Process")("${key}") = "${value.replace(/"/g, '""')}"`
-    );
-    writeFileSync(vbsPath, [
-      'Dim oShell',
-      'Set oShell = CreateObject("WScript.Shell")',
-      ...envLines,
-      `oShell.Run """${safeNode}"" ""${safeScript}""", 0, False`,
-    ].join('\r\n'));
+    const vbsContent = buildLaunchScript(process.execPath, scriptPath, env);
+    writeFileSync(vbsPath, vbsContent);
     const child = spawn('wscript.exe', [vbsPath], {
       detached: true,
       stdio: 'ignore',
