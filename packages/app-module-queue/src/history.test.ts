@@ -45,6 +45,47 @@ describe('listHistory', () => {
     expect(listHistory(configDir, { event: 'onBar' }).entries.map(e => e.eventId)).toEqual(['e2']);
   });
 
+  describe('payloadText (for the dashboard row expansion)', () => {
+    it('adds the payload as indented JSON text, keeping the payload object and the page keys', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { taskId: 't1', labels: ['a'] } },
+      ]);
+      const page = listHistory(configDir);
+      expect(Object.keys(page).sort()).toEqual(['entries', 'limit', 'offset', 'total']);
+      expect(page.entries[0]!.payload).toEqual({ taskId: 't1', labels: ['a'] });
+      expect(page.entries[0]!.payloadText).toBe(JSON.stringify({ taskId: 't1', labels: ['a'] }, null, 2));
+    });
+
+    it('omits payloadText when no payload was recorded, so the row gets no expand toggle', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0 },
+      ]);
+      const entry = listHistory(configDir).entries[0]!;
+      expect('payloadText' in entry).toBe(false);
+    });
+
+    it('renders falsy-but-present payloads (0, false, empty object) instead of hiding them', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e0', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: 0 },
+        { type: 'trigger', ts: '2026-01-01T00:00:01.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: {} },
+      ]);
+      const byId = Object.fromEntries(listHistory(configDir).entries.map(e => [e.eventId, e.payloadText]));
+      expect(byId['e0']).toBe('0');
+      expect(byId['e1']).toBe('{}');
+    });
+
+    it('truncates a huge payload with an explicit marker pointing at the full-entry route', () => {
+      const huge = { blob: 'x'.repeat(50_000) };
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: huge },
+      ]);
+      const text = listHistory(configDir).entries[0]!.payloadText!;
+      expect(text.length).toBeLessThan(21_000);
+      expect(text).toContain('truncated');
+      expect(text).toContain('GET /history/e1');
+    });
+  });
+
   it('applies limit/offset pagination, defaulting to 20', () => {
     const records = Array.from({ length: 25 }, (_, i) => ({
       type: 'trigger', ts: `2026-01-01T${String(i).padStart(2, '0')}:00:00.000Z`, eventId: `e${i}`, event: 'onFoo', matchedCount: 0, totalCount: 0,

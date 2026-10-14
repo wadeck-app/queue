@@ -46,6 +46,7 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 - **Threat:** Since `queue replay <eventId>` needs the original payload, `HistoryLog.logTrigger` persists it verbatim in `history/<date>.ndjson`, readable in full via `queue history --json`. Same payload-contains-secrets risk as WAL/DLQ above, but history has no per-entry clearing (WAL clears on ack, DLQ evicts past `maxSize`) -- without a bound, it would retain every payload forever.
 - **Mitigation:** `HistoryLog` prunes day files older than `retentionDays` (default 30) on every write, so a payload is never kept longer than that window.
 - **Risk accepted:** Within the retention window, caller responsibility not to push secrets as payloads (same as WAL/DLQ).
+- **Dashboard exposure:** The app-core module's `GET /api/modules/queue/history` also returns each payload as `payloadText` (indented JSON, capped at 20,000 characters; a second copy next to `payload`), rendered in the Queue History page's expandable rows. Same sensitivity as `queue history --json`, but reachable by anything that can call app-core's HTTP API (localhost); do not expose app-core beyond localhost without authentication.
 
 ### HTTP subscriber receiving sensitive payload data
 

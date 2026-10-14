@@ -160,3 +160,32 @@ describe('history-page.yaml pagination structure', () => {
 		expect(paginationIdx).toBeLessThan(pageSizeIdx);
 	});
 });
+
+describe('history-page.yaml payload row expansion', () => {
+	const yamlPath = join(__dirname, '../dsl-frontend/history-page.yaml');
+	const doc = yaml.load(readFileSync(yamlPath, 'utf-8')) as YamlDoc;
+	const dataTable = (doc.sections as Section[]).find((s) => s.$type === 'DataTable') as Section;
+	const expansion = dataTable?.expansion as Section;
+
+	it('DataTable only offers the expand toggle on rows that have a payloadText', () => {
+		expect(dataTable.expansionCondition).toBe('payloadText');
+	});
+
+	it('expansion is a JsonViewer reading the payloadText field', () => {
+		expect(expansion?.$type).toBe('JsonViewer');
+		// A plain string: JsonViewer does String(row[field]), a "$"-prefixed value would be resolved as an expression.
+		expect(expansion?.field).toBe('payloadText');
+	});
+
+	it('expansion passes the row explicitly (JsonViewer gets no row otherwise and renders an empty block)', () => {
+		expect(expansion?.row).toBe('$ctx.row');
+	});
+
+	it('the toggle condition and the displayed field are the same key', () => {
+		expect(dataTable.expansionCondition).toBe(expansion?.field);
+	});
+
+	it('shows an explicit empty state for a page without rows', () => {
+		expect(dataTable.emptyMessage).toBe('No events recorded yet');
+	});
+});

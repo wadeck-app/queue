@@ -11,6 +11,18 @@ $type: PageContent
 sections:
   - $type: DataTable
     rows: $sources.history.entries
+    # Click a row's chevron to see the event payload. The toggle only shows when the row has a
+    # payloadText (older entries recorded before payload capture have none), and one row is open
+    # at a time. JsonViewer reads row[field] as JSON text, which is why the API sends payloadText;
+    # `row` is NOT injected automatically, the expansion must pass it explicitly (`$ctx.row`).
+    # Needs @wadeck-app/dsl-renderer >= 2026.10.14-094-eefae0af in the served frontend (it generates
+    # the renderNode callback DataTable needs); older frontends show a toggle that opens nothing.
+    expansionCondition: payloadText
+    expansion:
+      $type: JsonViewer
+      row: $ctx.row
+      field: payloadText
+    emptyMessage: No events recorded yet
     columns:
       - { key: "ts", label: "Time", format: "datetime" }
       - { key: "event", label: "Event" }
