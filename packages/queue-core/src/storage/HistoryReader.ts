@@ -27,6 +27,8 @@ export interface HistoryEntry {
   payload?: unknown;
   /** Set when this trigger was created by `queue replay`, pointing at the eventId it replays. */
   replayOf?: string;
+  /** Working directory of the original push; absent for entries recorded before this field existed and for orphan entries. */
+  cwd?: string;
 }
 
 export interface HistoryFilter {
@@ -59,6 +61,7 @@ interface Accumulator {
   matchedCount?: number;
   payload?: unknown;
   replayOf?: string;
+  cwd?: string;
   subscribers: HistorySubscriberOutcome[];
 }
 
@@ -90,6 +93,7 @@ export class HistoryReader {
       orphan: a.totalCount === undefined,
       payload: a.payload,
       replayOf: a.replayOf,
+      cwd: a.cwd,
     }));
 
     return entries
@@ -162,6 +166,7 @@ export class HistoryReader {
       entry.totalCount = record['totalCount'] as number;
       entry.payload = record['payload'];
       entry.replayOf = record['replayOf'] as string | undefined;
+      entry.cwd = record['cwd'] as string | undefined;
       return;
     }
     if (type === 'outcome') {

@@ -69,6 +69,33 @@ describe('HistoryReader', () => {
     expect(entry).toMatchObject({ payload: { title: 'original' }, replayOf: 'ev-0' });
   });
 
+  it('reads the cwd recorded on the trigger, so replay reuses the original push cwd', () => {
+    writeDay(historyDir, '2026-01-01', [
+      { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onTicket.created', matchedCount: 0, totalCount: 0, cwd: '/home/user/project' },
+    ]);
+
+    const [entry] = new HistoryReader(historyDir).read();
+    expect(entry).toMatchObject({ cwd: '/home/user/project' });
+  });
+
+  it('leaves cwd undefined for older trigger records without it', () => {
+    writeDay(historyDir, '2026-01-01', [
+      { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onTicket.created', matchedCount: 0, totalCount: 0 },
+    ]);
+
+    const [entry] = new HistoryReader(historyDir).read();
+    expect(entry.cwd).toBeUndefined();
+  });
+
+  it('leaves cwd undefined for orphan entries', () => {
+    writeDay(historyDir, '2026-01-01', [
+      { ts: '2026-01-01T10:00:00.000Z', type: 'outcome', eventId: 'wal-1', event: 'onTicket.created', subscriberId: 'onTicket.created[0]', status: 'success' },
+    ]);
+
+    const [entry] = new HistoryReader(historyDir).read();
+    expect(entry.cwd).toBeUndefined();
+  });
+
   describe('findByEventId', () => {
     it('returns the entry with the matching eventId', () => {
       writeDay(historyDir, '2026-01-01', [

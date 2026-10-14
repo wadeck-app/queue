@@ -161,6 +161,7 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
           totalCount: subscribers.length,
           payload: req.payload,
           replayOf: req.replayOf,
+          cwd: req.cwd,
         });
 
         if (req.event.startsWith('before')) {

@@ -88,6 +88,21 @@ describe('HistoryLog', () => {
     });
   });
 
+  it('logTrigger persists the cwd from the original push, for `queue replay` to reuse it', () => {
+    history.logTrigger({
+      eventId: 'ev-3',
+      event: 'onTicket.created',
+      matchedCount: 1,
+      totalCount: 1,
+      cwd: '/home/user/project',
+    });
+
+    const record = readRecords(historyDir)[0]!;
+    expect(record['type']).toBe('trigger');
+    expect(record['eventId']).toBe('ev-3');
+    expect(record['cwd']).toBe('/home/user/project');
+  });
+
   it('creates the history directory when missing', () => {
     const nestedDir = join(historyDir, 'nested', 'history');
     new HistoryLog(nestedDir).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });

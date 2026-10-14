@@ -13,6 +13,8 @@ export interface TriggerHistoryEntry {
   payload?: unknown;
   /** Set when this trigger was created by `queue replay`, pointing at the eventId it replays. */
   replayOf?: string;
+  /** Working directory of the original push, so `queue replay <eventId>` can reuse it to find the correct subscribers.yml. */
+  cwd?: string;
 }
 
 export interface OutcomeHistoryEntry {
