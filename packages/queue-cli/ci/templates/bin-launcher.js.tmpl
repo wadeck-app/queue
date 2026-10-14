@@ -3,97 +3,140 @@
 const { execFileSync, execSync } = require('child_process');
 const os = require('os');
 
-const PLATFORM_PKG = {
-  'win32-x64':    '@wadeck-app/{{PKG_PREFIX}}-win32-x64',
-  'darwin-arm64': '@wadeck-app/{{PKG_PREFIX}}-darwin-arm64',
-  'darwin-x64':   '@wadeck-app/{{PKG_PREFIX}}-darwin-x64',
-};
+// Determine the stdio mode and whether to print a notice to the user.
+// @param {string[]} rawArgs - process.argv.slice(2)
+// @param {boolean} stdinIsTTY - process.stdin.isTTY
+// @returns {{stdio: string, args: string[], auto: boolean, notice: string|null}}
+//   - stdio: 'inherit' or 'ignore'
+//   - args: filtered args without --cli-foreground/--cli-background
+//   - auto: true if stdio was chosen by auto-detection (not explicit flags)
+//   - notice: user-facing message when auto-detected non-TTY, or null
+function resolveStdio(rawArgs, stdinIsTTY) {
+  const cliName = '{{CLI_NAME}}';
 
-const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
-const key = `${process.platform}-${arch}`;
-const pkgName = PLATFORM_PKG[key];
-if (!pkgName) {
-  process.stderr.write(`{{CLI_NAME}}: unsupported platform ${key}\n`);
-  process.exit(1);
+  // Check for explicit flags
+  var hasBackground = rawArgs.includes('--cli-background');
+  var hasForeground = rawArgs.includes('--cli-foreground');
+
+  // Strip flags from args to forward to the command
+  var args = rawArgs.filter(function(a) { return a !== '--cli-background' && a !== '--cli-foreground'; });
+
+  var stdio;
+  var auto = false;
+
+  if (!hasBackground && !hasForeground) {
+    // Auto-detect: pipe context (non-TTY) → NUL handles to prevent AllocConsole()
+    // from libuv when a GUI-parent (flow.exe SUBSYSTEM:WINDOWS) passes PIPE handles.
+    stdio = stdinIsTTY ? 'inherit' : 'ignore';
+    // auto=true only when auto-detection chose 'ignore' (non-TTY)
+    auto = !stdinIsTTY;
+  } else {
+    // Last flag wins, default 'ignore'
+    stdio = 'ignore';
+    for (var i = 0; i < rawArgs.length; i++) {
+      if (rawArgs[i] === '--cli-background') stdio = 'ignore';
+      if (rawArgs[i] === '--cli-foreground') stdio = 'inherit';
+    }
+  }
+
+  var notice = null;
+  // Print notice only if: auto-detected (non-TTY), output was suppressed, not 'start' background command
+  if (auto && stdio === 'ignore' && args[0] !== 'start') {
+    notice = '[' + cliName + '] stdin is not a TTY: command output is discarded. Re-run with --cli-foreground to see it (or --cli-background to silence this notice).';
+  }
+
+  return { stdio: stdio, args: args, auto: auto, notice: notice };
 }
 
-const ext = process.platform === 'win32' ? '.exe' : '';
+// Export for testing
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports.resolveStdio = resolveStdio;
+}
 
-let launcherPath;
-try {
-  launcherPath = require.resolve(`${pkgName}/{{CLI_NAME}}${ext}`);
-} catch {
-  process.stderr.write(`{{CLI_NAME}}: platform package ${pkgName} missing -- installing...\n`);
-  try {
-    const out = execSync(`npm install -g ${pkgName}`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    if (out) process.stdout.write(out);
-  } catch (installErr) {
-    if (installErr.stdout) process.stdout.write(installErr.stdout);
-    if (installErr.stderr) process.stderr.write(installErr.stderr);
-    process.stderr.write(`{{CLI_NAME}}: install failed (exit ${installErr.status})\n`);
+// Execute only when run as a script, not when required
+if (require.main === module) {
+  const PLATFORM_PKG = {
+    'win32-x64':    '@wadeck-app/{{PKG_PREFIX}}-win32-x64',
+    'darwin-arm64': '@wadeck-app/{{PKG_PREFIX}}-darwin-arm64',
+    'darwin-x64':   '@wadeck-app/{{PKG_PREFIX}}-darwin-x64',
+  };
+
+  const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
+  const key = `${process.platform}-${arch}`;
+  const pkgName = PLATFORM_PKG[key];
+  if (!pkgName) {
+    process.stderr.write(`{{CLI_NAME}}: unsupported platform ${key}\n`);
     process.exit(1);
   }
+
+  const ext = process.platform === 'win32' ? '.exe' : '';
+
+  let launcherPath;
   try {
     launcherPath = require.resolve(`${pkgName}/{{CLI_NAME}}${ext}`);
   } catch {
-    process.stderr.write(
-      `{{CLI_NAME}}: installed ${pkgName} but cannot resolve binary -- try: npm install -g @wadeck-app/{{PKG_PREFIX}}\n`
-    );
-    process.exit(1);
+    process.stderr.write(`{{CLI_NAME}}: platform package ${pkgName} missing -- installing...\n`);
+    try {
+      const out = execSync(`npm install -g ${pkgName}`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      if (out) process.stdout.write(out);
+    } catch (installErr) {
+      if (installErr.stdout) process.stdout.write(installErr.stdout);
+      if (installErr.stderr) process.stderr.write(installErr.stderr);
+      process.stderr.write(`{{CLI_NAME}}: install failed (exit ${installErr.status})\n`);
+      process.exit(1);
+    }
+    try {
+      launcherPath = require.resolve(`${pkgName}/{{CLI_NAME}}${ext}`);
+    } catch {
+      process.stderr.write(
+        `{{CLI_NAME}}: installed ${pkgName} but cannot resolve binary -- try: npm install -g @wadeck-app/{{PKG_PREFIX}}\n`
+      );
+      process.exit(1);
+    }
   }
-}
 
-const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
+  const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
 
-// On Windows the Go launcher binary is compiled as SUBSYSTEM:WINDOWS (GUI application).
-// Its hasConsole() check fails when spawned from a terminal, causing node's stdio to be
-// redirected to NUL and swallowing all output. Bypass the launcher for short-lived
-// read-only commands so their output reaches the terminal.
-const PASSTHROUGH_FLAGS = ['--version', '-v', '--pid', '--help', '-h'];
-const _rawArgs = process.argv.slice(2);
+  // On Windows the Go launcher binary is compiled as SUBSYSTEM:WINDOWS (GUI application).
+  // Its hasConsole() check fails when spawned from a terminal, causing node's stdio to be
+  // redirected to NUL and swallowing all output. Bypass the launcher for short-lived
+  // read-only commands so their output reaches the terminal.
+  const PASSTHROUGH_FLAGS = ['--version', '-v', '--pid', '--help', '-h'];
+  const _rawArgs = process.argv.slice(2);
 
-// --cli-background / --cli-foreground: explicit stdio override flags.
-// Strip them before passing args to the underlying command.
-// Last flag wins when both are present.
-var _hasBackground = _rawArgs.includes('--cli-background');
-var _hasForeground = _rawArgs.includes('--cli-foreground');
-var _args = _rawArgs.filter(function(a) { return a !== '--cli-background' && a !== '--cli-foreground'; });
+  // Resolve stdio and get user notice if needed
+  var _resolved = resolveStdio(_rawArgs, process.stdin.isTTY);
+  var _stdio = _resolved.stdio;
+  var _args = _resolved.args;
+  var _notice = _resolved.notice;
 
-var _stdio;
-if (!_hasBackground && !_hasForeground) {
-  // Auto-detect: pipe context (non-TTY) → NUL handles to prevent AllocConsole()
-  // from libuv when a GUI-parent (flow.exe SUBSYSTEM:WINDOWS) passes PIPE handles.
-  _stdio = process.stdin.isTTY ? 'inherit' : 'ignore';
-} else {
-  // Last flag wins
-  _stdio = 'ignore';
-  for (var _i = 0; _i < _rawArgs.length; _i++) {
-    if (_rawArgs[_i] === '--cli-background') _stdio = 'ignore';
-    if (_rawArgs[_i] === '--cli-foreground') _stdio = 'inherit';
+  // Print notice to stderr before running the command
+  if (_notice) {
+    process.stderr.write(_notice + '\n');
   }
-}
 
-function _runWithExit(bin, binArgs) {
-  try {
-    execFileSync(bin, binArgs, {
-      stdio: _stdio,
-      windowsHide: true,
-      env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
-    });
-  } catch (err) {
-    process.exit(err != null && typeof err === 'object' && 'status' in err && typeof err.status === 'number' ? err.status : 1);
+  function _runWithExit(bin, binArgs) {
+    try {
+      execFileSync(bin, binArgs, {
+        stdio: _stdio,
+        windowsHide: true,
+        env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
+      });
+    } catch (err) {
+      process.exit(err != null && typeof err === 'object' && 'status' in err && typeof err.status === 'number' ? err.status : 1);
+    }
   }
-}
 
-// On Windows bypass the Go launcher for ALL commands except 'start'.
-// Only 'start' needs the launcher (it spawns the daemon background process).
-// Every other command is short-lived and its stdout/stderr must reach the terminal.
-// The GUI launcher (hasConsole=false) swallows stdout/stderr of child node processes,
-// so we run node directly to guarantee output visibility.
-var _bypassLauncher = _args[0] !== 'start';
+  // On Windows bypass the Go launcher for ALL commands except 'start'.
+  // Only 'start' needs the launcher (it spawns the daemon background process).
+  // Every other command is short-lived and its stdout/stderr must reach the terminal.
+  // The GUI launcher (hasConsole=false) swallows stdout/stderr of child node processes,
+  // so we run node directly to guarantee output visibility.
+  var _bypassLauncher = _args[0] !== 'start';
 
-if (process.platform === 'win32' && _bypassLauncher) {
-  _runWithExit(process.execPath, [bundlePath].concat(_args));
-} else {
-  _runWithExit(launcherPath, _args);
+  if (process.platform === 'win32' && _bypassLauncher) {
+    _runWithExit(process.execPath, [bundlePath].concat(_args));
+  } else {
+    _runWithExit(launcherPath, _args);
+  }
 }
