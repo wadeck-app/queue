@@ -262,9 +262,8 @@ describe('RelayLogger', () => {
     stderrSpy.mockRestore();
   });
 
-  it('lastErrorMessage reflects most recent failure while stderr only emits once', () => {
+  it('getLastError keeps describing the failure after repeated failures while stderr only emits once', () => {
     tmpDir = makeTmpDir();
-    const logPath = join(tmpDir, 'relay.log');
 
     // Create a condition where append will fail
     const parentPath = join(tmpDir, 'parent');
@@ -279,7 +278,8 @@ describe('RelayLogger', () => {
     logger('test1');
     expect(stderrSpy).toHaveBeenCalledTimes(1);
     const firstError = logger.getLastError();
-    expect(firstError).toContain('ENOENT');
+    // A file used as a directory is ENOENT on Windows and ENOTDIR on Linux/macOS
+    expect(firstError).toMatch(/Cannot write relay log .*\((ENOENT|ENOTDIR)\)/);
 
     // Second write also fails (same condition) - stderr should NOT emit again
     logger('test2');
