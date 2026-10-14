@@ -14,7 +14,8 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 | `logs/` | Low–Medium — subscriber execution output | May contain secrets printed by subscribers |
 | `history/` | Medium — every trigger record stores the push payload verbatim (for `queue replay`), same sensitivity as WAL/DLQ | Bounded by `HistoryLog`'s day-based retention window (default 30 days, pruned on every write), unlike WAL (cleared on completion) or DLQ (bounded via `maxSize` eviction) which clear/evict individual entries |
 | Daemon port (47910) | Medium — any local process can send RPC commands | Localhost only |
-| `relay.yml` (`QUEUE_CONFIG_DIR`) | High — holds the relay Consumer token (high-entropy bearer credential for the remote webhook relay) | Same filesystem trust boundary as `subscribers.yml` |
+| `_secrets_/.env.local` (`QUEUE_CONFIG_DIR`) | High — holds `QUEUE_RELAY_TOKEN`, the relay Consumer token (high-entropy bearer credential for the remote webhook relay) | Gitignored `_secrets_/` folder, protected from agents by the w-guardrails plugin; the daemon reads it, nothing prints it (errors name the path, never the value). Also accepted: env `QUEUE_RELAY_TOKEN`. A `.env.local` outside `_secrets_/` is a hard error. |
+| `relay.yml` (`QUEUE_CONFIG_DIR`) | Medium — relay URL, plugins and subscriptions. A `token:` entry is still accepted but deprecated (plaintext, `relay start` warns) | Same filesystem trust boundary as `subscribers.yml` |
 
 ## Threats and mitigations
 

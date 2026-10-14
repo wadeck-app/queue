@@ -9,3 +9,5 @@ packages/queue-cli-win32-x64/
 packages/queue-cli-darwin-*/
 *.tsbuildinfo
 *.log
+# Protected directory for secrets (.env.local, credentials, tokens)
+_secrets_/
