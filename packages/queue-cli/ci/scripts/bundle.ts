@@ -124,9 +124,13 @@ mkdirSync(appModuleOutDir, { recursive: true });
 cpSync(join(appModuleSrcDir, 'dsl-frontend'), join(appModuleOutDir, 'dsl-frontend'), { recursive: true });
 
 // manifest.json's backendEntryPath is ".../backend.js" for the dev (unbundled, tsc ESM) tree --
-// the bundled artifact is .cjs instead (see comment above), so rewrite that one field on the copy.
-const appManifest = JSON.parse(readFileSync(join(appModuleSrcDir, 'manifest.json'), 'utf-8')) as { backendEntryPath: string };
+// the bundled artifact is .cjs instead (see comment above), so rewrite that field on the copy.
+// The version is rewritten too: app-core's loader imports `backend.cjs?v=<manifest.version>`, so a
+// constant version makes Node's import cache return the PREVIOUS backend after `queue cli update`
+// (new routes/params silently ignored until app-core restarts). The build version busts that cache.
+const appManifest = JSON.parse(readFileSync(join(appModuleSrcDir, 'manifest.json'), 'utf-8')) as { backendEntryPath: string; version: string };
 appManifest.backendEntryPath = './api-backend/dist/backend.cjs';
+appManifest.version = version;
 writeFileSync(join(appModuleOutDir, 'manifest.json'), JSON.stringify(appManifest, null, 2));
 
 const updaterSize = statSync(updaterOutfile).size;

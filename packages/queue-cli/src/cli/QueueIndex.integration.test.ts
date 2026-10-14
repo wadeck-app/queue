@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +51,15 @@ function runCli(args: string[], extraEnv: Record<string, string> = {}): {
     exitCode: result.status ?? -1,
   };
 }
+
+describe('bundled app-module manifest (integration)', () => {
+  it('carries the build version, so app-core re-imports the backend after every update', () => {
+    // app-core's loader imports `backend.cjs?v=<manifest.version>`; a constant version means the
+    // import cache returns the previous backend after `queue cli update` (page= was silently ignored).
+    const manifest = JSON.parse(readFileSync(join(rootDir, 'dist-bundle/app-module/manifest.json'), 'utf-8')) as { version: string };
+    expect(manifest.version).toBe('0.0.0-test-integration');
+  });
+});
 
 describe('queue cli self-check (integration)', () => {
   it('produces output only on stderr — no duplicate lines on stdout', () => {
