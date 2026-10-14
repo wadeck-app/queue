@@ -58,6 +58,15 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 - **Mitigation:** The relay already authenticates the webhook source (HMAC verification, GitHub's `X-Hub-Signature-256`) and the relay connection itself is token-authenticated (`relay.yml`'s Consumer token) — this is a trust transfer, not a new attack surface: pushing a relay-sourced event is no more privileged than any other local process calling `push` directly (same accepted risk as "Local process calling daemon RPC" above).
 - **Risk accepted:** Same single-user local trust model; the relay's own auth (out of this tool's scope) is the actual control point.
 
+### Relay payload contents and token transport
+
+- **Threat (data):** Relay payloads (GitHub PR bodies, commit author emails, private-repo content) are pushed like any other payload, so they land verbatim in `wal.ndjson`, `dlq.ndjson` and `history/` (30 days). The client applies no size cap and no field projection.
+- **Mitigation:** `eventType`/`payloadMatch` in `relay.yml` limit what is delivered; `relay.log` records delivery ids, event names and errors but never payloads.
+- **Risk accepted:** Same as "Sensitive data in WAL / DLQ" and "history/" above; do not subscribe to events whose payloads must not be stored locally.
+- **Threat (token):** The Consumer token is sent as the first websocket message.
+- **Mitigation:** `relayUrl` must be `wss://`; `ws://` is only accepted for localhost (config validation, `queue relay start` fails otherwise).
+- **Threat (dotted `payloadMatch`):** The relay only compares top-level payload keys. A dotted key is evaluated on the client, never by the relay, so it cannot widen what the relay delivers beyond the coarse `source` + `eventType` filter.
+
 ## Out-of-scope threats
 
 - Supply-chain attacks on npm dependencies (use `npm audit`)
