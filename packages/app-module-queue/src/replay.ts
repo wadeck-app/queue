@@ -1,9 +1,8 @@
+import { existsSync } from 'node:fs';
 import { getHistoryEntry } from './history.js';
 import { createQueueAppClient } from './client.js';
-import { DaemonUnreachableError } from './errors.js';
+import { DaemonUnreachableError, ReplayError, ReplayNotFoundError } from './errors.js';
 import type { PushResponse } from '@wadeck-app/queue-core';
-
-export class ReplayError extends Error {}
 
 /**
  * Resubmits a past event's recorded payload as a new event, tagged `replayOf <eventId>`.
@@ -14,11 +13,23 @@ export class ReplayError extends Error {}
 export async function replayEvent(configDir: string, eventId: string): Promise<PushResponse> {
   const entry = getHistoryEntry(configDir, eventId);
   if (!entry) {
-    throw new ReplayError(`No history entry found for eventId ${eventId}`);
+    throw new ReplayNotFoundError(`No history entry found for eventId ${eventId}`);
   }
   if (entry.payload === undefined) {
     throw new ReplayError(
       `No payload recorded for eventId ${eventId} -- it predates 'queue replay' support, or it's an orphan outcome with no trigger record`
+    );
+  }
+
+  // Check cwd: if not recorded, error with instruction; if recorded but missing, error with instruction
+  if (!entry.cwd) {
+    throw new ReplayError(
+      `History entry ${eventId} has no recorded working directory (it predates cwd recording), so the original project cannot be determined. Replay it from the project directory instead: cd <project> && queue replay ${eventId}`
+    );
+  }
+  if (!existsSync(entry.cwd)) {
+    throw new ReplayError(
+      `The working directory recorded for event ${eventId} no longer exists: ${entry.cwd}. Replay it from a project directory with: queue replay ${eventId}`
     );
   }
 
@@ -28,5 +39,5 @@ export async function replayEvent(configDir: string, eventId: string): Promise<P
     throw new DaemonUnreachableError('Daemon is not running -- start it with `queue start` before replaying');
   }
 
-  return client.send('push', { event: entry.event, payload: entry.payload, cwd: process.cwd(), replayOf: eventId });
+  return client.send('push', { event: entry.event, payload: entry.payload, cwd: entry.cwd, replayOf: eventId });
 }

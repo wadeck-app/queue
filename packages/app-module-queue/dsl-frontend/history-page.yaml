@@ -1,16 +1,36 @@
-# DataTable confirmed schema-backed (packages/dsl-ui/src/schemas/generated-node-schemas.ts,
-# DataTableNodeSchema): rows + columns[{key,label,format?,mono?}], confirmed via dsl-owner
-# research 2026-10-11. format enum includes "datetime", used below for the ts column.
+# DataTable schema: rows + columns[{key,label,format?,mono?}]. format enum includes "datetime" (ts column).
+# Pagination and PageSizeSelect `urlParam` need @wadeck-app/dsl-ui >= 2026.10.12-091-dd4b2887; older frontends render no pagination.
 $sources:
   history:
     url: GET /api/modules/queue/history
+    params:
+      page: $urlParam.page
+      limit: $urlParam.size
 
-$type: DataTable
-rows: $sources.history.entries
-columns:
-  - { key: "ts", label: "Time", format: "datetime" }
-  - { key: "event", label: "Event" }
-  - { key: "eventId", label: "Event ID", mono: true }
-  - { key: "project", label: "Project" }
-  - { key: "matchedCount", label: "Matched" }
-  - { key: "totalCount", label: "Total" }
+$type: PageContent
+sections:
+  - $type: DataTable
+    rows: $sources.history.entries
+    columns:
+      - { key: "ts", label: "Time", format: "datetime" }
+      - { key: "event", label: "Event" }
+      - { key: "eventId", label: "Event ID", mono: true }
+      - { key: "project", label: "Project" }
+      - { key: "matchedCount", label: "Matched" }
+      - { key: "totalCount", label: "Total" }
+
+  # HorizontalStack takes Tailwind classes; its DSL children key is `items` (see dsl-agent-fleet-app dashboard.yaml)
+  - $type: HorizontalStack
+    justify: justify-between
+    align: items-center
+    gap: gap-3
+    items:
+      - $type: Pagination
+        urlParam: page
+        total: $sources.history.total
+        size: $sources.history.limit
+
+      - $type: PageSizeSelect
+        urlParam: size
+        options: [20, 50, 100]
+        value: $sources.history.limit
