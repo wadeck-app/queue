@@ -13,5 +13,6 @@ chmod +x packages/queue-cli-darwin-arm64/queue packages/queue-cli-darwin-x64/que
 cp "$QUEUE_DIST_BUNDLE/queue.cjs"          packages/queue-cli-dist/queue.cjs
 cp "$QUEUE_DIST_BUNDLE/queue-updater.cjs"  packages/queue-cli-dist/queue-updater.cjs
 cp "$QUEUE_DIST_BUNDLE/queue-daemon.cjs"   packages/queue-cli-dist/queue-daemon.cjs
+cp "$QUEUE_DIST_BUNDLE/queue-relay-daemon.cjs"  packages/queue-cli-dist/queue-relay-daemon.cjs
 cp -r "$QUEUE_DIST_BUNDLE/app-module"      packages/queue-cli-dist/app-module
 echo "queue artifacts copied"

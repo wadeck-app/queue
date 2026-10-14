@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync } from 'node:fs';
+import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync, openSync, readSync, closeSync, statSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
-import { tmpdir } from 'node:os';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
@@ -16,10 +14,13 @@ import { runSelfCheck } from '@wadeck-app/shared-cli';
 import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
 import { createRelayClient } from './RelayClient.js';
+import { relayStop } from './relayStop.js';
+import { relayStart } from './relayStart.js';
 import { LogFormatter } from './LogFormatter.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess } from '@wadeck-app/queue-core';
+import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 
 declare const __QUEUE_CLI_VERSION__: string;
@@ -40,6 +41,18 @@ Usage:
   queue relay start   Start the relay client as a background process (reads relay.yml from QUEUE_CONFIG_DIR)
   queue relay stop    Stop the relay client
   queue relay status  Show whether the relay client is running and connected
+
+relay.yml example (in QUEUE_CONFIG_DIR):
+  relayUrl: wss://<relay-host>/relay-ws
+  token: <your-relay-consumer-token>
+  plugins:
+    - module: '@wadeck-app/plugin-github'
+      subscriptions:
+        - eventType: [push, pull_request]
+          # payloadMatch compares top-level payload keys by equality (dotted paths are not supported yet)
+          payloadMatch: { action: opened }
+
+The relay client logs to <QUEUE_CONFIG_DIR>/relay-daemon/relay.log.
 `;
 
 const CLI_GROUP_HELP = `queue cli - CLI management commands
@@ -113,7 +126,10 @@ Usage:
 
 History options:
   --limit, -n <N>   Max entries to show (default: 20, matches flow-cli's history pagination)
+                    With --follow: shows the last N entries, then streams new ones
   --offset <N>      Skip the first N matching entries (combine with --limit for paging)
+                    Cannot be combined with --follow
+  --follow, -f      Stream new history entries as they arrive; shows last N (default 20) first
 
 Sub add/edit options:
   --timeout <duration>          Dispatch timeout, e.g. 30s, 5m (default: 30s)
@@ -181,7 +197,12 @@ async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = 
 
 const HISTORY_STATUSES = ['success', 'failed', 'dlq', 'filtered'] as const;
 
-function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; limit: number; offset: number; errors: string[] } {
+// Helper to check if flag is present in args (regardless of value)
+function isFlagPresent(args: string[], flag: string): boolean {
+  return args.indexOf(flag) !== -1;
+}
+
+export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; limit: number; offset: number; errors: string[] } {
   const errors: string[] = [];
   const getArg = (flag: string): string | undefined => {
     const idx = args.indexOf(flag);
@@ -193,55 +214,153 @@ function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boole
 
   const filter: HistoryFilter = {};
 
-  const eventVal = getArg('--event');
-  if (eventVal) filter.event = eventVal;
+  if (isFlagPresent(args, '--event')) {
+    const eventVal = getArg('--event');
+    if (eventVal === undefined) {
+      errors.push('--event requires a value');
+    } else {
+      filter.event = eventVal;
+    }
+  }
 
-  const subscriberVal = getArg('--subscriber');
-  if (subscriberVal) filter.subscriberId = subscriberVal;
+  if (isFlagPresent(args, '--subscriber')) {
+    const subscriberVal = getArg('--subscriber');
+    if (subscriberVal === undefined) {
+      errors.push('--subscriber requires a value');
+    } else {
+      filter.subscriberId = subscriberVal;
+    }
+  }
 
-  const statusVal = getArg('--status');
-  if (statusVal) {
-    if (!(HISTORY_STATUSES as readonly string[]).includes(statusVal)) {
+  if (isFlagPresent(args, '--status')) {
+    const statusVal = getArg('--status');
+    if (statusVal === undefined) {
+      errors.push('--status requires a value');
+    } else if (!(HISTORY_STATUSES as readonly string[]).includes(statusVal)) {
       errors.push(`--status must be one of ${HISTORY_STATUSES.join('|')}, got: ${statusVal}`);
     } else {
       filter.status = statusVal as HistoryFilter['status'];
     }
   }
 
-  const sinceVal = getArg('--since');
-  if (sinceVal) {
-    try {
-      filter.sinceMs = Date.now() - parseDuration(sinceVal.replace(/^-/, ''));
-    } catch (err) {
-      errors.push(`Invalid --since: ${getErrorMessage(err)} (expected Jira-style relative time, e.g. -3d, -2h, -30m)`);
+  if (isFlagPresent(args, '--since')) {
+    const sinceVal = getArg('--since');
+    if (sinceVal === undefined) {
+      errors.push('--since requires a value');
+    } else {
+      try {
+        filter.sinceMs = Date.now() - parseDuration(sinceVal.replace(/^-/, ''));
+      } catch (err) {
+        errors.push(`Invalid --since: ${getErrorMessage(err)} (expected Jira-style relative time, e.g. -3d, -2h, -30m)`);
+      }
     }
   }
 
   // --limit/--offset match flow-cli's HistoryCommand.ts convention (-n/--limit, --offset, same
   // default of 20) -- history pagination should look the same across every CLI in the fleet.
   let limit = DEFAULT_HISTORY_LIMIT;
-  const limitVal = getArg('--limit') ?? getArg('-n');
-  if (limitVal !== undefined) {
-    const parsed = Number(limitVal);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      errors.push(`--limit must be a positive integer, got: ${limitVal}`);
+  // `--limit` wins over its `-n` alias when both are given
+  const limitFlag = ['--limit', '-n'].find((flag) => isFlagPresent(args, flag));
+  if (limitFlag) {
+    const limitVal = getArg(limitFlag);
+    if (limitVal === undefined) {
+      errors.push(`${limitFlag} requires a value`);
     } else {
-      limit = parsed;
+      const parsed = Number(limitVal);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        errors.push(`--limit must be a positive integer, got: ${limitVal}`);
+      } else {
+        limit = parsed;
+      }
     }
   }
 
   let offset = 0;
-  const offsetVal = getArg('--offset');
-  if (offsetVal !== undefined) {
-    const parsed = Number(offsetVal);
-    if (!Number.isInteger(parsed) || parsed < 0) {
-      errors.push(`--offset must be a non-negative integer, got: ${offsetVal}`);
+  if (isFlagPresent(args, '--offset')) {
+    const offsetVal = getArg('--offset');
+    if (offsetVal === undefined) {
+      errors.push('--offset requires a value');
     } else {
-      offset = parsed;
+      const parsed = Number(offsetVal);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        errors.push(`--offset must be a non-negative integer, got: ${offsetVal}`);
+      } else {
+        offset = parsed;
+      }
     }
   }
 
   return { filter, json: args.includes('--json'), limit, offset, errors };
+}
+
+// Helper to inject dependencies into follow mode for testing (with AbortSignal support).
+// When signal is aborted, the follow loop stops without clearing the interval.
+export async function runFollowMode(deps: {
+  reader: { read: (filter?: HistoryFilter) => HistoryEntry[] };
+  filter?: HistoryFilter;
+  limit: number;
+  json: boolean;
+  write: (text: string) => void;
+  poll?: (intervalHandle: NodeJS.Timeout) => Promise<void>;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { reader, filter, limit, json, write, poll, signal } = deps;
+
+  // Follow mode prints one entry per line (chronological), not the array/newest-first shape
+  // of a one-shot read: a live tail is a stream of updates, not a snapshot document.
+  const printEntry = (entry: HistoryEntry): void => {
+    write((json ? JSON.stringify(entry) : HistoryFormatter.format(entry)) + '\n');
+  };
+
+  // Read all current entries, then take only the N most recent (tail -n semantics)
+  const allRead = reader.read(filter);
+  const sorted = [...allRead].sort((a, b) => a.ts.localeCompare(b.ts));
+  const initial = sorted.slice(-limit);
+
+  // Print only the limited initial batch in chronological order
+  for (const entry of initial) printEntry(entry);
+
+  // Snapshot must be built from the FULL read, not just the printed N.
+  // Otherwise, entries not printed would be re-printed as "new" on the first poll.
+  let snapshot = diffNewEntries(new Map(), allRead).snapshot;
+
+  // If a custom poll function is provided (for testing), use it
+  if (poll) {
+    const interval = setInterval(() => {
+      const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
+      snapshot = next;
+      for (const entry of changed) printEntry(entry);
+    }, 500);
+    try {
+      await poll(interval);
+    } finally {
+      clearInterval(interval);
+    }
+    return;
+  }
+
+  // Production follow loop: poll every 500ms until SIGINT or signal aborted
+  await new Promise<void>((resolve) => {
+    const interval = setInterval(() => {
+      if (signal?.aborted) {
+        clearInterval(interval);
+        resolve();
+        return;
+      }
+      const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
+      snapshot = next;
+      for (const entry of changed) printEntry(entry);
+    }, 500);
+    const handleSigint = () => { clearInterval(interval); process.removeListener('SIGINT', handleSigint); resolve(); };
+    process.on('SIGINT', handleSigint);
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        process.removeListener('SIGINT', handleSigint);
+        clearInterval(interval);
+        resolve();
+      });
+    }
+  });
 }
 
 async function queueHistoryCommand(configDir: string, args: string[]): Promise<void> {
@@ -283,24 +402,21 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
     return;
   }
 
-  // Follow mode prints one entry per line (chronological), not the array/newest-first shape
-  // of a one-shot read: a live tail is a stream of updates, not a snapshot document.
-  const printEntry = (entry: HistoryEntry): void => {
-    process.stdout.write((json ? JSON.stringify(entry) : HistoryFormatter.format(entry)) + '\n');
-  };
+  // --offset has no meaning with --follow (a live tail cannot skip entries)
+  if (offset > 0) {
+    process.stderr.write('[fail] --offset cannot be combined with --follow\n');
+    process.exit(1);
+  }
 
-  const initial = [...reader.read(filter)].sort((a, b) => a.ts.localeCompare(b.ts));
-  for (const entry of initial) printEntry(entry);
-  let snapshot = diffNewEntries(new Map(), initial).snapshot;
-
+  // This is a deliberate behaviour change: with --follow, the initial dump shows the N most recent
+  // entries (default 20), not all entries. This matches tail -n semantics and typical CLI expectations.
   process.stderr.write(`[queue] Following ${pathJoin(configDir, 'history')}\n`);
-  await new Promise<void>((resolve) => {
-    const interval = setInterval(() => {
-      const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
-      snapshot = next;
-      for (const entry of changed) printEntry(entry);
-    }, 500);
-    process.on('SIGINT', () => { clearInterval(interval); resolve(); });
+  await runFollowMode({
+    reader,
+    filter,
+    limit,
+    json,
+    write: (text: string) => process.stdout.write(text),
   });
 }
 
@@ -310,42 +426,20 @@ function formatUptime(sec: number): string {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }
 
-function spawnDaemon(configDir: string): void {
+function getQueueDaemonScriptPath(): string {
   // Bundle layout: queue-daemon.cjs sits next to queue.cjs
   // TSC dev layout: ../daemon/daemon-entry.js relative to dist/cli/QueueIndex.js
   const bundleDaemon = fileURLToPath(new URL('./queue-daemon.cjs', import.meta.url));
   const tscDaemon = fileURLToPath(new URL('../daemon/daemon-entry.js', import.meta.url));
-  const daemonScript = existsSync(bundleDaemon) ? bundleDaemon : tscDaemon;
-  const daemonEnv = { ...process.env, QUEUE_CONFIG_DIR: configDir };
+  return getDaemonScriptPath({ existsSync, bundlePath: bundleDaemon, tscPath: tscDaemon });
+}
 
-  if (process.platform === 'win32') {
-    // windowsHide:true on spawn is unreliable on Windows — use wscript.exe SW_HIDE
-    // which hides the window at Win32 API level regardless of process tree depth.
-    const vbsPath = pathJoin(tmpdir(), 'queue-daemon-launch.vbs');
-    const safeNode = process.execPath.replace(/"/g, '""');
-    const safeDaemon = daemonScript.replace(/"/g, '""');
-    const safeConfigDir = configDir.replace(/"/g, '""');
-    writeFileSync(vbsPath, [
-      'Dim oShell',
-      'Set oShell = CreateObject("WScript.Shell")',
-      `oShell.Environment("Process")("QUEUE_CONFIG_DIR") = "${safeConfigDir}"`,
-      `oShell.Run """${safeNode}"" ""${safeDaemon}""", 0, False`,
-    ].join('\r\n'));
-    const child = spawn('wscript.exe', [vbsPath], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      env: daemonEnv,
-    });
-    child.unref();
-  } else {
-    const child = spawn(process.execPath, [daemonScript], {
-      detached: true,
-      stdio: 'ignore',
-      env: daemonEnv,
-    });
-    child.unref();
-  }
+function spawnQueueDaemon(configDir: string): void {
+  // Bundle layout: queue-daemon.cjs sits next to queue.cjs
+  // TSC dev layout: ../daemon/daemon-entry.js relative to dist/cli/QueueIndex.js
+  const bundleDaemon = fileURLToPath(new URL('./queue-daemon.cjs', import.meta.url));
+  const tscDaemon = fileURLToPath(new URL('../daemon/daemon-entry.js', import.meta.url));
+  spawnDaemon(configDir, { existsSync, bundlePath: bundleDaemon, tscPath: tscDaemon });
 }
 
 async function waitForDaemon(configDir: string, timeoutMs = 5000): Promise<boolean> {
@@ -366,7 +460,7 @@ async function ensureDaemon(configDir: string): Promise<void> {
   const client = createQueueClient(configDir);
   const running = await client.isRunning().catch(() => false);
   if (!running) {
-    spawnDaemon(configDir);
+    spawnQueueDaemon(configDir);
     const started = await waitForDaemon(configDir, 5000);
     if (!started) {
       process.stderr.write('[queue] Failed to start daemon within 5s\n');
@@ -408,31 +502,61 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
   }
 
   if (sub === 'start') {
-    const client = createRelayClient(configDir);
-    const running = await client.isRunning().catch(() => false);
-    if (running) {
-      process.stderr.write('[ok] relay client already running\n');
-      return;
+    // Import loadRelayConfig from the relay package's compiled dist
+    const { loadRelayConfig } = await import('@wadeck-app/queue-relay-client/dist/config.js');
+
+    // Resolve relay daemon script: prefers bundled queue-relay-daemon.cjs if it exists,
+    // otherwise falls back to the TSC-compiled relay-daemon-entry.js from queue-relay-client
+    function resolveRelayScript(): string {
+      const bundleRelay = fileURLToPath(new URL('./queue-relay-daemon.cjs', import.meta.url));
+      if (existsSync(bundleRelay)) return bundleRelay;
+      // Resolved lazily: the relay package is not installed next to a published (bundled) CLI
+      return require.resolve('@wadeck-app/queue-relay-client/dist/relay-daemon-entry.js');
     }
-    spawnRelayDaemon(configDir);
-    const started = await waitForRelayDaemon(configDir, 5000);
-    if (started) {
-      process.stderr.write('[ok] relay client started\n');
-    } else {
-      process.stderr.write('[fail] relay client failed to start within 5s\n');
-      process.exit(1);
+
+    // Inject all dependencies into relayStart
+    const deps = {
+      client: createRelayClient(configDir),
+      loadConfig: (dir: string) => loadRelayConfig(dir),
+      resolveDaemonScript: resolveRelayScript,
+      getQueueDaemonScript: getQueueDaemonScriptPath,
+      spawn: (script: string, dir: string, env: Record<string, string>) => spawnDetachedProcess(script, { QUEUE_CONFIG_DIR: dir, ...env }),
+      waitForDaemon: (ms: number) => waitForRelayDaemon(configDir, ms),
+      readLogTail: (path: string, lines: number) => {
+        try {
+          // Read only the last 8 KiB to avoid memory issues on large files
+          const stat = statSync(path);
+          const maxBytes = 8192;
+          const bytesToRead = Math.min(maxBytes, stat.size);
+          const buffer = Buffer.alloc(bytesToRead);
+          const fd = openSync(path, 'r');
+          try {
+            readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
+          } finally {
+            closeSync(fd);
+          }
+          const content = buffer.toString('utf-8');
+          return content.split('\n').slice(-lines).filter(l => l.trim());
+        } catch {
+          return null;
+        }
+      },
+      io: { stdout: process.stdout, stderr: process.stderr },
+    };
+
+    const exitCode = await relayStart(deps, configDir);
+    if (exitCode !== 0) {
+      process.exit(exitCode);
     }
     return;
   }
 
   if (sub === 'stop') {
     const client = createRelayClient(configDir);
-    try {
-      // 'quit' is a built-in daemon command; cast to bypass typing
-      await (client.send as (cmd: string, payload?: unknown) => Promise<unknown>)('quit', undefined);
-      process.stdout.write('[ok] relay client stopped\n');
-    } catch {
-      process.stderr.write('[fail] relay client not running or failed to stop\n');
+    const io = { stdout: process.stdout, stderr: process.stderr };
+    const exitCode = await relayStop(client, configDir, io);
+    if (exitCode !== 0) {
+      process.exit(exitCode);
     }
     return;
   }
@@ -712,9 +836,16 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    // Import replayCwd for resolving the working directory to use
+    const { resolveReplayCwd } = await import('./replayCwd.js');
+    const { cwd: replayCwd, warning } = resolveReplayCwd(entry, process.cwd());
+    if (warning) {
+      process.stderr.write(warning + '\n');
+    }
+
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
-    const response = await client.send('push', { event: entry.event, payload: entry.payload, cwd: process.cwd(), replayOf: eventId });
+    const response = await client.send('push', { event: entry.event, payload: entry.payload, cwd: replayCwd, replayOf: eventId });
 
     if (response.status === 'aborted') {
       process.stderr.write(`[queue] Replay aborted: ${response.reason ?? 'unknown reason'}\n`);
@@ -839,7 +970,7 @@ async function main(): Promise<void> {
       process.stderr.write('[ok] daemon already running\n');
       return;
     }
-    spawnDaemon(configDir);
+    spawnQueueDaemon(configDir);
     const started = await waitForDaemon(configDir, 5000);
     if (started) {
       process.stderr.write('[ok] daemon started\n');

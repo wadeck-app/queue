@@ -75,6 +75,20 @@ await Promise.all([
     supported: { 'top-level-await': false },
   }),
   build({
+    // Relay daemon entry: self-contained bundle with GitHub plugin built-in,
+    // so it doesn't depend on node_modules lookup after publishing
+    entryPoints: [join(rootDir, 'src/relay/relay-daemon-entry.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    target: 'node22',
+    outfile: join(rootDir, 'dist-bundle/queue-relay-daemon.cjs'),
+    banner: sharedBanner,
+    define: sharedDefine,
+    external: [],
+    supported: { 'top-level-await': false },
+  }),
+  build({
     // app-module-queue's backend runs inside app-core's process via backendEntryPath, never
     // imported by queue itself -- bundled here (not just tsc-compiled) so it ships self-contained
     // with queue-cli, since app-module-queue is a private, unpublished workspace package.
