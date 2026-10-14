@@ -6,7 +6,7 @@ import { getErrorMessage } from '@wadeck-app/queue-core';
 
 const SubscriptionConfigSchema = z.object({
   eventType: z.array(z.string()).optional(),
-  payloadMatch: z.record(z.string()).optional(),
+  payloadMatch: z.record(z.string().min(1), z.union([z.string(), z.number(), z.boolean()])).optional(),
   /** Overrides the plugin's own mapEvent-derived event name when set. */
   queueEvent: z.string().nullable().optional(),
 });
@@ -17,8 +17,60 @@ const PluginConfigSchema = z.object({
   subscriptions: z.array(SubscriptionConfigSchema).min(1),
 });
 
+// Validate relayUrl: must be wss://, or ws:// with localhost/127.0.0.1/[::1]
+// Returns the validation result and error message if invalid
+function validateRelayUrl(url: string): { valid: boolean; message?: string } {
+  try {
+    const parsed = new URL(url);
+    const protocol = parsed.protocol;
+    const hostname = parsed.hostname;
+
+    // Allow wss:// for any hostname
+    if (protocol === 'wss:') {
+      return { valid: true };
+    }
+
+    // Allow ws:// only for localhost, 127.0.0.1, or [::1]
+    if (protocol === 'ws:') {
+      // URL.hostname includes brackets for IPv6, so check for '[::1]' as well
+      const isLocalhost =
+        hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
+      if (isLocalhost) {
+        return { valid: true };
+      }
+      return {
+        valid: false,
+        message: `relayUrl must use wss:// (the relay token is sent as the first message and would travel in clear over ws://); ws:// is only accepted for localhost. Got: ${url}`,
+      };
+    }
+
+    // Reject all other protocols
+    return {
+      valid: false,
+      message: `relayUrl must use wss:// (the relay token is sent as the first message and would travel in clear over ws://); ws:// is only accepted for localhost. Got: ${url}`,
+    };
+  } catch {
+    // Invalid URL
+    return {
+      valid: false,
+      message: `relayUrl must use wss:// (the relay token is sent as the first message and would travel in clear over ws://); ws:// is only accepted for localhost. Got: ${url}`,
+    };
+  }
+}
+
 export const RelayConfigSchema = z.object({
-  relayUrl: z.string().url(),
+  relayUrl: z
+    .string()
+    .url()
+    .superRefine((url, ctx) => {
+      const result = validateRelayUrl(url);
+      if (!result.valid) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: result.message!,
+        });
+      }
+    }),
   token: z.string().min(1),
   plugins: z.array(PluginConfigSchema).default([]),
 });

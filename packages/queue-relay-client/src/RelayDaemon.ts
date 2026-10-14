@@ -1,7 +1,10 @@
 import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import type { DaemonHandle, ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
 import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 import { RelayConnection } from './RelayConnection.js';
+import { createRelayLogger } from './RelayLogger.js';
 
 export const RELAY_DAEMON_PORT = 47911;
 
@@ -9,11 +12,69 @@ export interface RelayStatus {
   connected: boolean;
   pid: number;
   uptimeSec: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  lastCloseCode: number | null;
+  logError: string | null;
 }
 
 export type RelayCommands = {
   status: () => RelayStatus;
 };
+
+export interface ConnectionCrashDeps {
+  log: (line: string) => void;
+  stopConnection: () => void;
+  stopDaemon: () => Promise<unknown>;
+  exit: (code: number) => void;
+}
+
+const CRASH_STOP_TIMEOUT_MS = 5_000;
+
+/**
+ * Handle a connection crash by logging, stopping the connection and daemon,
+ * and exiting the process with code 1. Guarantees exit: if the daemon fails to
+ * stop, or does not settle within `stopTimeoutMs`, it exits anyway rather than
+ * leaving a zombie daemon with a dead connection loop.
+ */
+export async function handleConnectionCrash(
+  err: unknown,
+  deps: ConnectionCrashDeps,
+  stopTimeoutMs: number = CRASH_STOP_TIMEOUT_MS,
+): Promise<void> {
+  deps.log(`[relay] Relay connection loop crashed: ${getErrorMessage(err)}`);
+
+  deps.stopConnection();
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), stopTimeoutMs);
+  });
+  // Promise.resolve().then() also turns a synchronous throw from stopDaemon into a rejection
+  const stop = Promise.resolve()
+    .then(() => deps.stopDaemon())
+    .then(
+      () => 'stopped' as const,
+      (stopErr: unknown) => {
+        deps.log(`[relay] Failed to stop daemon during crash: ${getErrorMessage(stopErr)}`);
+        return 'failed' as const;
+      },
+    );
+
+  const outcome = await Promise.race([stop, timeout]);
+  clearTimeout(timer);
+  if (outcome === 'timeout') {
+    deps.log(`[relay] Daemon did not stop within ${stopTimeoutMs}ms during crash; exiting anyway.`);
+  }
+
+  deps.exit(1);
+}
+
+export interface ShutdownDeps {
+  setTimeout: (fn: () => void, ms: number) => { unref: () => void };
+  exit: (code: number) => void;
+  log: (line: string) => void;
+}
 
 /**
  * The relay client's own singleton daemon -- separate from QueueDaemon so it
@@ -22,35 +83,86 @@ export type RelayCommands = {
  * ("relay-daemon") so its port-file never collides with the main daemon's,
  * which uses the same top-level QUEUE_CONFIG_DIR.
  */
-export async function startRelayDaemon(configDir: string): Promise<DaemonHandle> {
+export async function startRelayDaemon(configDir: string, shutdownDeps?: ShutdownDeps): Promise<DaemonHandle> {
   const relayStateDir = join(configDir, 'relay-daemon');
+  // Ensure relay-daemon subdirectory exists before createDaemon tries to create config.lock
+  mkdirSync(relayStateDir, { recursive: true });
+
   const startedAt = Date.now();
+  // Create logger that writes to relay.log within the relay-daemon directory
+  const relayLogger = createRelayLogger(join(relayStateDir, 'relay.log'));
   const connection = new RelayConnection({
     configDir,
-    onLog: (line) => console.log(line),
+    onLog: (line) => {
+      // Echo to both file and console for foreground runs
+      relayLogger(line);
+      console.log(line);
+    },
   });
+
+  // Use injected deps or real ones for shutdown
+  const deps: ShutdownDeps = shutdownDeps || {
+    setTimeout: (fn, ms) => {
+      const id = globalThis.setTimeout(fn, ms);
+      return { unref: () => { (id as any).unref(); } };
+    },
+    exit: process.exit,
+    log: (line) => relayLogger(line),
+  };
 
   const daemonHandle = await createDaemon<RelayCommands>({
     configDir: relayStateDir,
     port: RELAY_DAEMON_PORT,
     idleTimeout: null,
     commands: {
-      status: (): RelayStatus => ({
-        connected: connection.isConnected(),
-        pid: process.pid,
-        uptimeSec: Math.round((Date.now() - startedAt) / 1000),
-      }),
+      status: (): RelayStatus => {
+        const diag = connection.getDiagnostics();
+        return {
+          connected: connection.isConnected(),
+          pid: process.pid,
+          uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+          lastError: diag.lastError,
+          lastErrorAt: diag.lastErrorAt,
+          lastCloseCode: diag.lastCloseCode,
+          logError: relayLogger.getLastError(),
+        };
+      },
+    },
+    // Hook into all shutdown paths (quit, idle, update, signal)
+    hooks: {
+      onShutdown: (reason) => {
+        connection.stop();
+        // Arm a safety timeout to force exit if shutdown takes too long
+        // 3000ms gives the event loop time to drain after connection stops
+        const timer = deps.setTimeout(() => {
+          deps.log('[relay] forced exit after shutdown timeout');
+          deps.exit(0);
+        }, 3000);
+        timer.unref();
+      },
     },
   });
 
-  void connection.start();
+  // Start connection loop and handle any crashes
+  void connection.start().catch((err) => {
+    void handleConnectionCrash(err, {
+      log: (line) => {
+        relayLogger(line);
+        console.error(line);
+      },
+      stopConnection: () => connection.stop(),
+      stopDaemon: () => daemonHandle.stop('error'),
+      exit: deps.exit,
+    });
+  });
 
-  const shutdown = (reason: ShutdownReason) => {
+  // Signal handlers: stop the connection, then let hooks.onShutdown handle daemon stop + exit
+  const signalShutdown = (reason: ShutdownReason) => {
     connection.stop();
-    void daemonHandle.stop(reason).then(() => process.exit(0));
+    void daemonHandle.stop(reason);
   };
-  process.on('SIGINT', () => shutdown('signal'));
-  process.on('SIGTERM', () => shutdown('signal'));
+  process.on('SIGINT', () => signalShutdown('signal'));
+  process.on('SIGTERM', () => signalShutdown('signal'));
 
   return daemonHandle;
 }
