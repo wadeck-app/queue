@@ -8,6 +8,9 @@ export default defineConfig({
     environment: 'node',
     restoreMocks: true,
     include: ['src/**/*.test.ts'],
+    // Integration tests start real daemons on fixed ports (queue daemon 47910, relay daemon 47911):
+    // running test files in parallel makes them collide or skip.
+    fileParallelism: false,
     // Daemons started by the integration tests re-register the "queue" module with app-core on every
     // start. Without this they would reach a REAL app-core on the developer's machine (port 4850) or
     // write its ~/.config/app-core/modules/queue.json pointing at a test bundle. Port 1 is never

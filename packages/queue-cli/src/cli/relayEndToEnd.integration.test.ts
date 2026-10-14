@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -375,4 +376,78 @@ plugins:
     },
     60_000,
   );
+});
+
+describe('relay daemon bundle smoke test (integration)', () => {
+  it('the bundled relay daemon runs alone from an empty directory, loads the built-in github plugin and subscribes', async (ctx) => {
+    if (await isPortListening(47911)) {
+      ctx.skip();
+      return;
+    }
+
+    const relayBundle = join(rootDir, 'dist-bundle/queue-relay-daemon.cjs');
+    expect(existsSync(relayBundle), `Bundle not found: ${relayBundle}`).toBe(true);
+
+    // The copy lives in a fresh directory with no node_modules above it: it must be self-contained
+    const isolatedDir = mkdtempSync(join(tmpdir(), 'queue-relay-bundle-smoke-'));
+    const configDir = mkdtempSync(join(tmpdir(), 'queue-relay-config-smoke-'));
+    const received: Array<{ type: string; filter?: unknown }> = [];
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    let child: ChildProcess | undefined;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        wss.once('listening', () => resolve());
+        wss.once('error', reject);
+      });
+      const { port } = wss.address() as net.AddressInfo;
+      wss.on('connection', (ws) => {
+        ws.on('message', (raw) => {
+          const message = JSON.parse(String(raw)) as { type: string; filter?: unknown };
+          received.push(message);
+          if (message.type === 'auth') ws.send(JSON.stringify({ type: 'authenticated', username: 'smoke' }));
+        });
+      });
+
+      const bundleCopy = join(isolatedDir, 'queue-relay-daemon.cjs');
+      copyFileSync(relayBundle, bundleCopy);
+      writeFileSync(
+        join(configDir, 'relay.yml'),
+        `relayUrl: ws://127.0.0.1:${port}/relay-ws\ntoken: smoke\nplugins:\n  - module: '@wadeck-app/plugin-github'\n    subscriptions:\n      - eventType: [push]\n`,
+        'utf-8',
+      );
+
+      let stderr = '';
+      let exitCode: number | null | undefined;
+      child = spawn(process.execPath, [bundleCopy], {
+        cwd: isolatedDir,
+        env: { ...process.env, QUEUE_CONFIG_DIR: configDir, NODE_PATH: '' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
+      child.on('exit', (code) => { exitCode = code; });
+
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline && exitCode === undefined && !received.some((m) => m.type === 'subscribe')) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      expect(exitCode, `relay daemon exited early with code ${exitCode}; stderr: ${stderr}`).toBeUndefined();
+      const subscribe = received.find((m) => m.type === 'subscribe');
+      expect(subscribe?.filter, `no subscribe received within 15s; stderr: ${stderr}`).toEqual({
+        source: 'github',
+        eventType: ['push'],
+        payloadMatch: {},
+      });
+    } finally {
+      if (child && child.exitCode === null) {
+        const exited = new Promise<void>((resolve) => child!.once('exit', () => resolve()));
+        child.kill();
+        await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+      }
+      wss.close();
+      rmSync(isolatedDir, { recursive: true, force: true });
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
