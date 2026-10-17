@@ -119,6 +119,12 @@ describe('ciWaitCommand', () => {
     expect(h.err.join('')).toContain('"CI"');
   });
 
+  it('prints one progress line for the whole settle window, not one per second', async () => {
+    const h = harness((now) => (now >= T0 ? [runEntry(T0, 'completed', 'success')] : []));
+    expect(await ciWaitCommand(base, h.deps)).toBe(CI_EXIT.PASSED);
+    expect(h.err.filter((l) => l.startsWith('[queue]'))).toHaveLength(1);
+  });
+
   it('only logs a progress line when the situation changes', async () => {
     const h = harness(() => [runEntry(T0, 'in_progress')]);
     await ciWaitCommand({ ...base, timeoutMs: 20_000 }, h.deps);

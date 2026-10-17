@@ -82,6 +82,8 @@ describe('queue wait ci (bundled CLI)', () => {
     expect(result.stdout).toContain('CI passed');
     expect(result.stdout).toContain('CI / Publish');
     expect(result.stdout).toContain('https://github.com/o/r/actions/runs/7');
+    // The positional SHA is an argument, not noise
+    expect(result.stderr).not.toContain('unknown argument');
   });
 
   it('accepts an abbreviated SHA', async () => {

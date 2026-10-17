@@ -126,10 +126,11 @@ export function evaluateRuns(runs: CiRun[], options: CiWaitOptions, nowMs: numbe
     const lastActivityMs = Math.max(...relevant.map((r) => Date.parse(r.seenAt)));
     const quietMs = nowMs - lastActivityMs;
     if (quietMs < options.settleMs) {
+      // Constant text on purpose: the caller prints a line only when the reason changes, not once per second
       return {
         state: 'pending',
         runs: relevant,
-        reason: `all seen runs completed, waiting ${Math.ceil((options.settleMs - quietMs) / 1000)}s for late workflows (--settle)`,
+        reason: `all seen runs completed, waiting ${Math.round(options.settleMs / 1000)}s of quiet for late workflows (--settle)`,
       };
     }
   }

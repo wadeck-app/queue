@@ -59,10 +59,11 @@ export async function queueWaitCommand(configDir: string, args: string[]): Promi
   if (target !== 'ci') return fail(`Unknown wait target "${target}". Use: queue wait ci (see "queue wait --help").`);
 
   const rest = args.slice(1);
-  warnUnknownArgs(rest, KNOWN_FLAGS, 'queue wait ci', FLAGS_WITH_VALUE);
 
   // The positional SHA is the first token that is neither a flag nor a flag's value
-  const positional = rest.find((arg, i) => !arg.startsWith('-') && !FLAGS_WITH_VALUE.has(rest[i - 1] ?? ''));
+  const positionalIndex = rest.findIndex((arg, i) => !arg.startsWith('-') && !FLAGS_WITH_VALUE.has(rest[i - 1] ?? ''));
+  const positional = positionalIndex === -1 ? undefined : rest[positionalIndex];
+  warnUnknownArgs(rest.filter((_, i) => i !== positionalIndex), KNOWN_FLAGS, 'queue wait ci', FLAGS_WITH_VALUE);
   const sha = positional ?? git(['rev-parse', 'HEAD']);
   if (!sha) return fail('No commit given and the current directory is not a git repository. Pass the SHA: queue wait ci <sha>.');
   if (!/^[0-9a-f]{7,40}$/i.test(sha)) return fail(`"${sha}" is not a commit SHA (7 to 40 hexadecimal characters). Branch names are not resolved: pass the SHA.`);
