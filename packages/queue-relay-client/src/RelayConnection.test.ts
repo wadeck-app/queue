@@ -626,6 +626,8 @@ plugins:
           const startPromise = connection.start();
           // Wait for at least 2 connection attempts (with faster backoff)
           await waitFor(() => connectionCount >= 2, 1000);
+          // Stopping mid-handshake would race with the diagnostic: wait until it is recorded
+          await waitFor(() => (connection.getDiagnostics().lastError ?? '').includes('authentication timed out'), 1000);
 
           connection.stop();
           await startPromise;

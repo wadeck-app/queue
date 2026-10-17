@@ -413,6 +413,11 @@ export class RelayConnection {
       });
 
       ws.on('error', (err) => {
+        // stop() aborts a handshake in flight: that error is ours, not a relay diagnostic, and must not overwrite the real lastError
+        if (this.stopped) {
+          if (!settled) { settled = true; reject(err); }
+          return;
+        }
         const errorMsg = getErrorMessage(err);
         // R9: Check for HTTP 429 on websocket upgrade
         if (errorMsg.includes('429')) {
