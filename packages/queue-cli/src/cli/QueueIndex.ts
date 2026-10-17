@@ -18,6 +18,7 @@ import { relayStop } from './relayStop.js';
 import { relayStart } from './relayStart.js';
 import { LogFormatter } from './LogFormatter.js';
 import { diffNewEntries } from './HistoryFollower.js';
+import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
@@ -338,7 +339,7 @@ export async function runFollowMode(deps: {
       const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
       snapshot = next;
       for (const entry of changed) printEntry(entry);
-    }, 500);
+    }, FOLLOW_POLL_INTERVAL_MS);
     try {
       await poll(interval);
     } finally {
@@ -347,7 +348,7 @@ export async function runFollowMode(deps: {
     return;
   }
 
-  // Production follow loop: poll every 500ms until SIGINT or signal aborted
+  // Production follow loop: poll every FOLLOW_POLL_INTERVAL_MS until SIGINT or signal aborted
   await new Promise<void>((resolve) => {
     const interval = setInterval(() => {
       if (signal?.aborted) {
@@ -358,7 +359,7 @@ export async function runFollowMode(deps: {
       const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
       snapshot = next;
       for (const entry of changed) printEntry(entry);
-    }, 500);
+    }, FOLLOW_POLL_INTERVAL_MS);
     const handleSigint = () => { clearInterval(interval); process.removeListener('SIGINT', handleSigint); resolve(); };
     process.on('SIGINT', handleSigint);
     if (signal) {
