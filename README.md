@@ -37,7 +37,12 @@ After `git push`, run `queue wait ci` (SHA defaults to `HEAD`, repository to the
 
 It reads the history of relayed `on.github.workflow_run` events, so a CI that finished before the command started is answered at once. Requires the relay client (`queue relay start`).
 
-"Done" means every workflow run seen for the commit is completed and nothing new happened for `--settle` (default 20s). With `--workflow <name>` (repeatable), only those workflows count.
+Inside a git repository it also reads git:
+- Refuses a commit that is not on the branch's upstream ("not pushed, run `git push`"), since no CI would ever run.
+- Infers the expected workflows from the commit's `.github/workflows/*.yml` (`name:`, `push` trigger, branch filters, and path filters checked against the tip commit). If no workflow runs on push for this branch it says so at once (exit 3). Path filters only count as expected when the tip commit matches, since an earlier commit of the same push may also start them.
+- Falls back to the generic rule below when it cannot decide (negated patterns, detached HEAD, unparsable file), and says why on stderr. `--no-infer` disables all of this.
+
+Without an inferred list, "done" means every workflow run seen for the commit is completed and nothing new happened for `--settle` (default 20s). With `--workflow <name>` (repeatable), only those workflows count and git is not used to guess.
 
 | Exit code | Meaning |
 |-----------|---------|
