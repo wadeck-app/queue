@@ -15,6 +15,7 @@ import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
 import { createRelayClient } from './RelayClient.js';
 import { relayStop } from './relayStop.js';
+import { queueWaitCommand } from './waitCli.js';
 import { relayStart } from './relayStart.js';
 import { LogFormatter } from './LogFormatter.js';
 import { diffNewEntries } from './HistoryFollower.js';
@@ -114,6 +115,7 @@ Usage:
   queue retry --event <id>
   queue replay <eventId>    Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>. For manual testing, not delivery guarantees.
+  queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done (see 'queue wait --help')
   queue status [--json]
   queue list-subscribers [event] [--json]
   queue dlq list
@@ -1079,6 +1081,10 @@ async function main(): Promise<void> {
   if (command === 'logs') {
     await queueLogsCommand(configDir, { follow: rest.includes('--follow') || rest.includes('-f') });
     return;
+  }
+
+  if (command === 'wait') {
+    process.exit(await queueWaitCommand(configDir, rest));
   }
 
   // Domain concept (audit trail), not CLI tooling -- top-level only, no `queue cli history`.
