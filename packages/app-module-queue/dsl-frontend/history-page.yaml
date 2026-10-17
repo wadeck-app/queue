@@ -22,7 +22,11 @@ sections:
       $type: JsonViewer
       row: $ctx.row
       field: payloadText
-    emptyMessage: No events recorded yet
+      # Webhook payloads run to thousands of lines; scroll inside the block instead of pushing the pagination away.
+      # Needs @wadeck-app/dsl-ui >= 2026.10.17-095-7b2c28f1 (older frontends ignore it and show the full height).
+      maxHeight: 20rem
+    # About the page, not the journal: an out-of-range ?page= is empty even though events exist.
+    emptyMessage: No events on this page
     columns:
       - { key: "ts", label: "Time", format: "datetime" }
       - { key: "event", label: "Event" }

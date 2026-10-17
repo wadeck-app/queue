@@ -185,7 +185,14 @@ describe('history-page.yaml payload row expansion', () => {
 		expect(dataTable.expansionCondition).toBe(expansion?.field);
 	});
 
-	it('shows an explicit empty state for a page without rows', () => {
-		expect(dataTable.emptyMessage).toBe('No events recorded yet');
+	it('caps the expanded payload height so a huge webhook payload cannot push the pagination off-screen', () => {
+		// JsonViewer `maxHeight` needs @wadeck-app/dsl-ui >= 2026.10.17-095-7b2c28f1; older frontends ignore it.
+		expect(expansion?.maxHeight).toBe('20rem');
+	});
+
+	it('shows an explicit empty state that talks about the page, not the whole history', () => {
+		// An out-of-range ?page= (e.g. a stale bookmark) returns an empty page while events exist:
+		// "No events recorded yet" would be false there.
+		expect(dataTable.emptyMessage).toBe('No events on this page');
 	});
 });

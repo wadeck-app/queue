@@ -33,7 +33,7 @@ describe('listHistory', () => {
     const page = listHistory(configDir);
     expect(page.entries).toHaveLength(1);
     expect(page.total).toBe(1);
-    expect(page.entries[0]).toMatchObject({ eventId: 'e1', event: 'onFoo', payload: { a: 1 }, orphan: false });
+    expect(page.entries[0]).toMatchObject({ eventId: 'e1', event: 'onFoo', payloadText: JSON.stringify({ a: 1 }, null, 2), orphan: false });
     expect(page.entries[0].subscribers).toEqual([{ subscriberId: 'sub1', status: 'success', target: undefined }]);
   });
 
@@ -46,13 +46,14 @@ describe('listHistory', () => {
   });
 
   describe('payloadText (for the dashboard row expansion)', () => {
-    it('adds the payload as indented JSON text, keeping the payload object and the page keys', () => {
+    it('replaces the payload object by its indented JSON text (one copy only), keeping the page keys', () => {
       writeDay('2026-01-01', [
         { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { taskId: 't1', labels: ['a'] } },
       ]);
       const page = listHistory(configDir);
       expect(Object.keys(page).sort()).toEqual(['entries', 'limit', 'offset', 'total']);
-      expect(page.entries[0]!.payload).toEqual({ taskId: 't1', labels: ['a'] });
+      // The list route must not carry a second copy; the full payload stays on GET /history/<eventId>.
+      expect('payload' in page.entries[0]!).toBe(false);
       expect(page.entries[0]!.payloadText).toBe(JSON.stringify({ taskId: 't1', labels: ['a'] }, null, 2));
     });
 
