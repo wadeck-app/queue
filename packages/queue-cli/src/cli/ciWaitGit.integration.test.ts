@@ -127,6 +127,30 @@ describe('queue wait ci with a git repository', () => {
     expect(result.stderr).toContain('git push');
   });
 
+  it('refuses an explicit SHA that is not HEAD and was never pushed', async () => {
+    writeFileSync(join(work, 'a.txt'), 'x');
+    git(work, 'add', '.');
+    git(work, 'commit', '-m', 'local only');
+    const unpushed = git(work, 'rev-parse', 'HEAD');
+    writeFileSync(join(work, 'b.txt'), 'y');
+    git(work, 'add', '.');
+    git(work, 'commit', '-m', 'another local commit');
+    const result = await run([unpushed.slice(0, 8), '--repo', 'o/r']);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain('not on any origin branch');
+    expect(result.stderr).toContain('git push');
+  });
+
+  it('waits normally for an explicit SHA that is not HEAD but was pushed', async () => {
+    const pushed = git(work, 'rev-parse', 'HEAD');
+    writeFileSync(join(work, 'a.txt'), 'x');
+    git(work, 'add', '.');
+    git(work, 'commit', '-m', 'local only');
+    recordRun(pushed, 'My CI');
+    const result = await run([pushed.slice(0, 8), '--repo', 'o/r', '--workflow', 'My CI']);
+    expect(result.exitCode).toBe(0);
+  });
+
   it('--no-infer skips the git checks', async () => {
     writeFileSync(join(work, 'a.txt'), 'x');
     git(work, 'add', '.');

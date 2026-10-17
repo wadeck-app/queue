@@ -79,6 +79,11 @@ function inspectRepository(sha: string, repo: string | undefined, remoteRepo: st
       process.stderr.write(`[fail] Commit ${resolved.slice(0, 12)} is not on ${upstream}: it was not pushed, so no CI will ever run for it. Run "git push", then "queue wait ci" again.\n`);
       return { proceed: false, exitCode: CI_EXIT.NO_RUN };
     }
+  } else if (git(['for-each-ref', '--count=1', 'refs/remotes/origin']) &&
+    !git(['for-each-ref', '--count=1', '--contains', resolved, 'refs/remotes/origin'])) {
+    // An explicit SHA that is not HEAD has no upstream to compare with: it must be on at least one remote branch
+    process.stderr.write(`[fail] Commit ${resolved.slice(0, 12)} is not on any origin branch: it was not pushed, so no CI will ever run for it. Run "git push", then "queue wait ci" again (if it was pushed from elsewhere, run "git fetch" first).\n`);
+    return { proceed: false, exitCode: CI_EXIT.NO_RUN };
   }
 
   if (!infer) return { proceed: true, workflows: [], notes };
