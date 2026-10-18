@@ -1,25 +1,32 @@
 {
   "id": "queue",
-  "version": "1.0.0",
-  "backendEntryPath": "./api-backend/dist/backend.js",
   "extensionPoints": [
     {
       "kind": "widget",
       "slot": "dashboard",
       "label": "Queue Status",
-      "view": { "type": "path", "value": "./dsl-frontend/status-widget.yaml" }
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/status-widget.yaml"
+      }
     },
     {
       "kind": "widget",
       "slot": "dashboard",
       "label": "Queue DLQ",
-      "view": { "type": "path", "value": "./dsl-frontend/dlq-widget.yaml" }
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/dlq-widget.yaml"
+      }
     },
     {
       "kind": "page",
       "slot": "nav",
       "label": "Queue History",
-      "view": { "type": "path", "value": "./dsl-frontend/history-page.yaml" }
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/history-page.yaml"
+      }
     }
   ]
 }

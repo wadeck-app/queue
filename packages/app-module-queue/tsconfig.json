@@ -9,15 +9,8 @@
     "useDefineForClassFields": true,
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
-    "composite": true,
-    "declaration": true,
-    "sourceMap": true,
-    "inlineSources": true,
-    "noEmitOnError": true,
-    "outDir": "api-backend/dist",
-    "rootDir": "src",
+    "noEmit": true,
     "types": ["vitest/globals", "node"]
   },
-  "include": ["src"],
-  "references": [{ "path": "../queue-core" }]
+  "include": ["src"]
 }

@@ -1,32 +1,29 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, spawnSync, execFileSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Calls the parameterised routes (`/history/:eventId`, `/history/:eventId/replay`, `/dlq/:id/...`)
- * through a REAL app-core server (`app-core-cli dev` boots app-core's own buildServer), because
- * backend.test.ts calls the handlers directly and so cannot see how the router fills `req.params`.
- * app-core < 2026.10.17-023 matched routes by exact string: `/history/:eventId` answered 404 and
- * the handler received `params.eventId === undefined`.
+ * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
+ * (`app-core-cli dev` boots app-core's own buildServer), then calls the routes over HTTP. backend.test.ts calls
+ * the handlers directly, so it cannot see how the router fills `req.params` (app-core < 2026.10.17-023 answered
+ * `/history/:eventId` with 404), nor whether the packaged CJS bundle loads and runs.
  *
- * Needs the global `app-core-cli` binary (skipped, with the reason, when it is not on the PATH) and the
- * built backend (`npm run build`).
+ * Uses the app-core-cli installed as a devDependency of this package (not a global binary), so it runs in CI too.
  */
 
-const IS_WINDOWS = process.platform === 'win32';
-const moduleDir = join(dirname(fileURLToPath(import.meta.url)), '..');
+const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const SERVER_START_TIMEOUT_MS = 30_000;
+const PACKAGE_TIMEOUT_MS = 60_000;
 
-const cliVersion = spawnSync('app-core-cli', ['version'], { shell: IS_WINDOWS, encoding: 'utf8', windowsHide: true });
-const cliMissing = cliVersion.error !== undefined || cliVersion.status !== 0;
-if (cliMissing) {
-  console.warn('[backend.realServer.integration] SKIPPED: "app-core-cli" is not runnable from the PATH, so the real-server route tests did not run. Install it globally (@wadeck-app/app-core-cli) to run them.');
-}
+const cliPackageJson = createRequire(import.meta.url).resolve('@wadeck-app/app-core-cli/package.json');
+const cliEntry = join(dirname(cliPackageJson), 'dist/cli.bundle.js');
 
 let child: ChildProcess;
+let workDir: string;
 let configDir: string;
 let baseUrl: string;
 
@@ -34,40 +31,40 @@ function writeHistory(): void {
   mkdirSync(join(configDir, 'history'), { recursive: true });
   const records = [
     // cwd is the module dir, which exists, so a replay gets past the cwd check and stops at the missing daemon.
-    { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'evt-with-payload', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { a: 1 }, cwd: moduleDir },
+    { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'evt-with-payload', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { a: 1 }, cwd: packageDir },
     { type: 'trigger', ts: '2026-01-01T00:00:01.000Z', eventId: 'evt-no-payload', event: 'onFoo', matchedCount: 0, totalCount: 0 },
   ];
   writeFileSync(join(configDir, 'history', '2026-01-01.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 }
 
-function stopServer(): void {
-  if (child?.pid === undefined) {
-    return;
-  }
-  if (IS_WINDOWS) {
-    // The shim runs node through cmd.exe: kill the whole tree, not just the shell.
-    execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-  } else {
-    child.kill();
+/** `app-core-cli package` into a folder outside the module (check refuses any other folder at the module root). */
+function packageModule(out: string): void {
+  try {
+    execFileSync(process.execPath, [cliEntry, 'package', packageDir, '--out', out, '--version', '0.0.0-test-real-server'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PACKAGE_TIMEOUT_MS, windowsHide: true,
+    });
+  } catch (err) {
+    const failure = err as { stdout?: string; stderr?: string };
+    throw new Error(`app-core-cli package failed:\n${failure.stdout ?? ''}${failure.stderr ?? ''}`);
   }
 }
 
-function startServer(): Promise<string> {
+function startServer(builtModule: string): Promise<string> {
   return new Promise((resolve, reject) => {
     let output = '';
     const timer = setTimeout(
       () => reject(new Error(`app-core-cli dev did not print its URL within ${SERVER_START_TIMEOUT_MS} ms. Output so far:\n${output}`)),
       SERVER_START_TIMEOUT_MS,
     );
-    child = spawn('app-core-cli', ['dev', moduleDir], {
-      shell: IS_WINDOWS,
+    // node + the CLI file, no shell: child.kill() reaches the real server process
+    child = spawn(process.execPath, [cliEntry, 'dev', builtModule], {
       windowsHide: true,
       // Port 0: a free port, never the developer's real app-core on 4850. QUEUE_CONFIG_DIR: the fixture history.
       env: { ...process.env, APP_CORE_PORT: '0', QUEUE_CONFIG_DIR: configDir },
     });
     const onData = (chunk: Buffer): void => {
       output += chunk.toString();
-      const match = /at (http:\/\/127\.0\.0\.1:\d+)/.exec(output);
+      const match = /app-core-cli dev: (http:\/\/127\.0\.0\.1:\d+)/.exec(output);
       if (match) {
         clearTimeout(timer);
         resolve(match[1]!);
@@ -86,19 +83,19 @@ function startServer(): Promise<string> {
   });
 }
 
-describe.skipIf(cliMissing)('parameterised routes through a real app-core server', () => {
+describe('the packaged module through a real app-core server', () => {
   beforeAll(async () => {
-    if (!existsSync(join(moduleDir, 'api-backend/dist/backend.js'))) {
-      throw new Error('api-backend/dist/backend.js is missing: run "npm run build" before this test.');
-    }
-    configDir = mkdtempSync(join(tmpdir(), 'app-module-queue-real-server-'));
+    workDir = mkdtempSync(join(tmpdir(), 'app-module-queue-real-server-'));
+    configDir = join(workDir, 'queue-config');
+    const builtModule = join(workDir, 'module');
     writeHistory();
-    baseUrl = await startServer();
-  }, SERVER_START_TIMEOUT_MS + 5_000);
+    packageModule(builtModule);
+    baseUrl = await startServer(builtModule);
+  }, SERVER_START_TIMEOUT_MS + PACKAGE_TIMEOUT_MS + 5_000);
 
   afterAll(() => {
-    stopServer();
-    rmSync(configDir, { recursive: true, force: true });
+    child?.kill();
+    rmSync(workDir, { recursive: true, force: true });
   });
 
   async function call(method: string, path: string): Promise<{ status: number; body: Record<string, unknown> }> {

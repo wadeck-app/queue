@@ -7,10 +7,11 @@ import { startDaemon } from './QueueDaemon.js';
 const configDir = getQueueConfigDir();
 
 // Bundle layout: app-module/manifest.json sits next to queue-daemon.cjs (see ci/scripts/bundle.ts).
-// TSC dev layout: sibling packages/app-module-queue/manifest.json, three levels up from
-// packages/queue-cli/dist/daemon/daemon-entry.js.
+// TSC dev layout: the PACKAGED manifest of the sibling packages/app-module-queue/dist-module (run `npm run bundle`
+// there first), three levels up from packages/queue-cli/dist/daemon/daemon-entry.js. The source manifest.json of the
+// module is not registrable: app-core refuses it (no version, no backendEntryPath).
 const bundleManifest = fileURLToPath(new URL('./app-module/manifest.json', import.meta.url));
-const devManifest = fileURLToPath(new URL('../../../app-module-queue/manifest.json', import.meta.url));
+const devManifest = fileURLToPath(new URL('../../../app-module-queue/dist-module/manifest.json', import.meta.url));
 const manifestPath = existsSync(bundleManifest) ? bundleManifest : devManifest;
 
 startDaemon(configDir, { appCoreModule: { manifestPath } }).catch((err: unknown) => {

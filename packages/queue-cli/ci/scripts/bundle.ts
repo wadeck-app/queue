@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
 import { execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, statSync, mkdirSync, cpSync } from 'node:fs';
+import { readFileSync, statSync, mkdirSync, cpSync, rmSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -88,50 +88,26 @@ await Promise.all([
     external: [],
     supported: { 'top-level-await': false },
   }),
-  build({
-    // app-module-queue's backend runs inside app-core's process via backendEntryPath, never
-    // imported by queue itself -- bundled here (not just tsc-compiled) so it ships self-contained
-    // with queue-cli, since app-module-queue is a private, unpublished workspace package.
-    //
-    // Stays CJS (switching to format:'esm' broke singleton-daemon-kit's dynamic require() of
-    // node:fs/promises -- esbuild's ESM output has no require() to fall back on). The actual bug
-    // this footer fixes: app-core's loader.ts does `(await import(specifier))` then checks
-    // `typeof mod.default === 'function'`. Confirmed by direct reproduction: Node's CJS/ESM
-    // interop for a plain esbuild CJS bundle (module.exports = { default: fn }) makes the ESM
-    // import()'s `mod.default` equal the WHOLE exports object, not the inner fn -- cjs-module-lexer
-    // doesn't statically detect esbuild's `default` property pattern as a true named export here.
-    // The standard fix: collapse module.exports to just the function itself via a footer, so both
-    // require() and import() see a plain callable default -- no wrapper object to misinterpret.
-    entryPoints: [join(rootDir, '../app-module-queue/src/backend.ts')],
-    bundle: true,
-    format: 'cjs',
-    platform: 'node',
-    target: 'node22',
-    outfile: join(rootDir, 'dist-bundle/app-module/api-backend/dist/backend.cjs'),
-    banner: sharedBanner,
-    footer: { js: 'module.exports = module.exports.default;' },
-    define: sharedDefine,
-    external: [],
-    supported: { 'top-level-await': false },
-  }),
 ]);
 
-// Static app-module assets (manifest + DSL views) read by app-core at registration/render time --
-// plain file copies, not bundled.
-const appModuleSrcDir = join(rootDir, '../app-module-queue');
+// The app-module is built by its own package: `npm run bundle` there runs `app-core-cli package` (backend bundle with
+// the loader-compatible export, JSON views, packaged manifest stamped with this build's version). queue-cli only
+// copies the resulting dist-module/ next to the daemon bundle; it no longer reads the module's sources.
+const appModuleDir = join(rootDir, '../app-module-queue');
 const appModuleOutDir = join(rootDir, 'dist-bundle/app-module');
-mkdirSync(appModuleOutDir, { recursive: true });
-cpSync(join(appModuleSrcDir, 'dsl-frontend'), join(appModuleOutDir, 'dsl-frontend'), { recursive: true });
-
-// manifest.json's backendEntryPath is ".../backend.js" for the dev (unbundled, tsc ESM) tree --
-// the bundled artifact is .cjs instead (see comment above), so rewrite that field on the copy.
-// The version is rewritten too: app-core's loader imports `backend.cjs?v=<manifest.version>`, so a
-// constant version makes Node's import cache return the PREVIOUS backend after `queue cli update`
-// (new routes/params silently ignored until app-core restarts). The build version busts that cache.
-const appManifest = JSON.parse(readFileSync(join(appModuleSrcDir, 'manifest.json'), 'utf-8')) as { backendEntryPath: string; version: string };
-appManifest.backendEntryPath = './api-backend/dist/backend.cjs';
-appManifest.version = version;
-writeFileSync(join(appModuleOutDir, 'manifest.json'), JSON.stringify(appManifest, null, 2));
+execSync('npm run bundle', {
+  cwd: appModuleDir,
+  env: { ...process.env, BUNDLE_VERSION: version },
+  stdio: 'inherit',
+  windowsHide: true,
+});
+const packagedModule = join(appModuleDir, 'dist-module');
+if (!existsSync(join(packagedModule, 'manifest.json'))) {
+  throw new Error(`app-module-queue produced no ${packagedModule}/manifest.json: run "npm run bundle" in packages/app-module-queue and read its output.`);
+}
+rmSync(appModuleOutDir, { recursive: true, force: true });
+mkdirSync(dirname(appModuleOutDir), { recursive: true });
+cpSync(packagedModule, appModuleOutDir, { recursive: true });
 
 const updaterSize = statSync(updaterOutfile).size;
 if (updaterSize > MAX_UPDATER_SIZE) {

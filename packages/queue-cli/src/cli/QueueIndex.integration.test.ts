@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -58,6 +59,20 @@ describe('bundled app-module manifest (integration)', () => {
     // import cache returns the previous backend after `queue cli update` (page= was silently ignored).
     const manifest = JSON.parse(readFileSync(join(rootDir, 'dist-bundle/app-module/manifest.json'), 'utf-8')) as { version: string };
     expect(manifest.version).toBe('0.0.0-test-integration');
+  });
+
+  it('is the module artifact built by app-core-cli package: packaged manifest, a callable backend, JSON views, no sources', () => {
+    const appModuleDir = join(rootDir, 'dist-bundle/app-module');
+    const manifest = JSON.parse(readFileSync(join(appModuleDir, 'manifest.json'), 'utf-8')) as { backendEntryPath: string; extensionPoints: { view: { value: string } }[] };
+    expect(manifest.backendEntryPath).toBe('./api-backend/backend.cjs');
+    for (const point of manifest.extensionPoints) {
+      expect(point.view.value).toMatch(/^\.\/dsl-frontend\/[\w.-]+\.json$/);
+      expect(existsSync(join(appModuleDir, point.view.value))).toBe(true);
+    }
+    // app-core's loader needs `default` to be the function itself: the packaged CJS bundle collapses module.exports
+    const backend = createRequire(import.meta.url)(join(appModuleDir, manifest.backendEntryPath)) as unknown;
+    expect(typeof backend).toBe('function');
+    expect(existsSync(join(appModuleDir, 'src'))).toBe(false);
   });
 
   it('keeps the module id: app-core refuses a manifest without "id" (or with another one than the registration id)', () => {

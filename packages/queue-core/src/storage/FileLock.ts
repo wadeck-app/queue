@@ -88,7 +88,9 @@ export class FileLock {
       try {
         unlinkSync(this.lockPath);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw err;
+        }
       }
     }
   }
@@ -110,7 +112,9 @@ export class FileLock {
       try {
         return fn(this);
       } catch (err) {
-        if (!(err instanceof LockLostError) || attempt >= MAX_LOST_ATTEMPTS) throw err;
+        if (!(err instanceof LockLostError) || attempt >= MAX_LOST_ATTEMPTS) {
+          throw err;
+        }
       } finally {
         this.release();
       }
@@ -129,7 +133,9 @@ export class FileLock {
         return true;
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'EEXIST') return false;
+        if (code === 'EEXIST') {
+          return false;
+        }
         if (code === 'ENOENT' && !retriedAfterMkdir) {
           mkdirSync(dirname(this.lockPath), { recursive: true });
           continue;
@@ -146,13 +152,17 @@ export class FileLock {
       const pid = Number.parseInt(readFileSync(this.lockPath, 'utf8'), 10);
       return { pid: Number.isNaN(pid) ? undefined : pid, mtimeMs };
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null;
+      }
       throw err;
     }
   }
 
   private isAbandoned(holder: { pid: number | undefined; mtimeMs: number }): boolean {
-    if (this.now() - holder.mtimeMs > this.staleMs) return true;
+    if (this.now() - holder.mtimeMs > this.staleMs) {
+      return true;
+    }
     return holder.pid !== undefined && !this.isAlive(holder.pid);
   }
 
@@ -163,7 +173,9 @@ export class FileLock {
       renameSync(this.lockPath, graveyard);
       unlinkSync(graveyard);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw err;
+      }
     }
   }
 
@@ -172,7 +184,9 @@ export class FileLock {
       const pid = Number.parseInt(readFileSync(this.lockPath, 'utf8'), 10);
       return Number.isNaN(pid) ? undefined : pid;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return undefined;
+      }
       throw err;
     }
   }

@@ -12,7 +12,7 @@ type YamlDoc = Record<string, unknown>;
 type Section = Record<string, unknown>;
 
 describe('history-page.yaml pagination structure', () => {
-	const yamlPath = join(__dirname, '../dsl-frontend/history-page.yaml');
+	const yamlPath = join(__dirname, '../dsl-views/history-page.yaml');
 	const yamlContent = readFileSync(yamlPath, 'utf-8');
 	const doc = yaml.load(yamlContent) as YamlDoc;
 
@@ -162,7 +162,7 @@ describe('history-page.yaml pagination structure', () => {
 });
 
 describe('history-page.yaml payload row expansion', () => {
-	const yamlPath = join(__dirname, '../dsl-frontend/history-page.yaml');
+	const yamlPath = join(__dirname, '../dsl-views/history-page.yaml');
 	const doc = yaml.load(readFileSync(yamlPath, 'utf-8')) as YamlDoc;
 	const dataTable = (doc.sections as Section[]).find((s) => s.$type === 'DataTable') as Section;
 	const expansion = dataTable?.expansion as Section;

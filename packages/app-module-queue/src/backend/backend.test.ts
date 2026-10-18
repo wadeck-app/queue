@@ -31,7 +31,7 @@ vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlq
 vi.mock('./subscribers.js', () => ({ listSubscribers: mockListSubscribers }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 
-import backend from './backend.js';
+import backend from './index.js';
 
 // backend.ts narrows req to just the shape it reads (params/query/body) via its own cast;
 // a real FastifyRequest has 25+ properties we don't need to fake for these unit tests.
@@ -53,9 +53,13 @@ function asReply(reply: ReturnType<typeof fakeReply>): Parameters<ModuleRouteHan
 function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; ctx: ModuleContext } {
   const routes = new Map<string, ModuleRouteHandler>();
   const ctx: ModuleContext = {
+    dataDir: '/unused/data-dir',
     setInterval: vi.fn(),
     setTimeout: vi.fn(),
+    clearInterval: vi.fn(),
+    clearTimeout: vi.fn(),
     on: vi.fn(),
+    off: vi.fn(),
     emit: vi.fn(),
     registerRoute: (method, subPath, handler) => routes.set(`${method} ${subPath}`, handler),
     dispose: vi.fn(),

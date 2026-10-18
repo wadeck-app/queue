@@ -1,0 +1,37 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
+const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf8')) as {
+  id?: string;
+  version?: unknown;
+  backendEntryPath?: unknown;
+  extensionPoints: { view: { type: string; value: string } }[];
+};
+
+describe('manifest.json (source manifest of the app-core-cli layout)', () => {
+  it('declares the id the module is registered under: app-core refuses a manifest without it ("Required" at path id)', () => {
+    expect(manifest.id).toBe('queue');
+  });
+
+  it('keeps the id queue-cli registers it as (queue-cli/src/daemon/AppCoreRegistration.ts APP_CORE_MODULE_ID)', () => {
+    const registration = readFileSync(join(packageDir, '../queue-cli/src/daemon/AppCoreRegistration.ts'), 'utf8');
+    expect(registration).toContain(`APP_CORE_MODULE_ID = '${String(manifest.id)}'`);
+  });
+
+  it('holds neither version nor backendEntryPath: `app-core-cli package` stamps the first and fixes the second', () => {
+    expect(manifest).not.toHaveProperty('version');
+    expect(manifest).not.toHaveProperty('backendEntryPath');
+  });
+
+  it('references every view as ./src/dsl-views/<file> and each of them exists', () => {
+    const paths = manifest.extensionPoints.map((point) => point.view.value);
+    expect(paths.length).toBeGreaterThan(0);
+    for (const path of paths) {
+      expect(path).toMatch(/^\.\/src\/dsl-views\/[\w.-]+\.ya?ml$/);
+      expect(existsSync(join(packageDir, path))).toBe(true);
+    }
+  });
+});
