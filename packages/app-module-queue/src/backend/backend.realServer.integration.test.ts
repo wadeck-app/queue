@@ -35,6 +35,10 @@ function writeHistory(): void {
     { type: 'trigger', ts: '2026-01-01T00:00:01.000Z', eventId: 'evt-no-payload', event: 'onFoo', matchedCount: 0, totalCount: 0 },
   ];
   writeFileSync(join(configDir, 'history', '2026-01-01.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  // One event pushed just now: the activity counters count it in every window (the January ones are older than 24 h)
+  const now = new Date();
+  const recent = { type: 'trigger', ts: now.toISOString(), eventId: 'evt-recent', event: 'onFoo', matchedCount: 0, totalCount: 0 };
+  writeFileSync(join(configDir, 'history', `${now.toISOString().slice(0, 10)}.ndjson`), JSON.stringify(recent) + '\n');
 }
 
 /** `app-core-cli package` into a folder outside the module (check refuses any other folder at the module root). */
@@ -116,10 +120,17 @@ describe('the packaged module through a real app-core server', () => {
     expect(body['error']).toBe('No history entry for eventId nope');
   });
 
+  it('GET /activity counts the events pushed in the last 5 min, 60 min and 24 h', async () => {
+    const { status, body } = await call('GET', '/activity');
+    expect(status).toBe(200);
+    expect(body).toEqual({ last5Min: 1, last60Min: 1, last24Hours: 1 });
+  });
+
   it('GET /history (static) still wins over the parameterised route', async () => {
     const { status, body } = await call('GET', '/history?limit=1');
     expect(status).toBe(200);
-    expect(body['total']).toBe(2);
+    // the two January events plus the recent one written for the activity counters
+    expect(body['total']).toBe(3);
   });
 
   it('POST /history/:eventId/replay gets the eventId: unknown id is a 404 naming it', async () => {

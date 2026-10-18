@@ -1,0 +1,16 @@
+$sources:
+  activity:
+    url: GET /api/modules/queue/activity
+
+$type: HorizontalStack
+gap: gap-3
+items:
+  - $type: StatTile
+    label: Events, last 5 min
+    value: $sources.activity.last5Min
+  - $type: StatTile
+    label: Events, last 60 min
+    value: $sources.activity.last60Min
+  - $type: StatTile
+    label: Events, last 24 h
+    value: $sources.activity.last24Hours

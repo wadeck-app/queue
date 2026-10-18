@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, rmSync, utimesSync, statSync } from 'node:fs'
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HistoryReader } from './HistoryReader.js';
+import { HistoryLog } from './HistoryLog.js';
 
 function writeDay(historyDir: string, date: string, records: object[]): void {
   const content = records.map(r => JSON.stringify(r)).join('\n') + '\n';
@@ -288,5 +289,79 @@ describe('HistoryReader', () => {
       expect(page.entries).toEqual([]);
       expect(page.total).toBe(3);
     });
+  });
+});
+
+describe('HistoryReader.countTriggers (activity counters, without parsing the payloads)', () => {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const WINDOWS = [5 * MINUTE, 60 * MINUTE, 24 * HOUR];
+  let historyDir: string;
+
+  beforeEach(() => {
+    historyDir = join(tmpdir(), `queue-history-count-test-${crypto.randomUUID()}`);
+    mkdirSync(historyDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(historyDir, { recursive: true, force: true });
+  });
+
+  // The writer puts ts and type first: { ts, type, ...entry }
+  const trigger = (atMs: number, eventId: string) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId, event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { big: 'x'.repeat(50) } });
+  const NOW = Date.parse('2026-01-02T12:00:00.000Z');
+
+  it('counts each trigger in every window that contains it', () => {
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - 1 * MINUTE, 'a'), trigger(NOW - 30 * MINUTE, 'b'), trigger(NOW - 5 * HOUR, 'c')]);
+    writeDay(historyDir, '2026-01-01', [trigger(NOW - 20 * HOUR, 'd'), trigger(NOW - 25 * HOUR, 'e')]);
+    expect(new HistoryReader(historyDir).countTriggers(NOW, WINDOWS)).toEqual([1, 2, 4]);
+  });
+
+  it('ignores outcome and filtered records: they are not events pushed', () => {
+    writeDay(historyDir, '2026-01-02', [
+      trigger(NOW - MINUTE, 'a'),
+      { ts: new Date(NOW - MINUTE).toISOString(), type: 'outcome', eventId: 'a', event: 'onFoo', subscriberId: 's', status: 'success' },
+      { ts: new Date(NOW - MINUTE).toISOString(), type: 'filtered', eventId: 'a', event: 'onFoo', subscriberId: 's', filter: 'x=1' },
+    ]);
+    expect(new HistoryReader(historyDir).countTriggers(NOW, WINDOWS)).toEqual([1, 1, 1]);
+  });
+
+  it('reads the previous day file when the window crosses midnight (UTC)', () => {
+    const justAfterMidnight = Date.parse('2026-01-02T01:00:00.000Z');
+    writeDay(historyDir, '2026-01-01', [trigger(Date.parse('2026-01-01T23:30:00.000Z'), 'late')]);
+    writeDay(historyDir, '2026-01-02', [trigger(justAfterMidnight - 10 * MINUTE, 'recent')]);
+    expect(new HistoryReader(historyDir).countTriggers(justAfterMidnight, WINDOWS)).toEqual([0, 1, 2]);
+  });
+
+  it('a trigger exactly at the edge of a window counts, one millisecond before does not', () => {
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - 5 * MINUTE, 'edge'), trigger(NOW - 5 * MINUTE - 1, 'just-out')]);
+    expect(new HistoryReader(historyDir).countTriggers(NOW, [5 * MINUTE])).toEqual([1]);
+  });
+
+  it('is zero for a missing history directory and for no window at all', () => {
+    expect(new HistoryReader(join(historyDir, 'missing')).countTriggers(NOW, WINDOWS)).toEqual([0, 0, 0]);
+    expect(new HistoryReader(historyDir).countTriggers(NOW, [])).toEqual([]);
+  });
+
+  it('skips a line it cannot read instead of failing the whole count', () => {
+    writeFileSync(join(historyDir, '2026-01-02.ndjson'), `not json at all\n${JSON.stringify(trigger(NOW - MINUTE, 'a'))}\n{"ts":"truncated`, 'utf-8');
+    expect(new HistoryReader(historyDir).countTriggers(NOW, WINDOWS)).toEqual([1, 1, 1]);
+  });
+
+  it('does not depend on the order of the keys at the start of the line', () => {
+    const swapped = JSON.stringify({ type: 'trigger', ts: new Date(NOW - MINUTE).toISOString(), eventId: 'swapped', event: 'onFoo' });
+    writeFileSync(join(historyDir, '2026-01-02.ndjson'), swapped + '\n', 'utf-8');
+    expect(new HistoryReader(historyDir).countTriggers(NOW, WINDOWS)).toEqual([1, 1, 1]);
+  });
+
+  it('does not count a record whose payload merely contains a trigger-looking text', () => {
+    const outcome = JSON.stringify({ ts: new Date(NOW - MINUTE).toISOString(), type: 'outcome', eventId: 'o', event: 'onFoo', subscriberId: 's', status: 'success', target: 'echo {"type":"trigger"}' });
+    writeFileSync(join(historyDir, '2026-01-02.ndjson'), outcome + '\n', 'utf-8');
+    expect(new HistoryReader(historyDir).countTriggers(NOW, WINDOWS)).toEqual([0, 0, 0]);
+  });
+
+  it('understands what HistoryLog really writes (guards the line format the counter relies on)', () => {
+    new HistoryLog(historyDir).logTrigger({ eventId: 'real', event: 'onFoo', matchedCount: 1, totalCount: 1, payload: { a: 1 }, cwd: '/p' });
+    expect(new HistoryReader(historyDir).countTriggers(Date.now(), WINDOWS)).toEqual([1, 1, 1]);
   });
 });

@@ -20,6 +20,15 @@
       }
     },
     {
+      "kind": "widget",
+      "slot": "dashboard",
+      "label": "Queue Activity",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/activity-widget.yaml"
+      }
+    },
+    {
       "kind": "page",
       "slot": "nav",
       "label": "Queue History",

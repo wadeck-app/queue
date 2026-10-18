@@ -4,6 +4,7 @@ import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryE
 
 const {
   mockGetStatus,
+  mockGetActivity,
   mockListHistory,
   mockGetHistoryEntry,
   mockReplayEvent,
@@ -14,6 +15,7 @@ const {
   mockPushEvent,
 } = vi.hoisted(() => ({
   mockGetStatus: vi.fn(),
+  mockGetActivity: vi.fn(),
   mockListHistory: vi.fn(),
   mockGetHistoryEntry: vi.fn(),
   mockReplayEvent: vi.fn(),
@@ -25,6 +27,7 @@ const {
 }));
 
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
+vi.mock('./activity.js', () => ({ getActivity: mockGetActivity }));
 vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: mockGetHistoryEntry }));
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlqEntry, clearDlqEntry: mockClearDlqEntry }));
@@ -77,6 +80,7 @@ describe('backend', () => {
     backend(ctx);
     expect([...routes.keys()]).toEqual([
       'GET /status',
+      'GET /activity',
       'GET /history',
       'GET /history/:eventId',
       'POST /history/:eventId/replay',
@@ -96,6 +100,26 @@ describe('backend', () => {
     await routes.get('GET /status')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(200);
     expect(reply.send).toHaveBeenCalledWith({ pendingCount: 1, dlqCount: 0 });
+  });
+
+  it('GET /activity forwards the event counts of the last 5 min, 60 min and 24 h', () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetActivity.mockReturnValue({ last5Min: 2, last60Min: 9, last24Hours: 140 });
+    const reply = fakeReply();
+    routes.get('GET /activity')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ last5Min: 2, last60Min: 9, last24Hours: 140 });
+  });
+
+  it('GET /activity returns 500 with the reason when the history cannot be read', () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetActivity.mockImplementation(() => { throw new Error('Cannot read history'); });
+    const reply = fakeReply();
+    routes.get('GET /activity')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'Cannot read history' });
   });
 
   it('GET /history forwards limit/offset query params and sends the full page', () => {

@@ -2,6 +2,7 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage, getQueueConfigDir } from '@wadeck-app/queue-core';
 import { getStatus } from './status.js';
+import { getActivity } from './activity.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError } from './errors.js';
@@ -23,6 +24,14 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('GET', '/status', (_req, reply) => {
     try {
       return reply.code(200).send(getStatus(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('GET', '/activity', (_req, reply) => {
+    try {
+      return reply.code(200).send(getActivity(configDir));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

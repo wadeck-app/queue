@@ -51,6 +51,11 @@ export interface HistoryPage {
 export const DEFAULT_HISTORY_LIMIT = 20;
 
 const DATE_FILE = /^\d{4}-\d{2}-\d{2}\.ndjson$/;
+// `ts` and `type` are the first keys of every record; a raw quote cannot appear inside a JSON string value (it is
+// escaped), so finding both in the head of the line cannot be fooled by a payload or a command text further on.
+const LINE_HEAD_CHARS = 120;
+const TS_KEY = /"ts":"([^"]+)"/;
+const TRIGGER_TYPE = /"type":"trigger"/;
 
 interface Accumulator {
   ts?: string;
@@ -117,6 +122,43 @@ export class HistoryReader {
     const offset = pagination.offset ?? 0;
     const all = this.read(filter);
     return { entries: all.slice(offset, offset + limit), total: all.length, limit, offset };
+  }
+
+  /**
+   * How many events were pushed in each of the last `windowsMs` before `nowMs` (one count per window, same order).
+   * An event is one `trigger` record. Reads only the day files the widest window reaches and matches the line
+   * head of the line instead of parsing it: a day file holds the full webhook payloads (18 MB in a busy day), so a
+   * dashboard counter must not pay a JSON.parse per line. Relies on HistoryLog writing `ts` and `type` first (a test
+   * writes through HistoryLog to guard it). An unreadable line is skipped.
+   */
+  countTriggers(nowMs: number, windowsMs: number[]): number[] {
+    const counts = windowsMs.map(() => 0);
+    if (windowsMs.length === 0) {
+      return counts;
+    }
+    const oldestDay = new Date(nowMs - Math.max(...windowsMs)).toISOString().slice(0, 10);
+    for (const file of this.listFiles()) {
+      if (file.slice(0, 10) < oldestDay) {
+        continue;
+      }
+      for (const line of readFileSync(join(this.historyDir, file), 'utf-8').split('\n')) {
+        const head = line.slice(0, LINE_HEAD_CHARS);
+        const tsMatch = TS_KEY.exec(head);
+        if (!tsMatch || !TRIGGER_TYPE.test(head)) {
+          continue;
+        }
+        const ts = Date.parse(tsMatch[1]!);
+        if (Number.isNaN(ts) || ts > nowMs) {
+          continue;
+        }
+        windowsMs.forEach((window, i) => {
+          if (ts >= nowMs - window) {
+            counts[i]!++;
+          }
+        });
+      }
+    }
+    return counts;
   }
 
   private listFiles(): string[] {
