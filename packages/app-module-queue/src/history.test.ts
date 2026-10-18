@@ -75,7 +75,7 @@ describe('listHistory', () => {
       expect(byId['e1']).toBe('{}');
     });
 
-    it('truncates a huge payload with a marker pointing at a command that works (the CLI), not at the parameterised route', () => {
+    it('truncates a huge payload with a marker pointing at the full-entry route and the app-core version it needs', () => {
       const huge = { blob: 'x'.repeat(50_000) };
       writeDay('2026-01-01', [
         { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: huge },
@@ -83,11 +83,10 @@ describe('listHistory', () => {
       const text = listHistory(configDir).entries[0]!.payloadText!;
       expect(text.length).toBeLessThan(21_000);
       expect(text).toContain('truncated');
-      // app-core's route registry has no path-param matching yet, so GET /history/:eventId 404s on a live
-      // app-core. `queue history --event` filters by event NAME (no eventId lookup), hence the eventId hint.
-      expect(text).toContain('queue history --json --event onFoo');
-      expect(text).toContain('eventId e1');
-      expect(text).not.toContain('GET /history/');
+      // app-core < 2026.10.17-023 has no path-param matching, so the route 404s there: say so in the marker.
+      expect(text).toContain('GET /api/modules/queue/history/e1');
+      expect(text).toContain('app-core >= 2026.10.17-023');
+      expect(text).not.toContain('queue history --json');
     });
   });
 

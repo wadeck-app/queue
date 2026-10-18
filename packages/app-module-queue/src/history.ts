@@ -29,8 +29,11 @@ export function listHistory(
   return { ...page, entries: page.entries.map(withPayloadText) };
 }
 
-/** Cap on the payload text sent to the dashboard; the full payload stays available via `queue history --json`. */
+/** Cap on the payload text sent to the dashboard; the full payload stays available via GET /history/<eventId>. */
 export const MAX_PAYLOAD_TEXT_CHARS = 20_000;
+
+/** First app-core that matches `:name` route segments; before it GET /history/:eventId answers 404. */
+const MIN_APP_CORE_FOR_ROUTE_PARAMS = '2026.10.17-023';
 
 export type ApiHistoryEntry = Omit<HistoryEntry, 'payload'> & { payloadText?: string };
 export type ApiHistoryPage = Omit<HistoryPage, 'entries'> & { entries: ApiHistoryEntry[] };
@@ -38,9 +41,8 @@ export type ApiHistoryPage = Omit<HistoryPage, 'entries'> & { entries: ApiHistor
 /**
  * The DSL JsonViewer reads `String(row[field])` then JSON.parse, so it needs TEXT, not an object
  * (an object would render as "[object Object]"). The list carries ONLY this text (no `payload`
- * object next to it: two copies doubled the response size). The full payload is also on
- * GET /history/<eventId>, but app-core's route registry has no path-param matching yet (404 on a
- * live app-core), so the truncation marker points at the CLI instead. `payloadText` is absent -- not empty -- when no payload was recorded,
+ * object next to it: two copies doubled the response size); the full payload stays on
+ * GET /history/<eventId>. `payloadText` is absent -- not empty -- when no payload was recorded,
  * because the DataTable only shows the expand toggle for a truthy field.
  */
 function withPayloadText(entry: HistoryEntry): ApiHistoryEntry {
@@ -52,7 +54,7 @@ function withPayloadText(entry: HistoryEntry): ApiHistoryEntry {
   if (text.length <= MAX_PAYLOAD_TEXT_CHARS) {
     return { ...rest, payloadText: text };
   }
-  const marker = `\n... truncated (${MAX_PAYLOAD_TEXT_CHARS} of ${text.length} characters shown). Full payload: queue history --json --event ${entry.event} (eventId ${entry.eventId})`;
+  const marker = `\n... truncated (${MAX_PAYLOAD_TEXT_CHARS} of ${text.length} characters shown). Full payload: GET /api/modules/queue/history/${entry.eventId} (needs app-core >= ${MIN_APP_CORE_FOR_ROUTE_PARAMS})`;
   return { ...rest, payloadText: text.slice(0, MAX_PAYLOAD_TEXT_CHARS) + marker };
 }
 
