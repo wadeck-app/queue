@@ -4,7 +4,7 @@
 import { runUpdater, execNpm } from '@wadeck-app/shared-updater';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { join } from 'node:path';
-import { registerAfterUpdate } from './registerAfterUpdate.js';
+import { registerAfterUpdate, readAppModuleVersion } from './registerAfterUpdate.js';
 import { registerWithAppCore } from '../daemon/AppCoreRegistration.js';
 
 // Injected by esbuild at bundle time via define; falls back to dev placeholder.
@@ -27,7 +27,9 @@ try {
     // Skip self-check if npm root is unavailable — update proceeds without verification.
 }
 
-const startedAtMs = Date.now();
+const appModuleManifest = npmRoot === undefined ? undefined : join(npmRoot, PKG_NAME, 'app-module', 'manifest.json');
+// Read before the install replaces the files: registerAfterUpdate registers only if this changed.
+const appModuleBefore = appModuleManifest === undefined ? undefined : readAppModuleVersion(appModuleManifest);
 
 runUpdater({
     pkgName: PKG_NAME,
@@ -38,14 +40,13 @@ runUpdater({
 }).then(async () => {
     // The update does not restart the daemon (it registers on its own start), so a running app-core would
     // keep the previous app-module until the next daemon start: tell it now, from the new install.
-    if (npmRoot === undefined) {
+    if (appModuleManifest === undefined || appModuleBefore === undefined) {
         process.stderr.write('[queue-updater] app-core: not re-registering the app-module, "npm root -g" failed earlier\n');
         return;
     }
     await registerAfterUpdate({
-        configDir,
-        manifestPath: join(npmRoot, PKG_NAME, 'app-module', 'manifest.json'),
-        startedAtMs,
+        manifestPath: appModuleManifest,
+        before: appModuleBefore,
         register: registerWithAppCore,
         log: (line) => process.stdout.write(`[queue-updater] ${line}\n`),
     });
