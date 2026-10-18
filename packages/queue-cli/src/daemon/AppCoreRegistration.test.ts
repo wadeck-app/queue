@@ -13,6 +13,9 @@ beforeEach(() => {
   configDir = mkdtempSync(join(tmpdir(), 'app-core-registration-'));
   logs = [];
   process.env['APP_CORE_CONFIG_DIR'] = configDir;
+  // queue-cli's vitest config points APP_CORE_PORT at an unused port to keep tests away from a real
+  // app-core; these tests mock fetch and assert the default port, so they start from a clean variable.
+  delete process.env['APP_CORE_PORT'];
 });
 
 afterEach(() => {

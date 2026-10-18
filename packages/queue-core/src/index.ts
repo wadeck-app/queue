@@ -1,8 +1,9 @@
 // Public barrel for @wadeck-app/queue-core.
 // Exposes the symbols consumed across the package boundary by queue-cli and app-module-queue.
 export { getErrorMessage } from './errors.js';
-export type { QueueCommands, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse } from './daemon/QueueDaemon.js';
-export { startDaemon } from './daemon/QueueDaemon.js';
+export type { QueueCommands, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse } from './daemon/QueueCommands.js';
+export { createQueueService } from './daemon/QueueService.js';
+export type { QueueService, QueueServiceOptions } from './daemon/QueueService.js';
 export { spawnDetachedProcess } from './daemon/spawnDetachedProcess.js';
 export type { SubscriberConfig } from './ConfigLoader.js';
 export { SubscribersYmlSchema } from './ConfigLoader.js';

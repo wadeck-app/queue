@@ -1,5 +1,3 @@
-import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
-import type { DaemonHandle, ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
 import { join } from 'node:path';
 import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
@@ -12,39 +10,35 @@ import { PayloadFilter } from '../dispatch/PayloadFilter.js';
 import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
-import type { DlqEntry } from '../storage/DlqStore.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
-import { registerWithAppCore } from './AppCoreRegistration.js';
+import type {
+  QueueCommands, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse,
+  ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse,
+  DlqClearRequest, DlqClearResponse,
+} from './QueueCommands.js';
 
-export const DAEMON_PORT = 47910;
-export const IDLE_TIMEOUT_MS = 60_000;
+export interface QueueServiceOptions {
+  /** Called when a push arrives, so the host that owns the idle shutdown can cancel its countdown. */
+  onActivity?: () => void;
+}
 
-export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; replayOf?: string; }
-export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted'; result?: unknown; reason?: string; subscriberCount?: number; eventId?: string; }
-export interface RetryRequest { eventId: string; }
-export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; }
-export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }
-export interface ListSubscribersRequest { event?: string; cwd: string; }
-export interface SubscriberListResponse { subscribers: ResolvedSubscriber[]; }
-export interface DlqListResponse { entries: DlqEntry[]; }
-export interface DlqReplayRequest { id: string; }
-export interface DlqReplayResponse { status: 'ok' | 'not-found'; }
-export interface DlqClearRequest { id?: string; }
-export interface DlqClearResponse { cleared: number; }
+/**
+ * The queue's logic, independent of how it is hosted: the RPC commands, the WAL/DLQ/history stores
+ * and the dispatchers. The host (queue-cli's daemon) owns the process concerns -- the singleton daemon,
+ * the port, the idle shutdown and the app-core registration -- and drives the service through this object.
+ */
+export interface QueueService {
+  commands: QueueCommands;
+  /** True when no WAL entry is pending and no dispatch is running: the host may start its idle countdown. */
+  isIdle(): boolean;
+  /** Reschedules the WAL entries still pending from a previous run. */
+  onStart(): void;
+  /** Synchronously reschedules the pending WAL entries so a retry survives the shutdown. */
+  onShutdown(): void;
+  eventLogger: EventLogger;
+}
 
-export type QueueCommands = {
-  push: (payload?: unknown) => Promise<PushResponse>;
-  retry: (payload?: unknown) => Promise<RetryResponse>;
-  status: (payload?: unknown) => StatusResponse;
-  'list-subscribers': (payload?: unknown) => Promise<SubscriberListResponse>;
-  'dlq-list': (payload?: unknown) => DlqListResponse;
-  'dlq-replay': (payload?: unknown) => Promise<DlqReplayResponse>;
-  'dlq-clear': (payload?: unknown) => DlqClearResponse;
-};
-
-export interface AppCoreModuleOptions { id: string; manifestPath: string; }
-
-export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions }): Promise<void> {
+export function createQueueService(configDir: string, options: QueueServiceOptions = {}): QueueService {
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
@@ -72,36 +66,11 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
   );
 
   let activeDispatches = 0;
-  let idleCountdown: ReturnType<typeof setTimeout> | null = null;
-  let daemonHandle: DaemonHandle | null = null;
-
-  function resetIdleCountdown(): void {
-    if (idleCountdown) {
-      clearTimeout(idleCountdown);
-      idleCountdown = null;
-    }
-  }
-
-  function maybeStartIdleCountdown(): void {
-    if (wal.pendingCount() === 0 && activeDispatches === 0) {
-      if (!idleCountdown) {
-        idleCountdown = setTimeout(() => {
-          daemonHandle?.stop('idle' as ShutdownReason).catch((err: unknown) => {
-            eventLogger.logDiagnostic({ source: 'QueueDaemon.idleShutdown', message: `idle stop failed: ${getErrorMessage(err)}` });
-          });
-        }, IDLE_TIMEOUT_MS);
-      }
-    } else {
-      resetIdleCountdown();
-    }
-  }
-
-  const idleCheckInterval = setInterval(maybeStartIdleCountdown, 10_000);
 
   const commands: QueueCommands = {
     async push(payload?: unknown): Promise<PushResponse> {
       const req = payload as PushRequest;
-      resetIdleCountdown();
+      options.onActivity?.();
       activeDispatches++;
 
       try {
@@ -335,55 +304,38 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
     },
   };
 
-  const handle = await createDaemon({
-    configDir,
-    port: DAEMON_PORT,
-    idleTimeout: null,
+  return {
     commands,
-    hooks: {
-      onStart: (_port: number) => {
-        // Startup scan: reschedule pending WAL entries
-        const pending = wal.readAll().filter(e => e.status === 'pending');
-        for (const entry of pending) {
-          try {
-            RetryScheduler.scheduleRetry(entry);
-          } catch (err) {
-            // orch may not be available; best-effort, but the skipped entry must be traceable
-            eventLogger.logDiagnostic({
-              source: 'QueueDaemon.onStart',
-              message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
-            });
-          }
-        }
-
-        // Re-register with app-core on every start/restart (unconditional, idempotent --
-        // confirmed with app-core-owner: /register always reloads the manifest fresh).
-        // Best-effort: never blocks or fails daemon startup.
-        if (options?.appCoreModule) {
-          const { id, manifestPath } = options.appCoreModule;
-          registerWithAppCore(id, manifestPath, entry => eventLogger.logDiagnostic(entry)).catch((err: unknown) => {
-            eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `app-core registration failed: ${getErrorMessage(err)}` });
+    eventLogger,
+    isIdle: () => wal.pendingCount() === 0 && activeDispatches === 0,
+    onStart: () => {
+      // Startup scan: reschedule pending WAL entries
+      const pending = wal.readAll().filter(e => e.status === 'pending');
+      for (const entry of pending) {
+        try {
+          RetryScheduler.scheduleRetry(entry);
+        } catch (err) {
+          // orch may not be available; best-effort, but the skipped entry must be traceable
+          eventLogger.logDiagnostic({
+            source: 'QueueDaemon.onStart',
+            message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
           });
         }
-      },
-      onShutdown: (_reason: ShutdownReason) => {
-        clearInterval(idleCheckInterval);
-        resetIdleCountdown();
-        // Shutdown scan: sync reschedule
-        const pending = wal.readAll().filter(e => e.status === 'pending');
-        for (const entry of pending) {
-          try {
-            RetryScheduler.scheduleRetry(entry, true);
-          } catch (err) {
-            eventLogger.logDiagnostic({
-              source: 'QueueDaemon.onShutdown',
-              message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
-            });
-          }
-        }
-      },
+      }
     },
-  });
-
-  daemonHandle = handle;
+    onShutdown: () => {
+      // Shutdown scan: sync reschedule
+      const pending = wal.readAll().filter(e => e.status === 'pending');
+      for (const entry of pending) {
+        try {
+          RetryScheduler.scheduleRetry(entry, true);
+        } catch (err) {
+          eventLogger.logDiagnostic({
+            source: 'QueueDaemon.onShutdown',
+            message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
+          });
+        }
+      }
+    },
+  };
 }

@@ -2,7 +2,8 @@ import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, EventLogger, getErrorMessage } from '@wadeck-app/queue-core';
+import { EventLogger, getErrorMessage } from '@wadeck-app/queue-core';
+import { startDaemon } from './QueueDaemon.js';
 
 const configDir = process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
 

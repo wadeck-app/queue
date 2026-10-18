@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { getErrorMessage } from '../errors.js';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 export interface AppCoreModuleSource { type: 'file'; path: string }
 export interface AppCoreRegistrationPayload { id: string; source: AppCoreModuleSource }
