@@ -1,5 +1,4 @@
-# DataTable schema: rows + columns[{key,label,format?,mono?}]. format enum includes "datetime" (ts column).
-# Pagination and PageSizeSelect `urlParam` need @wadeck-app/dsl-ui >= 2026.10.12-091-dd4b2887; older frontends render no pagination.
+# Needs a shell built with dsl-ui and dsl-renderer >= 2026.10.14-094 (urlParam pagination, row expansion); maxHeight needs >= 2026.10.17-095.
 $sources:
   history:
     url: GET /api/modules/queue/history
@@ -11,21 +10,14 @@ $type: PageContent
 sections:
   - $type: DataTable
     rows: $sources.history.entries
-    # Click a row's chevron to see the event payload. The toggle only shows when the row has a
-    # payloadText (older entries recorded before payload capture have none), and one row is open
-    # at a time. JsonViewer reads row[field] as JSON text, which is why the API sends payloadText;
-    # `row` is NOT injected automatically, the expansion must pass it explicitly (`$ctx.row`).
-    # Needs @wadeck-app/dsl-renderer >= 2026.10.14-094-eefae0af in the served frontend (it generates
-    # the renderNode callback DataTable needs); older frontends show a toggle that opens nothing.
+    # `row` is not injected into the expansion: pass it with $ctx.row.
     expansionCondition: payloadText
     expansion:
       $type: JsonViewer
       row: $ctx.row
       field: payloadText
-      # Webhook payloads run to thousands of lines; scroll inside the block instead of pushing the pagination away.
-      # Needs @wadeck-app/dsl-ui >= 2026.10.17-095-7b2c28f1 (older frontends ignore it and show the full height).
+      # Webhook payloads run to thousands of lines: scroll inside the block.
       maxHeight: 20rem
-    # About the page, not the journal: an out-of-range ?page= is empty even though events exist.
     emptyMessage: No events on this page
     columns:
       - { key: "ts", label: "Time", format: "datetime" }
@@ -35,7 +27,6 @@ sections:
       - { key: "matchedCount", label: "Matched" }
       - { key: "totalCount", label: "Total" }
 
-  # HorizontalStack takes Tailwind classes; its DSL children key is `items` (see dsl-agent-fleet-app dashboard.yaml)
   - $type: HorizontalStack
     justify: justify-between
     align: items-center
