@@ -43,7 +43,7 @@ Nothing starts the relay at logon. `queue relay start` runs it until `queue rela
 - Each such wait writes `<configDir>/relay-daemon/waiters/<pid>` and removes it on exit; a relay it started also gets `relay-daemon/on-demand`.
 - The relay daemon's watchdog (`onDemand.ts`) stops it after 30 s without a live waiter. A killed wait leaves its file: it is told apart by its dead pid. The grace period keeps the relay up between two waits that follow each other.
 - A relay started by hand has no marker and is never stopped by this logic. `queue relay start` on an on-demand relay removes the marker (pins it); `queue relay stop` removes it too.
-- Events the remote relay received while no client was connected are stored remotely (`queue relay webhook history`); whether a reconnecting client receives them is not established.
+- The remote relay does not replay missed events to a client that connects (by design; observed: no event pushed on connect). A wait only sees events that arrive while the relay is connected; the remote keeps its own history (`queue relay webhook history`, a dedicated endpoint).
 
 ## From lessons learned
 
