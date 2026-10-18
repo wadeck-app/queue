@@ -16,14 +16,31 @@ export interface WalEntry {
   ackedAt?: string;
 }
 
+const ACKED_RETENTION_MS = 24 * 3600_000;
+
 export class Wal {
   private readonly filePath: string;
   // Serialises the read-modify-write of every writer process (the daemon, app-core's queue module)
   private readonly lock: FileLock;
 
-  constructor(filePath: string) {
+  private readonly now: () => number;
+  private readonly ackedRetentionMs: number;
+
+  constructor(filePath: string, options: { now?: () => number; ackedRetentionMs?: number } = {}) {
     this.filePath = filePath;
     this.lock = new FileLock(`${filePath}.lock`);
+    this.now = options.now ?? Date.now;
+    this.ackedRetentionMs = options.ackedRetentionMs ?? ACKED_RETENTION_MS;
+  }
+
+  /**
+   * Every write rewrites the whole file, so an ever-growing WAL made each write slower (2.5 MB, ~15 ms, after six weeks).
+   * An acknowledged entry has nothing left to replay (`queue history` keeps the trace): only pending, failed and dlq
+   * entries are state worth keeping.
+   */
+  private withoutOldAcked(entries: WalEntry[]): WalEntry[] {
+    const limit = this.now() - this.ackedRetentionMs;
+    return entries.filter(e => e.status !== 'acked' || Date.parse(e.ackedAt ?? e.timestamp) >= limit);
   }
 
   private ensureFile(): void {
@@ -44,10 +61,8 @@ export class Wal {
 
   append(entry: WalEntry): void {
     this.ensureFile();
-    const line = JSON.stringify(entry) + '\n';
     this.lock.withLock((held) => {
-      const existing = existsSync(this.filePath) ? readFileSync(this.filePath, 'utf-8') : '';
-      this.commit(existing + line, held);
+      this.commitEntries(this.withoutOldAcked([...this.readAll(), entry]), held);
     });
   }
 
@@ -70,8 +85,12 @@ export class Wal {
   updateEntry(id: string, updates: Partial<WalEntry>): void {
     this.lock.withLock((held) => {
       const updated = this.readAll().map(e => (e.id === id ? { ...e, ...updates } : e));
-      this.commit(updated.map(e => JSON.stringify(e)).join('\n') + (updated.length > 0 ? '\n' : ''), held);
+      this.commitEntries(this.withoutOldAcked(updated), held);
     });
+  }
+
+  private commitEntries(entries: WalEntry[], held: FileLock): void {
+    this.commit(entries.map(e => JSON.stringify(e)).join('\n') + (entries.length > 0 ? '\n' : ''), held);
   }
 
   /** Replaces the file atomically (readers never see a half-written file). Must be called with the lock held. */

@@ -64,7 +64,7 @@ describe('Wal', () => {
     const e2 = makeEntry({ id: 'y' });
     wal.append(e1);
     wal.append(e2);
-    wal.updateEntry('x', { status: 'acked', ackedAt: '2026-01-01T00:00:00.000Z' });
+    wal.updateEntry('x', { status: 'acked', ackedAt: new Date().toISOString() });
     const all = wal.readAll();
     expect(all.find(e => e.id === 'x')?.status).toBe('acked');
     expect(all.find(e => e.id === 'y')?.status).toBe('pending');
@@ -72,5 +72,57 @@ describe('Wal', () => {
 
   it('readAll returns empty array for non-existent file', () => {
     expect(wal.readAll()).toEqual([]);
+  });
+});
+
+describe('Wal retention of acked entries', () => {
+  const DAY = 24 * 3600_000;
+  const NOW = Date.parse('2026-10-18T12:00:00.000Z');
+  let tmpDir: string;
+  let wal: Wal;
+  const ago = (ms: number): string => new Date(NOW - ms).toISOString();
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `wal-retention-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmpDir, { recursive: true });
+    wal = new Wal(join(tmpDir, 'wal.ndjson'), { now: () => NOW });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('drops acked entries acknowledged more than 24 hours ago on the next append', () => {
+    wal.append(makeEntry({ id: 'old', status: 'acked', ackedAt: ago(DAY + 1000) }));
+    wal.append(makeEntry({ id: 'new' }));
+    expect(wal.readAll().map(e => e.id)).toEqual(['new']);
+  });
+
+  it('keeps an acked entry that is less than 24 hours old', () => {
+    wal.append(makeEntry({ id: 'recent', status: 'acked', ackedAt: ago(DAY - 60_000) }));
+    wal.append(makeEntry({ id: 'new' }));
+    expect(wal.readAll().map(e => e.id)).toEqual(['recent', 'new']);
+  });
+
+  it('drops them on an update too (a long-running daemon mostly updates)', () => {
+    wal.append(makeEntry({ id: 'old', status: 'acked', ackedAt: ago(2 * DAY) }));
+    wal.append(makeEntry({ id: 'p' }));
+    wal.append(makeEntry({ id: 'old2', status: 'acked', ackedAt: ago(2 * DAY) }));
+    wal.updateEntry('p', { attempts: 1 });
+    expect(wal.readAll().map(e => e.id)).toEqual(['p']);
+  });
+
+  it('never drops pending, failed or dlq entries, however old', () => {
+    for (const status of ['pending', 'failed', 'dlq'] as const) {
+      wal.append(makeEntry({ id: status, status, timestamp: ago(30 * DAY) }));
+    }
+    wal.append(makeEntry({ id: 'trigger-prune' }));
+    expect(wal.readAll().map(e => e.id)).toEqual(['pending', 'failed', 'dlq', 'trigger-prune']);
+  });
+
+  it('an acked entry without ackedAt ages from its creation time', () => {
+    wal.append(makeEntry({ id: 'no-ackedAt', status: 'acked', timestamp: ago(3 * DAY) }));
+    wal.append(makeEntry({ id: 'new' }));
+    expect(wal.readAll().map(e => e.id)).toEqual(['new']);
   });
 });
