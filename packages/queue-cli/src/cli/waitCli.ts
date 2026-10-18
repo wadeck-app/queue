@@ -10,6 +10,7 @@ import { CI_EXIT } from './ciWait.js';
 import { ciWaitCommand, parseGithubRepo, type CiWaitCommandOptions } from './ciWaitCommand.js';
 import { inferExpectedWorkflows, parseWorkflowFile } from './ciInfer.js';
 import { eventWaitCommand } from './eventWaitCommand.js';
+import { RelayOnDemand, isRelaySourcedEvent } from './relayOnDemand.js';
 import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE } from './eventWaitArgs.js';
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
@@ -38,6 +39,10 @@ queue wait ci: blocks until the GitHub CI of a commit is done (events relayed as
   --settle <d>       Quiet window before concluding with no --workflow (default 20s)
   --no-infer         Do not read git: no push check, no workflow inference
   --json             Machine-readable result on stdout
+
+The relay client: "queue wait ci", and a wait for an event named on.<source>.<type> (on.github.workflow_run), need it.
+If it is not running and the history holds nothing yet, the wait starts it (relay.yml must exist, see "queue relay --help")
+and the relay stops by itself 30s after the last such wait ended. A relay started with "queue relay start" is never stopped.
 
 An agent that just pushed should run it in the background (run_in_background) and will be woken up on exit.
 It also answers at once when the CI finished before the command started.
@@ -143,7 +148,7 @@ function fail(message: string): number {
 }
 
 /** `queue wait <event> ...`: any target other than "ci" is the name of a queue event. */
-async function eventWait(configDir: string, args: string[]): Promise<number> {
+async function eventWait(configDir: string, args: string[], startRelay: StartRelay): Promise<number> {
   warnUnknownArgs(args.filter((arg) => arg.startsWith('-')), EVENT_WAIT_KNOWN_FLAGS, 'queue wait', EVENT_WAIT_FLAGS_WITH_VALUE);
   const parsed = parseEventWaitArgs(args, Date.now());
   if (!parsed.ok) return fail(parsed.message);
@@ -151,21 +156,48 @@ async function eventWait(configDir: string, args: string[]): Promise<number> {
   const { options } = parsed;
   process.stderr.write(`[info] waiting for ${options.event}${options.whens.length ? ` where ${options.whens.join(' and ')}` : ''} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
+
+  // An event named on.<source>.<type> only arrives through the relay: make sure it runs while we wait for it
+  let beforeFirstWait: (() => Promise<void>) | undefined;
+  if (isRelaySourcedEvent(options.event)) {
+    const onDemand = relayOnDemandFor(configDir, startRelay);
+    onDemand.begin();
+    beforeFirstWait = async () => {
+      if (!(await onDemand.ensureRunning())) {
+        process.stderr.write('[warn] Waiting without the relay client: no event of that kind can arrive until it runs (see the message above).\n');
+      }
+    };
+  }
+
   return eventWaitCommand(options, {
     readEntries: (sinceMs) => reader.read({ event: options.event, sinceMs }),
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     io: { stdout: process.stdout, stderr: process.stderr },
+    beforeFirstWait,
   });
 }
 
-export async function queueWaitCommand(configDir: string, args: string[]): Promise<number> {
+/** What a wait that needs the relay uses to start it: `queue relay start`, returning its exit code. */
+export type StartRelay = () => Promise<number>;
+
+function relayOnDemandFor(configDir: string, startRelay: StartRelay): RelayOnDemand {
+  const relay = createRelayClient(configDir);
+  return new RelayOnDemand({
+    relayDir: pathJoin(configDir, 'relay-daemon'),
+    isRunning: () => relay.isRunning(),
+    startRelay,
+    io: { stderr: process.stderr },
+  });
+}
+
+export async function queueWaitCommand(configDir: string, args: string[], startRelay: StartRelay): Promise<number> {
   const target = args[0];
   if (!target || target === '--help' || target === '-h') {
     process.stdout.write(WAIT_HELP);
     return target ? CI_EXIT.PASSED : CI_EXIT.USAGE;
   }
-  if (target !== 'ci') return eventWait(configDir, args);
+  if (target !== 'ci') return eventWait(configDir, args, startRelay);
 
   const rest = args.slice(1);
 
@@ -220,13 +252,26 @@ export async function queueWaitCommand(configDir: string, args: string[]): Promi
 
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
   const relay = createRelayClient(configDir);
+  const onDemand = relayOnDemandFor(configDir, startRelay);
+  onDemand.begin();
 
   return ciWaitCommand(options, {
     readEntries: (sinceMs) => reader.read({ event: 'on.github.workflow_run', sinceMs }),
+    // Called only when the history holds nothing for this commit yet: a CI that already finished never starts the relay
     relayStatus: async () => {
-      if (!(await relay.isRunning().catch(() => false))) return { running: false, connected: false };
-      const status = await relay.send('status', undefined).catch(() => null);
-      return { running: true, connected: Boolean(status && (status as { connected?: boolean }).connected) };
+      const wasRunning = await relay.isRunning().catch(() => false);
+      if (!wasRunning && !(await onDemand.ensureRunning())) return { running: false, connected: false };
+      const readStatus = async (): Promise<boolean> => {
+        const status = await relay.send('status', undefined).catch(() => null);
+        return Boolean(status && (status as { connected?: boolean }).connected);
+      };
+      let connected = await readStatus();
+      // Just started: give it a moment to connect before saying it is not connected
+      for (let attempt = 0; !wasRunning && !connected && attempt < 20; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        connected = await readStatus();
+      }
+      return { running: true, connected };
     },
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

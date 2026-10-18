@@ -36,6 +36,15 @@ These are the defaults in `ConfigLoader.toResolved()`. Any change to defaults is
 
 `IDLE_TIMEOUT_MS = 60_000` in `queue-cli/src/daemon/QueueDaemon.ts` (the logic it drives lives in queue-core's `createQueueService`). The daemon self-terminates when `wal.pendingCount() === 0 && activeDispatches === 0`. On shutdown, pending WAL entries are rescheduled synchronously via `RetryScheduler.scheduleRetry(entry, true)`.
 
+## The relay client starts on demand and stops itself
+
+Nothing starts the relay at logon. `queue relay start` runs it until `queue relay stop`. `queue wait ci`, and a wait for an `on.<source>.<type>` event, start it when it is down AND the history holds nothing yet (a CI already finished never starts it).
+
+- Each such wait writes `<configDir>/relay-daemon/waiters/<pid>` and removes it on exit; a relay it started also gets `relay-daemon/on-demand`.
+- The relay daemon's watchdog (`onDemand.ts`) stops it after 30 s without a live waiter. A killed wait leaves its file: it is told apart by its dead pid. The grace period keeps the relay up between two waits that follow each other.
+- A relay started by hand has no marker and is never stopped by this logic. `queue relay start` on an on-demand relay removes the marker (pins it); `queue relay stop` removes it too.
+- Events the remote relay received while no client was connected are stored remotely (`queue relay webhook history`); whether a reconnecting client receives them is not established.
+
 ## From lessons learned
 
 - Never validate behavior with `node dist-bundle/queue.cjs` directly — the correct workflow is `git commit && git push` → CI passes → `npm install -g @wadeck-app/queue-cli` → test with `queue <cmd>`; the Go launcher, file resolution paths, and published package content all diverge from the local bundle.

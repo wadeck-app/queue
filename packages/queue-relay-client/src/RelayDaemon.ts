@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 import { RelayConnection } from './RelayConnection.js';
 import { createRelayLogger } from './RelayLogger.js';
+import { startIdleWatchdog, type IdleWatchdogOptions } from './onDemand.js';
 
 export const RELAY_DAEMON_PORT = 47911;
 
@@ -83,7 +84,12 @@ export interface ShutdownDeps {
  * ("relay-daemon") so its port-file never collides with the main daemon's,
  * which uses the same top-level QUEUE_CONFIG_DIR.
  */
-export async function startRelayDaemon(configDir: string, shutdownDeps?: ShutdownDeps): Promise<DaemonHandle> {
+export interface RelayDaemonOptions {
+  /** Timing of the on-demand watchdog (see onDemand.ts); the defaults are the production ones. */
+  idleWatchdog?: Pick<IdleWatchdogOptions, 'graceMs' | 'intervalMs'>;
+}
+
+export async function startRelayDaemon(configDir: string, shutdownDeps?: ShutdownDeps, options: RelayDaemonOptions = {}): Promise<DaemonHandle> {
   const relayStateDir = join(configDir, 'relay-daemon');
   // Ensure relay-daemon subdirectory exists before createDaemon tries to create config.lock
   mkdirSync(relayStateDir, { recursive: true });
@@ -110,6 +116,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
     log: (line) => relayLogger(line),
   };
 
+  let watchdog: { cancel: () => void } | null = null;
   const daemonHandle = await createDaemon<RelayCommands>({
     configDir: relayStateDir,
     port: RELAY_DAEMON_PORT,
@@ -131,6 +138,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
     // Hook into all shutdown paths (quit, idle, update, signal)
     hooks: {
       onShutdown: (reason) => {
+        watchdog?.cancel();
         connection.stop();
         // Arm a safety timeout to force exit if shutdown takes too long
         // 3000ms gives the event loop time to drain after connection stops
@@ -140,6 +148,17 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
         }, 3000);
         timer.unref();
       },
+    },
+  });
+
+  // Started on demand by "queue wait": stop when nobody waits any more (a relay started by hand has no marker and is left alone)
+  watchdog = startIdleWatchdog({
+    relayDir: relayStateDir,
+    ...options.idleWatchdog,
+    log: (line) => relayLogger(line),
+    stop: () => {
+      connection.stop();
+      void daemonHandle.stop('idle');
     },
   });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { HistoryEntry } from '@wadeck-app/queue-core';
 import { eventWaitCommand, findMatch, WAIT_EXIT, type EventWaitOptions, type EventWaitDeps } from './eventWaitCommand.js';
 
@@ -112,5 +112,25 @@ describe('eventWaitCommand', () => {
     const h = harness(() => [entry({ payload: { taskId: 'abc', newStatus: 'done' } }, T0 + 10)]);
     await eventWaitCommand(base, h.deps);
     expect(h.out.join('')).toContain('"newStatus":"done"');
+  });
+});
+
+describe('eventWaitCommand beforeFirstWait hook (starts the relay only when there is something to wait for)', () => {
+  it('is not called when the event is already recorded', async () => {
+    const h = harness(() => [entry({}, T0 + 10)]);
+    const beforeFirstWait = vi.fn(async () => undefined);
+    await eventWaitCommand(base, { ...h.deps, beforeFirstWait });
+    expect(beforeFirstWait).not.toHaveBeenCalled();
+  });
+
+  it('is called once, before the first sleep, when nothing matches yet', async () => {
+    const arrival = entry({}, T0 + 1200);
+    const h = harness((call) => (call >= 3 ? [arrival] : []));
+    const order: string[] = [];
+    const beforeFirstWait = vi.fn(async () => { order.push('hook'); });
+    const sleep = h.deps.sleep;
+    await eventWaitCommand(base, { ...h.deps, beforeFirstWait, sleep: async (ms) => { order.push('sleep'); await sleep(ms); } });
+    expect(beforeFirstWait).toHaveBeenCalledTimes(1);
+    expect(order[0]).toBe('hook');
   });
 });

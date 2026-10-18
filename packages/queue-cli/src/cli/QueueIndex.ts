@@ -15,6 +15,7 @@ import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
 import { createRelayClient } from './RelayClient.js';
 import { relayStop } from './relayStop.js';
+import { pinRelay } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
 import { queueWaitCommand } from './waitCli.js';
 import { relayStart } from './relayStart.js';
 import { LogFormatter } from './LogFormatter.js';
@@ -63,6 +64,10 @@ Relay token (stored securely, not in relay.yml):
   You can also export QUEUE_RELAY_TOKEN as an environment variable.
 
 The relay client logs to <QUEUE_CONFIG_DIR>/relay-daemon/relay.log.
+
+Nothing starts it at logon. "queue relay start" runs it until "queue relay stop". "queue wait ci" (or a wait for an
+on.<source>.<type> event) starts it when it is down and the history holds nothing yet, and it stops by itself 30s after the
+last such wait ended; "queue relay start" on a relay started that way keeps it running.
 `;
 
 const CLI_GROUP_HELP = `queue cli - CLI management commands
@@ -505,6 +510,53 @@ async function waitForRelayDaemon(configDir: string, timeoutMs = 5000): Promise<
   return false;
 }
 
+/** `queue relay start`; also what a `queue wait` runs when it needs the relay and finds it down. Returns relayStart's exit code. */
+async function startRelayFromCli(configDir: string): Promise<number> {
+  // Import loadRelayConfig from the relay package's compiled dist
+  const { loadRelayConfig } = await import('@wadeck-app/queue-relay-client/dist/config.js');
+
+  // Resolve relay daemon script: prefers bundled queue-relay-daemon.cjs if it exists,
+  // otherwise falls back to the TSC-compiled relay-daemon-entry.js from queue-relay-client
+  function resolveRelayScript(): string {
+    const bundleRelay = fileURLToPath(new URL('./queue-relay-daemon.cjs', import.meta.url));
+    if (existsSync(bundleRelay)) return bundleRelay;
+    // Resolved lazily: the relay package is not installed next to a published (bundled) CLI
+    return require.resolve('@wadeck-app/queue-relay-client/dist/relay-daemon-entry.js');
+  }
+
+  // Inject all dependencies into relayStart
+  const deps: RelayStartDeps = {
+    client: createRelayClient(configDir),
+    loadConfig: (dir: string) => loadRelayConfig(dir),
+    resolveDaemonScript: resolveRelayScript,
+    getQueueDaemonScript: getQueueDaemonScriptPath,
+    spawn: (script: string, dir: string, env: Record<string, string>) => spawnDetachedProcess(script, { QUEUE_CONFIG_DIR: dir, ...env }),
+    waitForDaemon: (ms: number) => waitForRelayDaemon(configDir, ms),
+    readLogTail: (path: string, lines: number) => {
+      try {
+        // Read only the last 8 KiB to avoid memory issues on large files
+        const stat = statSync(path);
+        const maxBytes = 8192;
+        const bytesToRead = Math.min(maxBytes, stat.size);
+        const buffer = Buffer.alloc(bytesToRead);
+        const fd = openSync(path, 'r');
+        try {
+          readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
+        } finally {
+          closeSync(fd);
+        }
+        const content = buffer.toString('utf-8');
+        return content.split('\n').slice(-lines).filter(l => l.trim());
+      } catch {
+        return null;
+      }
+    },
+    io: { stdout: process.stdout, stderr: process.stderr },
+  };
+
+  return relayStart(deps, configDir);
+}
+
 async function relayCommand(configDir: string, rest: string[]): Promise<void> {
   const sub = rest[0];
 
@@ -514,52 +566,12 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
   }
 
   if (sub === 'start') {
-    // Import loadRelayConfig from the relay package's compiled dist
-    const { loadRelayConfig } = await import('@wadeck-app/queue-relay-client/dist/config.js');
-
-    // Resolve relay daemon script: prefers bundled queue-relay-daemon.cjs if it exists,
-    // otherwise falls back to the TSC-compiled relay-daemon-entry.js from queue-relay-client
-    function resolveRelayScript(): string {
-      const bundleRelay = fileURLToPath(new URL('./queue-relay-daemon.cjs', import.meta.url));
-      if (existsSync(bundleRelay)) return bundleRelay;
-      // Resolved lazily: the relay package is not installed next to a published (bundled) CLI
-      return require.resolve('@wadeck-app/queue-relay-client/dist/relay-daemon-entry.js');
-    }
-
-    // Inject all dependencies into relayStart
-    const deps: RelayStartDeps = {
-      client: createRelayClient(configDir),
-      loadConfig: (dir: string) => loadRelayConfig(dir),
-      resolveDaemonScript: resolveRelayScript,
-      getQueueDaemonScript: getQueueDaemonScriptPath,
-      spawn: (script: string, dir: string, env: Record<string, string>) => spawnDetachedProcess(script, { QUEUE_CONFIG_DIR: dir, ...env }),
-      waitForDaemon: (ms: number) => waitForRelayDaemon(configDir, ms),
-      readLogTail: (path: string, lines: number) => {
-        try {
-          // Read only the last 8 KiB to avoid memory issues on large files
-          const stat = statSync(path);
-          const maxBytes = 8192;
-          const bytesToRead = Math.min(maxBytes, stat.size);
-          const buffer = Buffer.alloc(bytesToRead);
-          const fd = openSync(path, 'r');
-          try {
-            readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
-          } finally {
-            closeSync(fd);
-          }
-          const content = buffer.toString('utf-8');
-          return content.split('\n').slice(-lines).filter(l => l.trim());
-        } catch {
-          return null;
-        }
-      },
-      io: { stdout: process.stdout, stderr: process.stderr },
-    };
-
-    const exitCode = await relayStart(deps, configDir);
+    const exitCode = await startRelayFromCli(configDir);
     if (exitCode !== 0) {
       process.exit(exitCode);
     }
+    // A manual start makes the relay permanent, also when a "queue wait" had started it on demand
+    pinRelay(pathJoin(configDir, 'relay-daemon'));
     return;
   }
 
@@ -570,6 +582,7 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
     if (exitCode !== 0) {
       process.exit(exitCode);
     }
+    pinRelay(pathJoin(configDir, 'relay-daemon'));
     return;
   }
 
@@ -1085,7 +1098,7 @@ async function main(): Promise<void> {
   }
 
   if (command === 'wait') {
-    process.exit(await queueWaitCommand(configDir, rest));
+    process.exit(await queueWaitCommand(configDir, rest, () => startRelayFromCli(configDir)));
   }
 
   // Domain concept (audit trail), not CLI tooling -- top-level only, no `queue cli history`.

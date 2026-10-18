@@ -35,6 +35,8 @@ export interface EventWaitDeps {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   io: WaitIO;
+  /** Called once, when the first poll finds no match: nothing to wait for is not worth starting anything for. */
+  beforeFirstWait?: () => Promise<void>;
 }
 
 function toEnvelope(entry: HistoryEntry): EventEnvelope {
@@ -66,6 +68,7 @@ function describeWait(options: EventWaitOptions): string {
 export async function eventWaitCommand(options: EventWaitOptions, deps: EventWaitDeps): Promise<number> {
   const { io } = deps;
   const deadline = deps.now() + options.timeoutMs;
+  let hookRan = false;
 
   for (;;) {
     const match = findMatch(deps.readEntries(options.sinceMs), options.whens);
@@ -87,6 +90,10 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
       }
       io.stderr.write(`[timeout] No ${describeWait(options)} was recorded within ${Math.round(options.timeoutMs / 1000)}s.\n`);
       return WAIT_EXIT.TIMEOUT;
+    }
+    if (!hookRan) {
+      hookRan = true;
+      await deps.beforeFirstWait?.();
     }
     await deps.sleep(options.pollMs);
   }
