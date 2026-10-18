@@ -11,3 +11,5 @@ packages/queue-cli-darwin-*/
 *.log
 # Protected directory for secrets (.env.local, credentials, tokens)
 _secrets_/
+# Git Bash (MSYS2) crash dumps
+*.stackdump
