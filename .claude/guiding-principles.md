@@ -6,7 +6,11 @@ This is a core protocol contract. `before*` events call `SyncDispatcher`, block 
 
 ## WAL is the source of truth for in-flight events
 
-An event is not considered dispatched until the WAL entry is updated to `status: 'done'` or moved to the DLQ. Do not remove WAL entries prematurely. The WAL is replayed on daemon startup to reschedule any `pending` entries.
+An event is not considered dispatched until the WAL entry is updated to `status: 'acked'` or moved to the DLQ. Do not remove WAL entries prematurely. The WAL is replayed on daemon startup to reschedule any `pending` entries.
+
+## WAL and DLQ are mutable state files guarded by a lock, not append-only logs
+
+`wal.ndjson` and `dlq.ndjson` are rewritten whole (temp file + rename) on every write, so two processes writing at once lose entries (measured: ~200 of 400 lost, one writer crashed). Every write goes through `FileLock` (`<file>.lock` holding the writer's pid, retry with backoff, taken over when the pid is dead or the lock is 5 s old), one temp file per pid, and `assertHeld()` right before the rename. Readers never lock. `history/` and the event log are real append-only files (`appendFileSync`) and need none of this.
 
 ## Config is merged: global first, then project-local
 
@@ -30,7 +34,7 @@ These are the defaults in `ConfigLoader.toResolved()`. Any change to defaults is
 
 ## Idle shutdown: 60s after queue is empty and no active dispatches
 
-`IDLE_TIMEOUT_MS = 60_000` in `QueueDaemon.ts`. The daemon self-terminates when `wal.pendingCount() === 0 && activeDispatches === 0`. On shutdown, pending WAL entries are rescheduled synchronously via `RetryScheduler.scheduleRetry(entry, true)`.
+`IDLE_TIMEOUT_MS = 60_000` in `queue-cli/src/daemon/QueueDaemon.ts` (the logic it drives lives in queue-core's `createQueueService`). The daemon self-terminates when `wal.pendingCount() === 0 && activeDispatches === 0`. On shutdown, pending WAL entries are rescheduled synchronously via `RetryScheduler.scheduleRetry(entry, true)`.
 
 ## From lessons learned
 

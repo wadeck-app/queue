@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
+import { FileLock } from './FileLock.js';
 
 export interface DlqEntry {
   id: string;
@@ -16,10 +17,13 @@ export interface DlqEntry {
 export class DlqStore {
   private readonly filePath: string;
   private readonly maxSize: number;
+  // Serialises the read-modify-write of every writer process (the daemon, app-core's queue module)
+  private readonly lock: FileLock;
 
   constructor(filePath: string, maxSize = 1000) {
     this.filePath = filePath;
     this.maxSize = maxSize;
+    this.lock = new FileLock(`${filePath}.lock`);
   }
 
   private ensureDir(): void {
@@ -29,21 +33,27 @@ export class DlqStore {
     }
   }
 
-  private write(entries: DlqEntry[]): void {
+  /** Replaces the file atomically (readers never see a half-written file). Must be called with the lock held. */
+  private write(entries: DlqEntry[], held: FileLock): void {
     this.ensureDir();
-    const tmpPath = `${this.filePath}.tmp`;
+    // One temp file per process: a shared name made concurrent writers rename each other's file away
+    const tmpPath = `${this.filePath}.${process.pid}.tmp`;
     writeFileSync(tmpPath, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length > 0 ? '\n' : ''), 'utf-8');
+    held.assertHeld();
     renameSync(tmpPath, this.filePath);
   }
 
   append(entry: DlqEntry): void {
-    let entries = this.readAll();
-    if (entries.length >= this.maxSize) {
-      process.stderr.write(`[queue] DLQ limit reached (${this.maxSize}). Removing oldest entry.\n`);
-      entries = entries.slice(1);
-    }
-    entries.push(entry);
-    this.write(entries);
+    this.ensureDir();
+    this.lock.withLock((held) => {
+      let entries = this.readAll();
+      if (entries.length >= this.maxSize) {
+        process.stderr.write(`[queue] DLQ limit reached (${this.maxSize}). Removing oldest entry.\n`);
+        entries = entries.slice(1);
+      }
+      entries.push(entry);
+      this.write(entries, held);
+    });
   }
 
   readAll(): DlqEntry[] {
@@ -63,13 +73,18 @@ export class DlqStore {
   }
 
   remove(id: string): void {
-    const entries = this.readAll().filter(e => e.id !== id);
-    this.write(entries);
+    this.ensureDir();
+    this.lock.withLock((held) => {
+      this.write(this.readAll().filter(e => e.id !== id), held);
+    });
   }
 
   clear(): number {
-    const entries = this.readAll();
-    this.write([]);
-    return entries.length;
+    this.ensureDir();
+    return this.lock.withLock((held) => {
+      const count = this.readAll().length;
+      this.write([], held);
+      return count;
+    });
   }
 }

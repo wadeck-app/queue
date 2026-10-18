@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, openSync, closeSync, chmodSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
+import { FileLock } from './FileLock.js';
 
 export interface WalEntry {
   id: string;
@@ -17,9 +18,12 @@ export interface WalEntry {
 
 export class Wal {
   private readonly filePath: string;
+  // Serialises the read-modify-write of every writer process (the daemon, app-core's queue module)
+  private readonly lock: FileLock;
 
   constructor(filePath: string) {
     this.filePath = filePath;
+    this.lock = new FileLock(`${filePath}.lock`);
   }
 
   private ensureFile(): void {
@@ -40,11 +44,11 @@ export class Wal {
 
   append(entry: WalEntry): void {
     this.ensureFile();
-    const tmpPath = `${this.filePath}.tmp`;
-    const existing = existsSync(this.filePath) ? readFileSync(this.filePath, 'utf-8') : '';
     const line = JSON.stringify(entry) + '\n';
-    writeFileSync(tmpPath, existing + line, { encoding: 'utf-8', mode: 0o600 });
-    renameSync(tmpPath, this.filePath);
+    this.lock.withLock((held) => {
+      const existing = existsSync(this.filePath) ? readFileSync(this.filePath, 'utf-8') : '';
+      this.commit(existing + line, held);
+    });
   }
 
   readAll(): WalEntry[] {
@@ -64,10 +68,18 @@ export class Wal {
   }
 
   updateEntry(id: string, updates: Partial<WalEntry>): void {
-    const entries = this.readAll();
-    const updated = entries.map(e => (e.id === id ? { ...e, ...updates } : e));
-    const tmpPath = `${this.filePath}.tmp`;
-    writeFileSync(tmpPath, updated.map(e => JSON.stringify(e)).join('\n') + (updated.length > 0 ? '\n' : ''), { encoding: 'utf-8', mode: 0o600 });
+    this.lock.withLock((held) => {
+      const updated = this.readAll().map(e => (e.id === id ? { ...e, ...updates } : e));
+      this.commit(updated.map(e => JSON.stringify(e)).join('\n') + (updated.length > 0 ? '\n' : ''), held);
+    });
+  }
+
+  /** Replaces the file atomically (readers never see a half-written file). Must be called with the lock held. */
+  private commit(content: string, held: FileLock): void {
+    // One temp file per process: a shared name made concurrent writers rename each other's file away
+    const tmpPath = `${this.filePath}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
+    held.assertHeld();
     renameSync(tmpPath, this.filePath);
   }
 
