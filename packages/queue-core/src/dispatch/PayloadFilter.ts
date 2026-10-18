@@ -30,6 +30,20 @@ export class PayloadFilter {
     }
   }
 
+  /**
+   * Checks the syntax of a `when:` expression without any envelope, so a typo can be reported when the
+   * expression is given (e.g. to `queue wait --when`) rather than as a filter that never matches.
+   * Returns the problem, or undefined when the expression is well formed.
+   * Only the "path=value" form can be checked up front: jsonpath-plus parses a JSONPath lazily, while it
+   * walks a document, so a broken JSONPath is only detectable by evaluating it (see `evaluate`).
+   */
+  static validate(filter: string): string | undefined {
+    if (filter.startsWith('$') || filter.includes('=')) {
+      return undefined;
+    }
+    return `invalid filter "${filter}": no '=' found. Expected "path=value" (e.g. payload.exitCode=1) or a JSONPath starting with '$'`;
+  }
+
   static matches(filter: string, envelope: EventEnvelope): boolean {
     return PayloadFilter.evaluate(filter, envelope).matched;
   }

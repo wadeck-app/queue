@@ -9,10 +9,24 @@ import { createRelayClient } from './RelayClient.js';
 import { CI_EXIT } from './ciWait.js';
 import { ciWaitCommand, parseGithubRepo, type CiWaitCommandOptions } from './ciWaitCommand.js';
 import { inferExpectedWorkflows, parseWorkflowFile } from './ciInfer.js';
+import { eventWaitCommand } from './eventWaitCommand.js';
+import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE } from './eventWaitArgs.js';
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
 Usage:
+  queue wait <event> [--when <expr>]... [--since <duration|time>] [--timeout <duration>] [--json]
   queue wait ci [<sha>] [--repo <owner/name>] [--workflow <name>]... [--timeout <duration>] [--settle <duration>] [--no-infer] [--json]
+
+queue wait <event>: blocks until a queue event of that name is recorded (any "queue push" is, even with no subscriber).
+  --when <expr>      Keep only events whose payload satisfies the expression, same syntax as a subscriber's when:
+                     "payload.taskId=abc" or a JSONPath such as "$.payload.newStatus". Repeatable: all must hold
+  --since <d|time>   Count events recorded since then: a duration back from now (10m, 2h) or a time (2026-10-18T11:00:00Z).
+                     Default: only events recorded after the command started
+  --timeout <d>      Give up after this long (default 15m)
+  --json             Machine-readable result on stdout ({"matched":true,"entry":{...}} or {"matched":false,"timedOut":true,...})
+  Example: queue wait onStatusChange --when "payload.taskId=abc" --when "payload.newStatus=done" --since 5m
+  It answers at once when a matching event was recorded since --since, so there is no race with the thing you waited for.
+  Exit codes: 0 matched | 2 timeout | 4 invalid usage. "ci" is reserved for the command below.
 
 queue wait ci: blocks until the GitHub CI of a commit is done (events relayed as on.github.workflow_run).
   <sha>              Commit to wait for (full or >= 7 chars); default: HEAD of the current git repository
@@ -128,13 +142,30 @@ function fail(message: string): number {
   return CI_EXIT.USAGE;
 }
 
+/** `queue wait <event> ...`: any target other than "ci" is the name of a queue event. */
+async function eventWait(configDir: string, args: string[]): Promise<number> {
+  warnUnknownArgs(args.filter((arg) => arg.startsWith('-')), EVENT_WAIT_KNOWN_FLAGS, 'queue wait', EVENT_WAIT_FLAGS_WITH_VALUE);
+  const parsed = parseEventWaitArgs(args, Date.now());
+  if (!parsed.ok) return fail(parsed.message);
+
+  const { options } = parsed;
+  process.stderr.write(`[info] waiting for ${options.event}${options.whens.length ? ` where ${options.whens.join(' and ')}` : ''} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
+  const reader = new HistoryReader(pathJoin(configDir, 'history'));
+  return eventWaitCommand(options, {
+    readEntries: (sinceMs) => reader.read({ event: options.event, sinceMs }),
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    io: { stdout: process.stdout, stderr: process.stderr },
+  });
+}
+
 export async function queueWaitCommand(configDir: string, args: string[]): Promise<number> {
   const target = args[0];
   if (!target || target === '--help' || target === '-h') {
     process.stdout.write(WAIT_HELP);
     return target ? CI_EXIT.PASSED : CI_EXIT.USAGE;
   }
-  if (target !== 'ci') return fail(`Unknown wait target "${target}". Use: queue wait ci (see "queue wait --help").`);
+  if (target !== 'ci') return eventWait(configDir, args);
 
   const rest = args.slice(1);
 

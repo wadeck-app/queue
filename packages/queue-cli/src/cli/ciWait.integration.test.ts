@@ -130,13 +130,63 @@ describe('queue wait ci (bundled CLI)', () => {
     expect(result.stderr).toContain('is not a commit SHA');
   });
 
-  it('exits 4 for an unknown wait target and for a bad duration', async () => {
-    const unknown = await run(['wait', 'pizza']);
-    expect(unknown.exitCode).toBe(4);
-    expect(unknown.stderr).toContain('Unknown wait target');
-
+  it('exits 4 for a bad duration', async () => {
     const badDuration = await run(['wait', 'ci', SHA, '--timeout', 'soon']);
     expect(badDuration.exitCode).toBe(4);
     expect(badDuration.stderr).toContain('durations look like');
+  });
+
+  // `queue wait <event>`: any other word is the name of a queue event ("ci" is the GitHub-CI special case above)
+  describe('queue wait <event> (generic)', () => {
+    function writeEvent(event: string, payload: unknown, ageMs: number): void {
+      const historyDir = join(configDir, 'history');
+      mkdirSync(historyDir, { recursive: true });
+      const ts = new Date(Date.now() - ageMs).toISOString();
+      const record = { ts, type: 'trigger', eventId: `evt-${event}-${ageMs}`, event, matchedCount: 0, totalCount: 0, payload };
+      writeFileSync(join(historyDir, `${ts.slice(0, 10)}.ndjson`), JSON.stringify(record) + '\n', { flag: 'a' });
+    }
+
+    it('answers at once, with the payload, for a matching event that happened since --since', async () => {
+      writeEvent('onStatusChange', { taskId: 'abc', newStatus: 'done' }, 60_000);
+      const result = await run(['wait', 'onStatusChange', '--since', '10m', '--when', 'payload.taskId=abc', '--when', 'payload.newStatus=done']);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('onStatusChange');
+      expect(result.stdout).toContain('"newStatus":"done"');
+    });
+
+    it('prints the entry as JSON with --json', async () => {
+      writeEvent('onStatusChange', { taskId: 'abc' }, 60_000);
+      const result = await run(['wait', 'onStatusChange', '--since', '10m', '--json']);
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout) as { matched: boolean; entry: { payload: { taskId: string } } };
+      expect(parsed.matched).toBe(true);
+      expect(parsed.entry.payload.taskId).toBe('abc');
+    });
+
+    it('does not count an event older than --since: without --since only new events count, so it times out (exit 2)', async () => {
+      writeEvent('onStatusChange', { taskId: 'abc' }, 60_000);
+      const result = await run(['wait', 'onStatusChange', '--timeout', '1s']);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('No onStatusChange was recorded');
+    });
+
+    it('exits 2 when a --when never matches', async () => {
+      writeEvent('onStatusChange', { taskId: 'other' }, 60_000);
+      const result = await run(['wait', 'onStatusChange', '--since', '10m', '--when', 'payload.taskId=abc', '--timeout', '1s']);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('payload.taskId=abc');
+    });
+
+    it('exits 4 at once, naming the problem, for a --when without "="', async () => {
+      const result = await run(['wait', 'onStatusChange', '--when', 'payload.taskId']);
+      expect(result.exitCode).toBe(4);
+      expect(result.stderr).toContain("no '='");
+    });
+
+    it('exits 4 for a bad --since', async () => {
+      const result = await run(['wait', 'onStatusChange', '--since', 'yesterdayish']);
+      expect(result.exitCode).toBe(4);
+      expect(result.stderr).toContain('--since');
+    });
   });
 });

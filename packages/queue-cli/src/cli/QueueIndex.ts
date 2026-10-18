@@ -115,7 +115,8 @@ Usage:
   queue retry --event <id>
   queue replay <eventId>    Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>. For manual testing, not delivery guarantees.
-  queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done (see 'queue wait --help')
+  queue wait <event> [--when <expr>] [--since <d>] [--timeout <d>] [--json]   Block until a matching queue event is recorded (see 'queue wait --help')
+  queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done
   queue status [--json]
   queue list-subscribers [event] [--json]
   queue dlq list

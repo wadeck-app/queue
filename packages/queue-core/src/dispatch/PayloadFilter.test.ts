@@ -101,3 +101,19 @@ describe('PayloadFilter.evaluate', () => {
     });
   });
 });
+
+describe('PayloadFilter.validate', () => {
+  it('accepts a dot-notation filter with "="', () => {
+    expect(PayloadFilter.validate('payload.taskId=abc')).toBeUndefined();
+  });
+
+  it('accepts a JSONPath filter', () => {
+    expect(PayloadFilter.validate('$.payload.exitCode')).toBeUndefined();
+  });
+
+  it('rejects a dot-notation filter without "=" and says how to write it', () => {
+    const problem = PayloadFilter.validate('payload.taskId');
+    expect(problem).toContain("no '='");
+    expect(problem).toContain('payload.exitCode=1');
+  });
+});

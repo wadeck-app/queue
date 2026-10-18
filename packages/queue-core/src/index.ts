@@ -8,6 +8,9 @@ export type { QueueService, QueueServiceOptions } from './daemon/QueueService.js
 export { spawnDetachedProcess } from './daemon/spawnDetachedProcess.js';
 export type { SubscriberConfig } from './ConfigLoader.js';
 export { SubscribersYmlSchema } from './ConfigLoader.js';
+export { PayloadFilter } from './dispatch/PayloadFilter.js';
+export type { FilterEvaluation } from './dispatch/PayloadFilter.js';
+export type { EventEnvelope } from './types.js';
 export { EventLogger } from './storage/EventLogger.js';
 export { HistoryReader } from './storage/HistoryReader.js';
 export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage } from './storage/HistoryReader.js';
