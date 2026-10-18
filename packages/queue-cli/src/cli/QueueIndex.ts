@@ -486,16 +486,6 @@ async function ensureDaemon(configDir: string): Promise<void> {
   }
 }
 
-function spawnRelayDaemon(configDir: string): void {
-  // Not yet bundled into a standalone .cjs next to queue.cjs (ci/scripts/bundle.ts
-  // doesn't produce one -- a follow-up). require.resolve walks node_modules the
-  // standard way regardless of where npm workspaces hoists the package, so this
-  // works whether @wadeck-app/queue-relay-client lands in the root node_modules
-  // or nested under queue-cli's own.
-  const relayDaemonScript = require.resolve('@wadeck-app/queue-relay-client/dist/relay-daemon-entry.js');
-  spawnDetachedProcess(relayDaemonScript, { QUEUE_CONFIG_DIR: configDir });
-}
-
 async function waitForRelayDaemon(configDir: string, timeoutMs = 5000): Promise<boolean> {
   const client = createRelayClient(configDir);
   const start = Date.now();
