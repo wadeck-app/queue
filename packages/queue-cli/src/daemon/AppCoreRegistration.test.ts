@@ -1,90 +1,52 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const sdk = vi.hoisted(() => ({
+  registerModule: vi.fn(),
+  describeRegistration: vi.fn(),
+  describeRegistrationFailure: vi.fn(),
+}));
+vi.mock('@wadeck-app/app-core-sdk/register', () => sdk);
+
 import { registerWithAppCore } from './AppCoreRegistration.js';
 
-let configDir: string;
-let logs: { source: string; message: string }[];
-const logDiagnostic = (entry: { source: string; message: string }) => logs.push(entry);
-const originalFetch = global.fetch;
+let lines: { source: string; message: string }[];
+const log = (entry: { source: string; message: string }): void => { lines.push(entry); };
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-core-registration-'));
-  logs = [];
-  process.env['APP_CORE_CONFIG_DIR'] = configDir;
-  // queue-cli's vitest config points APP_CORE_PORT at an unused port to keep tests away from a real
-  // app-core; these tests mock fetch and assert the default port, so they start from a clean variable.
-  delete process.env['APP_CORE_PORT'];
-});
-
-afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
-  delete process.env['APP_CORE_CONFIG_DIR'];
-  delete process.env['APP_CORE_PORT'];
-  global.fetch = originalFetch;
+  lines = [];
+  sdk.registerModule.mockReset();
+  sdk.describeRegistration.mockReset();
+  sdk.describeRegistrationFailure.mockReset();
 });
 
 describe('registerWithAppCore', () => {
-  it('posts to /api/modules/register with the default port and does not fall back on success', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-    global.fetch = fetchMock as unknown as typeof fetch;
+  it('registers the module under the id "queue" with the given manifest and logs what app-core answered', async () => {
+    const outcome = { status: 'registered', port: 4850 };
+    sdk.registerModule.mockResolvedValue(outcome);
+    sdk.describeRegistration.mockReturnValue('module "queue" registered with app-core on port 4850');
 
-    await registerWithAppCore('queue', '/abs/path/manifest.json', logDiagnostic);
+    await registerWithAppCore('/abs/manifest.json', log);
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4850/api/modules/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'queue', source: { type: 'file', path: '/abs/path/manifest.json' } }),
-    });
-    expect(existsSync(join(configDir, 'modules', 'queue.json'))).toBe(false);
-    expect(logs).toEqual([]);
+    expect(sdk.registerModule).toHaveBeenCalledWith({ id: 'queue', manifestPath: '/abs/manifest.json' });
+    expect(sdk.describeRegistration).toHaveBeenCalledWith(outcome, 'queue');
+    expect(lines).toEqual([{ source: 'AppCoreRegistration', message: 'module "queue" registered with app-core on port 4850' }]);
   });
 
-  it('respects APP_CORE_PORT override', async () => {
-    process.env['APP_CORE_PORT'] = '9999';
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-    global.fetch = fetchMock as unknown as typeof fetch;
+  it('logs app-core\'s own reason when it refuses the module (not a silent success)', async () => {
+    sdk.registerModule.mockResolvedValue({ status: 'refused', port: 4850, httpStatus: 400, reason: 'bad manifest' });
+    sdk.describeRegistration.mockReturnValue('app-core refused module "queue" (HTTP 400): bad manifest');
 
-    await registerWithAppCore('queue', '/abs/path/manifest.json', logDiagnostic);
+    await registerWithAppCore('/abs/manifest.json', log);
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:9999/api/modules/register', expect.anything());
+    expect(lines[0]!.message).toContain('bad manifest');
   });
 
-  it('logs once (no retry) when app-core responds with a non-ok status', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
-    global.fetch = fetchMock as unknown as typeof fetch;
+  it('logs the failure and does not throw when the SDK rejects (invalid APP_CORE_PORT, missing manifest)', async () => {
+    sdk.registerModule.mockRejectedValue(new Error('APP_CORE_PORT "abc" is not a port'));
+    sdk.describeRegistrationFailure.mockReturnValue('could not register with app-core: APP_CORE_PORT "abc" is not a port');
 
-    await registerWithAppCore('queue', '/abs/path/manifest.json', logDiagnostic);
+    await expect(registerWithAppCore('/abs/manifest.json', log)).resolves.toBeUndefined();
 
-    expect(logs).toHaveLength(1);
-    expect(logs[0]!.message).toContain('500');
-    expect(existsSync(join(configDir, 'modules', 'queue.json'))).toBe(false);
-  });
-
-  it('falls back to writing the config-dir pickup file when app-core is unreachable', async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    await registerWithAppCore('queue', '/abs/path/manifest.json', logDiagnostic);
-
-    const written = JSON.parse(readFileSync(join(configDir, 'modules', 'queue.json'), 'utf-8'));
-    expect(written).toEqual({ id: 'queue', source: { type: 'file', path: '/abs/path/manifest.json' } });
-    expect(logs).toEqual([]);
-  });
-
-  it('logs once (no retry) when both app-core and the fallback file write fail', async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
-    global.fetch = fetchMock as unknown as typeof fetch;
-    // A regular file where a directory is expected makes mkdirSync(recursive) throw ENOTDIR --
-    // a real filesystem failure, not a contrived error path.
-    const blockingFile = join(configDir, 'blocking-file');
-    writeFileSync(blockingFile, 'not a directory');
-    process.env['APP_CORE_CONFIG_DIR'] = blockingFile;
-
-    await registerWithAppCore('queue', '/abs/path/manifest.json', logDiagnostic);
-
-    expect(logs).toHaveLength(1);
-    expect(logs[0]!.message).toContain('could not register module "queue"');
+    expect(lines).toEqual([{ source: 'AppCoreRegistration', message: 'could not register with app-core: APP_CORE_PORT "abc" is not a port' }]);
   });
 });

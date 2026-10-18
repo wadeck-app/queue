@@ -14,7 +14,7 @@ const bundleManifest = fileURLToPath(new URL('./app-module/manifest.json', impor
 const devManifest = fileURLToPath(new URL('../../../app-module-queue/manifest.json', import.meta.url));
 const manifestPath = existsSync(bundleManifest) ? bundleManifest : devManifest;
 
-startDaemon(configDir, { appCoreModule: { id: 'queue', manifestPath } }).catch((err: unknown) => {
+startDaemon(configDir, { appCoreModule: { manifestPath } }).catch((err: unknown) => {
   const message = `Failed to start: ${getErrorMessage(err)}`;
   // The daemon is spawned with stdio:'ignore', so stderr alone would lose the startup failure
   try {

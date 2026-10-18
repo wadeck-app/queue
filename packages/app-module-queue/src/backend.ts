@@ -43,7 +43,7 @@ export default function (ctx: ModuleContext): void {
   });
 
   ctx.registerRoute('GET', '/history/:eventId', (req, reply) => {
-    const { eventId } = (req as { params: { eventId: string } }).params;
+    const { eventId } = req.params;
     try {
       const entry = getHistoryEntry(configDir, eventId);
       if (!entry) {
@@ -56,7 +56,7 @@ export default function (ctx: ModuleContext): void {
   });
 
   ctx.registerRoute('POST', '/history/:eventId/replay', async (req, reply) => {
-    const { eventId } = (req as { params: { eventId: string } }).params;
+    const { eventId } = req.params;
     try {
       return reply.code(200).send(await replayEvent(configDir, eventId));
     } catch (err) {
@@ -86,7 +86,7 @@ export default function (ctx: ModuleContext): void {
   });
 
   ctx.registerRoute('POST', '/dlq/:id/replay', async (req, reply) => {
-    const { id } = (req as { params: { id: string } }).params;
+    const { id } = req.params;
     try {
       return reply.code(200).send(await replayDlqEntry(configDir, id));
     } catch (err) {
@@ -95,7 +95,7 @@ export default function (ctx: ModuleContext): void {
   });
 
   ctx.registerRoute('POST', '/dlq/:id/clear', async (req, reply) => {
-    const { id } = (req as { params: { id: string } }).params;
+    const { id } = req.params;
     try {
       return reply.code(200).send(await clearDlqEntry(configDir, id));
     } catch (err) {

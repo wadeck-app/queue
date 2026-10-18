@@ -7,7 +7,7 @@ export const DAEMON_PORT = 47910;
 export const IDLE_TIMEOUT_MS = 60_000;
 const IDLE_CHECK_INTERVAL_MS = 10_000;
 
-export interface AppCoreModuleOptions { id: string; manifestPath: string; }
+export interface AppCoreModuleOptions { manifestPath: string; }
 
 /**
  * Hosts the queue as the singleton background daemon: owns the port, the idle shutdown and the
@@ -55,10 +55,7 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
         // confirmed with app-core-owner: /register always reloads the manifest fresh).
         // Best-effort: never blocks or fails daemon startup.
         if (options?.appCoreModule) {
-          const { id, manifestPath } = options.appCoreModule;
-          registerWithAppCore(id, manifestPath, entry => service.eventLogger.logDiagnostic(entry)).catch((err: unknown) => {
-            service.eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `app-core registration failed: ${getErrorMessage(err)}` });
-          });
+          registerWithAppCore(options.appCoreModule.manifestPath, entry => service.eventLogger.logDiagnostic(entry));
         }
       },
       onShutdown: (_reason: ShutdownReason) => {

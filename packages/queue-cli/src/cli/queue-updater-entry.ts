@@ -4,6 +4,8 @@
 import { runUpdater, execNpm } from '@wadeck-app/shared-updater';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { join } from 'node:path';
+import { registerAfterUpdate } from './registerAfterUpdate.js';
+import { registerWithAppCore } from '../daemon/AppCoreRegistration.js';
 
 // Injected by esbuild at bundle time via define; falls back to dev placeholder.
 declare const __QUEUE_CLI_VERSION__: string;
@@ -14,8 +16,9 @@ const currentVersion = typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CL
 
 // Compute self-check command so shared-updater can verify the install after upgrade.
 // Must be set before runUpdater() reads UPDATER_SELF_CHECK_CMD.
+let npmRoot: string | undefined;
 try {
-    const npmRoot = execNpm(['root', '-g'], { timeout: 10_000 }).trim();
+    npmRoot = execNpm(['root', '-g'], { timeout: 10_000 }).trim();
     const selfCheckCmd = `${process.execPath} ${join(npmRoot, PKG_NAME, 'queue.cjs')} cli self-check`;
     if (!process.env['UPDATER_SELF_CHECK_CMD']) {
         process.env['UPDATER_SELF_CHECK_CMD'] = selfCheckCmd;
@@ -24,12 +27,28 @@ try {
     // Skip self-check if npm root is unavailable — update proceeds without verification.
 }
 
+const startedAtMs = Date.now();
+
 runUpdater({
     pkgName: PKG_NAME,
     configDir,
     currentVersion,
     strategy: 'without-daemon',
     onUpdateAvailable: async (_newVersion: string) => 'apply-now' as const,
+}).then(async () => {
+    // The update does not restart the daemon (it registers on its own start), so a running app-core would
+    // keep the previous app-module until the next daemon start: tell it now, from the new install.
+    if (npmRoot === undefined) {
+        process.stderr.write('[queue-updater] app-core: not re-registering the app-module, "npm root -g" failed earlier\n');
+        return;
+    }
+    await registerAfterUpdate({
+        configDir,
+        manifestPath: join(npmRoot, PKG_NAME, 'app-module', 'manifest.json'),
+        startedAtMs,
+        register: registerWithAppCore,
+        log: (line) => process.stdout.write(`[queue-updater] ${line}\n`),
+    });
 }).catch(err => {
     process.stderr.write(`[queue-updater] fatal: ${err}\n`);
     process.exit(1);
