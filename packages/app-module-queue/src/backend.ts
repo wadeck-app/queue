@@ -1,6 +1,5 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
-import { getErrorMessage } from '@wadeck-app/queue-core';
-import { getQueueConfigDir } from './configDir.js';
+import { getErrorMessage, getQueueConfigDir } from '@wadeck-app/queue-core';
 import { getStatus } from './status.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';

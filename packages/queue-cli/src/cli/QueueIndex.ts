@@ -21,7 +21,7 @@ import { LogFormatter } from './LogFormatter.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
@@ -164,7 +164,7 @@ Environment variables:
 }
 
 function getConfigDir(): string {
-  return process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
+  return getQueueConfigDir();
 }
 
 async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = {}): Promise<void> {

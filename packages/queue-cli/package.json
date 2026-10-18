@@ -23,9 +23,7 @@
     "@wadeck-app/shared-cli": "latest",
     "@wadeck-app/shared-updater": "latest",
     "@wadeck-app/singleton-daemon-kit": "latest",
-    "js-yaml": "^4.1.1",
-    "jsonpath-plus": "^10.3.0",
-    "zod": "^3.24.0"
+    "js-yaml": "^4.1.1"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

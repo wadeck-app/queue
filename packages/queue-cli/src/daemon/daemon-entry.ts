@@ -1,11 +1,10 @@
-import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EventLogger, getErrorMessage } from '@wadeck-app/queue-core';
+import { EventLogger, getErrorMessage, getQueueConfigDir } from '@wadeck-app/queue-core';
 import { startDaemon } from './QueueDaemon.js';
 
-const configDir = process.env['QUEUE_CONFIG_DIR'] ?? ConfigDir.get('queue');
+const configDir = getQueueConfigDir();
 
 // Bundle layout: app-module/manifest.json sits next to queue-daemon.cjs (see ci/scripts/bundle.ts).
 // TSC dev layout: sibling packages/app-module-queue/manifest.json, three levels up from
