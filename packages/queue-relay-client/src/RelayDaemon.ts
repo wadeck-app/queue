@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 import { RelayConnection } from './RelayConnection.js';
 import { createRelayLogger } from './RelayLogger.js';
-import { startIdleWatchdog, type IdleWatchdogOptions } from './onDemand.js';
+import { startIdleWatchdog, pinRelay, type IdleWatchdogOptions } from './onDemand.js';
 
 export const RELAY_DAEMON_PORT = 47911;
 
@@ -157,6 +157,8 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
     ...options.idleWatchdog,
     log: (line) => relayLogger(line),
     stop: () => {
+      // Stopped: no longer an on-demand relay waiting for its waiters, so leave no marker behind
+      pinRelay(relayStateDir);
       connection.stop();
       void daemonHandle.stop('idle');
     },

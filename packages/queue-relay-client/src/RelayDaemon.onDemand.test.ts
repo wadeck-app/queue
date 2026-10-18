@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDaemonClient } from '@wadeck-app/singleton-daemon-kit';
 import { startRelayDaemon, type RelayCommands } from './RelayDaemon.js';
-import { markOnDemand, registerWaiter, unregisterWaiter } from './onDemand.js';
+import { markOnDemand, registerWaiter, unregisterWaiter, isOnDemand } from './onDemand.js';
 
 // A separate file from RelayDaemon.test.ts on purpose: the older tests there stop daemons without replacing the forced
 // process.exit that stop() arms 3 s later, so a longer file makes vitest fail on "process.exit unexpectedly called".
@@ -63,6 +63,8 @@ describe('on-demand relay (started by "queue wait") stops itself when nobody wai
     }
     expect(await client.isRunning()).toBe(false);
     expect(readFileSync(join(relayDir, 'relay.log'), 'utf-8')).toContain('no one is waiting');
+    // a stopped relay leaves no on-demand marker behind
+    expect(isOnDemand(relayDir)).toBe(false);
   }, 15_000);
 
   it('a relay that was not started on demand ignores the waiters entirely', async () => {
