@@ -72,10 +72,14 @@ export class DlqStore {
     return entries;
   }
 
-  remove(id: string): void {
+  /** Returns how many entries were removed (0 for an unknown id). */
+  remove(id: string): number {
     this.ensureDir();
-    this.lock.withLock((held) => {
-      this.write(this.readAll().filter(e => e.id !== id), held);
+    return this.lock.withLock((held) => {
+      const before = this.readAll();
+      const after = before.filter(e => e.id !== id);
+      this.write(after, held);
+      return before.length - after.length;
     });
   }
 

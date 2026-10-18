@@ -17,3 +17,5 @@ export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage
 export { DEFAULT_HISTORY_LIMIT } from './storage/HistoryReader.js';
 export type { DlqEntry } from './storage/DlqStore.js';
 export type { ResolvedSubscriber } from './types.js';
+export { readQueueCounts, listDlqEntries, clearDlqEntries, listQueueSubscribers } from './operations.js';
+export type { QueueCounts } from './operations.js';

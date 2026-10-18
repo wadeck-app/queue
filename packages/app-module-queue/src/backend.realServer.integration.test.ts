@@ -143,10 +143,30 @@ describe.skipIf(cliMissing)('parameterised routes through a real app-core server
     expect(String(body['error'])).toContain('Daemon is not running');
   });
 
-  it.each(['/dlq/some-id/replay', '/dlq/some-id/clear'])('POST %s is routed to the handler (503 from the missing daemon), not rejected as not-found by the router', async (path) => {
-    const { status, body } = await call('POST', path);
+  it('POST /dlq/:id/replay is routed to the handler (503 from the missing daemon: it runs the subscriber), not rejected as not-found by the router', async () => {
+    const { status, body } = await call('POST', '/dlq/some-id/replay');
     expect(status).toBe(503);
     expect(body['error']).not.toBe('not-found');
     expect(String(body['error'])).toContain('Daemon is not running');
+  });
+
+  it('POST /dlq/:id/clear gets the id and works without any daemon (it edits the DLQ file): an unknown id clears 0', async () => {
+    const { status, body } = await call('POST', '/dlq/some-id/clear');
+    expect(status).toBe(200);
+    expect(body['cleared']).toBe(0);
+  });
+
+  it('the read routes work without any daemon', async () => {
+    const status = await call('GET', '/status');
+    expect(status.status).toBe(200);
+    expect(status.body).toEqual({ pendingCount: 0, dlqCount: 0 });
+
+    const dlq = await call('GET', '/dlq');
+    expect(dlq.status).toBe(200);
+    expect(dlq.body['entries']).toEqual([]);
+
+    const subscribers = await call('GET', `/subscribers?cwd=${encodeURIComponent(configDir)}`);
+    expect(subscribers.status).toBe(200);
+    expect(subscribers.body['subscribers']).toEqual([]);
   });
 });

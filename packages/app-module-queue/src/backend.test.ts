@@ -87,11 +87,11 @@ describe('backend', () => {
   it('GET /status forwards getStatus()', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
-    mockGetStatus.mockResolvedValue({ daemonRunning: true, pendingCount: 1, dlqCount: 0 });
+    mockGetStatus.mockReturnValue({ pendingCount: 1, dlqCount: 0 });
     const reply = fakeReply();
     await routes.get('GET /status')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(200);
-    expect(reply.send).toHaveBeenCalledWith({ daemonRunning: true, pendingCount: 1, dlqCount: 0 });
+    expect(reply.send).toHaveBeenCalledWith({ pendingCount: 1, dlqCount: 0 });
   });
 
   it('GET /history forwards limit/offset query params and sends the full page', () => {
@@ -386,19 +386,59 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ error: 'Unexpected error' });
   });
 
-  it('GET /dlq returns 503 when the daemon is unreachable', async () => {
+  it('GET /dlq returns 500 with the reason when reading the DLQ fails (the daemon is not involved)', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
-    mockListDlq.mockRejectedValue(new Error('Daemon is not running'));
+    mockListDlq.mockImplementation(() => { throw new Error('Cannot read dlq.ndjson'); });
     const reply = fakeReply();
     await routes.get('GET /dlq')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'Cannot read dlq.ndjson' });
+  });
+
+  it('GET /subscribers returns 500 with the reason for an invalid subscribers.yml', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListSubscribers.mockImplementation(() => { throw new Error('Invalid subscribers.yml: bad indentation'); });
+    const reply = fakeReply();
+    await routes.get('GET /subscribers')!(fakeReq({ query: { cwd: '/p' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'Invalid subscribers.yml: bad indentation' });
+  });
+
+  it('POST /dlq/:id/clear returns 500 with the reason when the DLQ cannot be edited', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockClearDlqEntry.mockImplementation(() => { throw new Error('Lock held by another process'); });
+    const reply = fakeReply();
+    await routes.get('POST /dlq/:id/clear')!(fakeReq({ params: { id: 'd1' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'Lock held by another process' });
+  });
+
+  it('POST /dlq/:id/replay answers 500, not 503, for an error that is not about the daemon', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockReplayDlqEntry.mockRejectedValue(new Error('Unexpected failure'));
+    const reply = fakeReply();
+    await routes.get('POST /dlq/:id/replay')!(fakeReq({ params: { id: 'd1' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'Unexpected failure' });
+  });
+
+  it('POST /dlq/:id/replay still answers 503 when the daemon is unreachable', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockReplayDlqEntry.mockRejectedValue(new DaemonUnreachableError('Daemon is not running'));
+    const reply = fakeReply();
+    await routes.get('POST /dlq/:id/replay')!(fakeReq({ params: { id: 'd1' } }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(503);
   });
 
   it('GET /status returns 500 when getStatus throws', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
-    mockGetStatus.mockRejectedValue(new Error('Disk read error'));
+    mockGetStatus.mockImplementation(() => { throw new Error('Disk read error'); });
     const reply = fakeReply();
     await routes.get('GET /status')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(500);

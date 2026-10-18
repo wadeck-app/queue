@@ -1,26 +1,11 @@
-import { createQueueAppClient } from './client.js';
+import { readQueueCounts, type QueueCounts } from '@wadeck-app/queue-core';
 
-export interface QueueStatus {
-  daemonRunning: boolean;
-  pendingCount: number;
-  dlqCount: number;
-  uptimeSec?: number;
-  pid?: number;
-}
+/**
+ * The queue's counters, read from its files. Nothing about the daemon: the process answering here is app-core,
+ * so a pid or an uptime would describe the wrong process, and the counters do not need the daemon to be up.
+ */
+export type QueueStatus = QueueCounts;
 
-/** Daemon health snapshot. Never throws: an unreachable daemon reports `daemonRunning: false` with zero counts, same as `queue status`. */
-export async function getStatus(configDir: string): Promise<QueueStatus> {
-  const client = createQueueAppClient(configDir);
-  const running = await client.isRunning().catch(() => false);
-  if (!running) {
-    return { daemonRunning: false, pendingCount: 0, dlqCount: 0 };
-  }
-  const response = await client.send('status', undefined);
-  return {
-    daemonRunning: true,
-    pendingCount: response.pendingCount,
-    dlqCount: response.dlqCount,
-    uptimeSec: response.uptimeSec,
-    pid: response.pid,
-  };
+export function getStatus(configDir: string): QueueStatus {
+  return readQueueCounts(configDir);
 }

@@ -1,33 +1,35 @@
-import { describe, it, expect, vi } from 'vitest';
-
-const mockSend = vi.fn();
-const mockIsRunning = vi.fn();
-
-vi.mock('./client.js', () => ({
-  createQueueAppClient: vi.fn(() => ({ isRunning: mockIsRunning, send: mockSend })),
-}));
-
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { getStatus } from './status.js';
 
+let configDir: string;
+
+beforeEach(() => {
+  configDir = mkdtempSync(join(tmpdir(), 'app-module-status-'));
+});
+
+afterEach(() => {
+  rmSync(configDir, { recursive: true, force: true });
+});
+
+const meta = { cwd: '/p', projectName: 'p' };
+const walLine = (id: string, status: string) => JSON.stringify({ id, timestamp: '2026-10-18T12:00:00.000Z', event: 'onFoo', payload: {}, meta, subscriberId: 's', status, attempts: 0, ackedAt: new Date().toISOString() });
+const dlqLine = (id: string) => JSON.stringify({ id, event: 'onFoo', payload: {}, meta, subscriberId: 's', attempts: 3, lastError: 'x', movedAt: '2026-10-18T12:00:00.000Z' });
+
 describe('getStatus', () => {
-  it('reports daemonRunning: false with zero counts when the daemon is unreachable', async () => {
-    mockIsRunning.mockResolvedValue(false);
-    const status = await getStatus('/tmp/whatever');
-    expect(status).toEqual({ daemonRunning: false, pendingCount: 0, dlqCount: 0 });
-    expect(mockSend).not.toHaveBeenCalled();
+  it('reports zero counts for a queue that never ran', () => {
+    expect(getStatus(configDir)).toEqual({ pendingCount: 0, dlqCount: 0 });
   });
 
-  it('reports daemonRunning: false when isRunning rejects', async () => {
-    mockIsRunning.mockRejectedValue(new Error('ECONNREFUSED'));
-    const status = await getStatus('/tmp/whatever');
-    expect(status.daemonRunning).toBe(false);
+  it('reads the pending and DLQ counts from the queue files, with no daemon involved', () => {
+    writeFileSync(join(configDir, 'wal.ndjson'), [walLine('a', 'pending'), walLine('b', 'pending'), walLine('c', 'acked')].join('\n') + '\n');
+    writeFileSync(join(configDir, 'dlq.ndjson'), dlqLine('x') + '\n');
+    expect(getStatus(configDir)).toEqual({ pendingCount: 2, dlqCount: 1 });
   });
 
-  it('forwards the daemon status response when running', async () => {
-    mockIsRunning.mockResolvedValue(true);
-    mockSend.mockResolvedValue({ pendingCount: 3, dlqCount: 1, daemonRunning: true, uptimeSec: 120, pid: 4242 });
-    const status = await getStatus('/tmp/whatever');
-    expect(status).toEqual({ daemonRunning: true, pendingCount: 3, dlqCount: 1, uptimeSec: 120, pid: 4242 });
-    expect(mockSend).toHaveBeenCalledWith('status', undefined);
+  it('does not claim anything about the daemon (the process answering is app-core, not the daemon)', () => {
+    expect(Object.keys(getStatus(configDir)).sort()).toEqual(['dlqCount', 'pendingCount']);
   });
 });

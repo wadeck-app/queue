@@ -11,6 +11,7 @@ import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
+import { countQueue, subscribersFor, removeFromDlq } from '../operations.js';
 import type {
   QueueCommands, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse,
   ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse,
@@ -212,8 +213,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
     status(): StatusResponse {
       return {
-        pendingCount: wal.pendingCount(),
-        dlqCount: dlq.readAll().length,
+        ...countQueue(wal, dlq),
         daemonRunning: true,
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         pid: process.pid,
@@ -225,12 +225,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       const cwd = req.cwd;
       let subscribers: ResolvedSubscriber[];
       try {
-        if (req?.event) {
-          subscribers = configLoader.getSubscribers(req.event, cwd);
-        } else {
-          const all = configLoader.load(cwd);
-          subscribers = Array.from(all.values()).flat();
-        }
+        subscribers = subscribersFor(configLoader, { event: req?.event, cwd });
       } catch (err) {
         // Rethrow so the client reports it, but leave a durable trace first
         eventLogger.logDiagnostic({ source: 'QueueDaemon.list-subscribers', message: `config error: ${getErrorMessage(err)}` });
@@ -295,12 +290,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
     'dlq-clear'(payload?: unknown): DlqClearResponse {
       const req = payload as DlqClearRequest | undefined;
-      if (req?.id) {
-        dlq.remove(req.id);
-        return { cleared: 1 };
-      }
-      const count = dlq.clear();
-      return { cleared: count };
+      return { cleared: removeFromDlq(dlq, req?.id) };
     },
   };
 

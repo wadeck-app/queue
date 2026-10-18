@@ -19,9 +19,9 @@ interface QueryParams { [key: string]: string | string[] | undefined }
 export default function (ctx: ModuleContext): void {
   const configDir = getQueueConfigDir();
 
-  ctx.registerRoute('GET', '/status', async (_req, reply) => {
+  ctx.registerRoute('GET', '/status', (_req, reply) => {
     try {
-      return reply.code(200).send(await getStatus(configDir));
+      return reply.code(200).send(getStatus(configDir));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }
@@ -76,11 +76,11 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  ctx.registerRoute('GET', '/dlq', async (_req, reply) => {
+  ctx.registerRoute('GET', '/dlq', (_req, reply) => {
     try {
-      return reply.code(200).send({ entries: await listDlq(configDir) });
+      return reply.code(200).send({ entries: listDlq(configDir) });
     } catch (err) {
-      return reply.code(503).send({ error: getErrorMessage(err) });
+      return reply.code(500).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -89,16 +89,16 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(await replayDlqEntry(configDir, id));
     } catch (err) {
-      return reply.code(503).send({ error: getErrorMessage(err) });
+      return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
   });
 
-  ctx.registerRoute('POST', '/dlq/:id/clear', async (req, reply) => {
+  ctx.registerRoute('POST', '/dlq/:id/clear', (req, reply) => {
     const { id } = req.params;
     try {
-      return reply.code(200).send(await clearDlqEntry(configDir, id));
+      return reply.code(200).send(clearDlqEntry(configDir, id));
     } catch (err) {
-      return reply.code(503).send({ error: getErrorMessage(err) });
+      return reply.code(500).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -120,9 +120,9 @@ export default function (ctx: ModuleContext): void {
     const event = eventValue;
 
     try {
-      return reply.code(200).send({ subscribers: await listSubscribers(configDir, cwd, event) });
+      return reply.code(200).send({ subscribers: listSubscribers(configDir, cwd, event) });
     } catch (err) {
-      return reply.code(503).send({ error: getErrorMessage(err) });
+      return reply.code(500).send({ error: getErrorMessage(err) });
     }
   });
 
