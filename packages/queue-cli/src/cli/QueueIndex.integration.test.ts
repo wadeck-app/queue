@@ -59,6 +59,11 @@ describe('bundled app-module manifest (integration)', () => {
     const manifest = JSON.parse(readFileSync(join(rootDir, 'dist-bundle/app-module/manifest.json'), 'utf-8')) as { version: string };
     expect(manifest.version).toBe('0.0.0-test-integration');
   });
+
+  it('keeps the module id: app-core refuses a manifest without "id" (or with another one than the registration id)', () => {
+    const manifest = JSON.parse(readFileSync(join(rootDir, 'dist-bundle/app-module/manifest.json'), 'utf-8')) as { id?: string };
+    expect(manifest.id).toBe('queue');
+  });
 });
 
 describe('queue cli self-check (integration)', () => {
