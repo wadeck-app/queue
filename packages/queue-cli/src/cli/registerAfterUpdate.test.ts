@@ -51,6 +51,15 @@ describe('registerAfterUpdate', () => {
     expect(register.mock.calls[0]![0]).toBe(manifestPath);
   });
 
+  it('prints what the registration reports as is (the SDK message already starts with "app-core:")', async () => {
+    writeManifest(JSON.stringify({ version: '2' }));
+    register.mockImplementation(async (_path: string, logEntry: (e: { source: string; message: string }) => void) => {
+      logEntry({ source: 'AppCoreRegistration', message: 'app-core: module "queue" registered (app-core on port 4850)' });
+    });
+    await registerAfterUpdate({ manifestPath, before: { version: '1' }, register, log });
+    expect(lines).toEqual(['app-core: module "queue" registered (app-core on port 4850)']);
+  });
+
   it('registers when the install gained an app-module it did not have before', async () => {
     writeManifest(JSON.stringify({ version: '1' }));
     await registerAfterUpdate({ manifestPath, before: { absent: true }, register, log });

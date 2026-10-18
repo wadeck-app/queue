@@ -51,5 +51,6 @@ export async function registerAfterUpdate(deps: RegisterAfterUpdateDeps): Promis
   if ('version' in deps.before && deps.before.version === after.version) {
     return;
   }
-  await deps.register(deps.manifestPath, (entry) => deps.log(`app-core: ${entry.message}`));
+  // The SDK's own messages already start with "app-core:": print them as they are.
+  await deps.register(deps.manifestPath, (entry) => deps.log(entry.message));
 }
