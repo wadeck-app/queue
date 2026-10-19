@@ -1,0 +1,28 @@
+$sources:
+  outcomes:
+    url: GET /api/modules/queue/outcomes
+
+$type: VerticalStack
+gap: gap-2
+items:
+  - $type: StatTile
+    label: Delivered, last 24 h
+    value: $sources.outcomes.last24Hours.delivered
+  - $type: StatTile
+    label: Failed attempts, last 24 h
+    value: $sources.outcomes.last24Hours.failedAttempts
+  - $type: StatTile
+    label: Given up (DLQ), last 24 h
+    value: $sources.outcomes.last24Hours.givenUp
+  # Same shell requirements as activity-widget.yaml: variant and yFormat need dsl-ui >= 2026.10.19-117.
+  - $type: Chart
+    $if: $sources.outcomes.hasFailures
+    variant: sparkline
+    data: $sources.outcomes.series
+    xAxisKey: label
+    xAxisType: category
+    yFormat: number
+    height: 80
+    series:
+      - { key: failedAttempts, name: "Failed attempts per hour", type: bar, yAxisId: left, color: "var(--color-warning)" }
+      - { key: givenUp, name: "Given up per hour", type: bar, yAxisId: left, color: "var(--color-danger)" }

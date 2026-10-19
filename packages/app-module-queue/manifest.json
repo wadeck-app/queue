@@ -31,6 +31,15 @@
     {
       "kind": "widget",
       "slot": "dashboard",
+      "label": "Queue Outcomes",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/outcomes-widget.yaml"
+      }
+    },
+    {
+      "kind": "widget",
+      "slot": "dashboard",
       "label": "Queue Relay",
       "view": {
         "type": "path",

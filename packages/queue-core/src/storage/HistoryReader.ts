@@ -55,7 +55,9 @@ const DATE_FILE = /^\d{4}-\d{2}-\d{2}\.ndjson$/;
 // escaped), so finding both in the head of the line cannot be fooled by a payload or a command text further on.
 const LINE_HEAD_CHARS = 120;
 const TS_KEY = /"ts":"([^"]+)"/;
-const TRIGGER_TYPE = /"type":"trigger"/;
+const RECORD_TYPE = /"type":"(trigger|outcome|filtered)"/;
+// Outcome lines are small (no payload) and write `status` before the free-text `target`, so the first match is the status
+const OUTCOME_STATUS = /"status":"(success|failed|dlq)"/;
 
 interface Accumulator {
   ts?: string;
@@ -166,6 +168,11 @@ export class HistoryReader {
 
   /** Calls `visit` with the time of every trigger record in the `lookbackMs` before `nowMs` (and none after it). */
   private forEachTrigger(nowMs: number, lookbackMs: number, visit: (ts: number) => void): void {
+    this.forEachRecord('trigger', nowMs, lookbackMs, (ts) => visit(ts));
+  }
+
+  /** Calls `visit` with the time and the raw line of every record of that type in the `lookbackMs` before `nowMs`. */
+  private forEachRecord(type: 'trigger' | 'outcome' | 'filtered', nowMs: number, lookbackMs: number, visit: (ts: number, line: string) => void): void {
     const oldestDay = new Date(nowMs - lookbackMs).toISOString().slice(0, 10);
     for (const file of this.listFiles()) {
       if (file.slice(0, 10) < oldestDay) {
@@ -174,16 +181,35 @@ export class HistoryReader {
       for (const line of readFileSync(join(this.historyDir, file), 'utf-8').split('\n')) {
         const head = line.slice(0, LINE_HEAD_CHARS);
         const tsMatch = TS_KEY.exec(head);
-        if (!tsMatch || !TRIGGER_TYPE.test(head)) {
+        const typeMatch = RECORD_TYPE.exec(head);
+        if (!tsMatch || typeMatch?.[1] !== type) {
           continue;
         }
         const ts = Date.parse(tsMatch[1]!);
         if (Number.isNaN(ts) || ts > nowMs) {
           continue;
         }
-        visit(ts);
+        visit(ts, line);
       }
     }
+  }
+
+  /**
+   * How many dispatches ended in each way in each of the last `bucketCount` buckets of `bucketMs` (aligned like
+   * {@link bucketTriggers}): `success`, `failed` (one attempt failed, a retry follows) and `dlq` (given up).
+   * Reads the small outcome lines only, never a payload.
+   */
+  bucketOutcomes(nowMs: number, bucketMs: number, bucketCount: number): { startMs: number; success: number[]; failed: number[]; dlq: number[] } {
+    const counts = { success: new Array<number>(bucketCount).fill(0), failed: new Array<number>(bucketCount).fill(0), dlq: new Array<number>(bucketCount).fill(0) };
+    const offsetMs = -new Date(nowMs).getTimezoneOffset() * 60_000;
+    const startMs = Math.floor((nowMs + offsetMs) / bucketMs) * bucketMs - offsetMs - (bucketCount - 1) * bucketMs;
+    this.forEachRecord('outcome', nowMs, nowMs - startMs, (ts, line) => {
+      const status = OUTCOME_STATUS.exec(line)?.[1] as 'success' | 'failed' | 'dlq' | undefined;
+      if (ts >= startMs && status !== undefined) {
+        counts[status][Math.floor((ts - startMs) / bucketMs)]!++;
+      }
+    });
+    return { startMs, ...counts };
   }
 
   private listFiles(): string[] {

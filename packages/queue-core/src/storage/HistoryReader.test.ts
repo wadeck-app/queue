@@ -432,3 +432,66 @@ describe('HistoryReader.bucketTriggers (events per time slice, for the dashboard
     expect(inRange).toBe(reader.countTriggers(NOW, [NOW - startMs])[0]);
   });
 });
+
+describe('HistoryReader.bucketOutcomes (how dispatches ended, per time slice)', () => {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const NOW = Date.parse('2026-01-02T12:34:56.000Z');
+  let historyDir: string;
+
+  beforeEach(() => {
+    historyDir = join(tmpdir(), `queue-history-outcomes-test-${crypto.randomUUID()}`);
+    mkdirSync(historyDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(historyDir, { recursive: true, force: true });
+  });
+
+  const outcome = (atMs: number, status: string, extra: object = {}) => ({ ts: new Date(atMs).toISOString(), type: 'outcome', eventId: 'e', event: 'onFoo', subscriberId: 'onFoo[0]', status, ...extra });
+  const sum = (counts: number[]) => counts.reduce((total, n) => total + n, 0);
+
+  it('counts success, failed and dlq outcomes in the slice of their time', () => {
+    const reader = new HistoryReader(historyDir);
+    const { startMs } = reader.bucketOutcomes(NOW, HOUR, 3);
+    writeDay(historyDir, '2026-01-02', [
+      outcome(startMs + MINUTE, 'success'),
+      outcome(startMs + 2 * MINUTE, 'success'),
+      outcome(startMs + HOUR + MINUTE, 'failed'),
+      outcome(NOW - MINUTE, 'dlq'),
+      outcome(NOW - MINUTE, 'failed'),
+    ]);
+    const result = reader.bucketOutcomes(NOW, HOUR, 3);
+    expect(result.success).toEqual([2, 0, 0]);
+    expect(result.failed).toEqual([0, 1, 1]);
+    expect(result.dlq).toEqual([0, 0, 1]);
+  });
+
+  it('ignores trigger and filtered records, and what is outside the range or after now', () => {
+    const reader = new HistoryReader(historyDir);
+    const { startMs } = reader.bucketOutcomes(NOW, HOUR, 2);
+    writeDay(historyDir, '2026-01-02', [
+      { ts: new Date(NOW - MINUTE).toISOString(), type: 'trigger', eventId: 'e', event: 'onFoo', matchedCount: 1, totalCount: 1 },
+      { ts: new Date(NOW - MINUTE).toISOString(), type: 'filtered', eventId: 'e', event: 'onFoo', subscriberId: 's', filter: 'status=success' },
+      outcome(startMs - 1, 'success'),
+      outcome(NOW + MINUTE, 'success'),
+    ]);
+    const result = reader.bucketOutcomes(NOW, HOUR, 2);
+    expect(sum(result.success) + sum(result.failed) + sum(result.dlq)).toBe(0);
+  });
+
+  it('takes the status of the record, not words in the free text after it (a target that mentions "status":"dlq")', () => {
+    writeDay(historyDir, '2026-01-02', [outcome(NOW - MINUTE, 'success', { target: 'echo {"status":"dlq"}' })]);
+    const result = new HistoryReader(historyDir).bucketOutcomes(NOW, HOUR, 2);
+    expect(sum(result.success)).toBe(1);
+    expect(sum(result.dlq)).toBe(0);
+  });
+
+  it('reads what HistoryLog writes, and is zeros for a missing history directory', () => {
+    const log = new HistoryLog(historyDir);
+    log.logOutcome({ eventId: 'e1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'failed', target: 'echo x' });
+    const result = new HistoryReader(historyDir).bucketOutcomes(Date.now(), HOUR, 24);
+    expect(sum(result.failed)).toBe(1);
+    expect(sum(new HistoryReader(join(historyDir, 'missing')).bucketOutcomes(NOW, HOUR, 4).success)).toBe(0);
+  });
+});
