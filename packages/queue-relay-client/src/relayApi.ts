@@ -118,7 +118,9 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
         },
       });
     } catch (err) {
-      if (err instanceof RelayApiError) throw err;
+      if (err instanceof RelayApiError) {
+        throw err;
+      }
       // Should not reach here, but if it does, treat as network error
       throw new RelayApiError(
         `Cannot reach the relay at ${httpBase}: ${(err as Error).message}`,
@@ -230,7 +232,9 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
         },
       });
     } catch (err) {
-      if (err instanceof RelayApiError) throw err;
+      if (err instanceof RelayApiError) {
+        throw err;
+      }
       throw new RelayApiError(
         `Cannot reach the relay at ${httpBase}: ${(err as Error).message}`,
         null,

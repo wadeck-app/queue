@@ -92,7 +92,9 @@ export type SubscriptionConfig = z.infer<typeof SubscriptionConfigSchema>;
  */
 export function loadRelayConfig(configDir: string): (RelayConfig & { tokenSource: 'env' | 'secrets' | 'relay.yml' }) | null {
   const filePath = join(configDir, 'relay.yml');
-  if (!existsSync(filePath)) return null;
+  if (!existsSync(filePath)) {
+    return null;
+  }
 
   let raw: unknown;
   try {

@@ -40,7 +40,9 @@ type SubscribersYml = z.infer<typeof SubscribersYmlSchema>;
 
 function parseDurationMs(duration: string): number {
   const match = /^(\d+)(ms|s|m|h)$/.exec(duration);
-  if (!match) throw new Error(`Invalid duration: "${duration}". Expected format: 30s, 1m, 500ms, 2h`);
+  if (!match) {
+    throw new Error(`Invalid duration: "${duration}". Expected format: 30s, 1m, 500ms, 2h`);
+  }
   const value = parseInt(match[1]!, 10);
   switch (match[2]) {
     case 'ms': return value;
@@ -58,7 +60,9 @@ export function resolveProjectName(cwd: string): string | undefined {
       return basename(current);
     }
     const parent = dirname(current);
-    if (parent === current) break;
+    if (parent === current) {
+      break;
+    }
     current = parent;
   }
   return undefined;
@@ -74,7 +78,9 @@ function resolveCwd(base: string, cwd: string): string {
 }
 
 function loadYml(filePath: string): SubscribersYml | null {
-  if (!existsSync(filePath)) return null;
+  if (!existsSync(filePath)) {
+    return null;
+  }
   let raw: unknown;
   try {
     raw = yamlLoad(readFileSync(filePath, 'utf-8'));
@@ -151,7 +157,9 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   // env resolution: merge from least to most specific (global -> event -> subscriber)
   const mergedEnv: Record<string, string> | undefined = (() => {
     const layers = [ctx.globalEnv, ctx.eventEnv, raw.env].filter(Boolean) as Record<string, string>[];
-    if (layers.length === 0) return undefined;
+    if (layers.length === 0) {
+      return undefined;
+    }
     return Object.assign({}, ...layers) as Record<string, string>;
   })();
 
@@ -186,7 +194,9 @@ export class ConfigLoader {
     const merged = new Map<string, ResolvedSubscriber[]>();
 
     const addFromYml = (yml: SubscribersYml | null, filePath: string): void => {
-      if (!yml) return;
+      if (!yml) {
+        return;
+      }
       const fileDir = dirname(filePath);
       const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'globalCwd' | 'globalEnv'> = {
         filePath,
@@ -215,7 +225,9 @@ export class ConfigLoader {
     };
 
     addFromYml(loadYml(globalFile), globalFile);
-    if (projectFile) addFromYml(loadYml(projectFile), projectFile);
+    if (projectFile) {
+      addFromYml(loadYml(projectFile), projectFile);
+    }
 
     return merged;
   }
@@ -235,9 +247,13 @@ export class ConfigLoader {
     let current = cwd;
     for (let i = 0; i < 20; i++) {
       const candidate = join(current, '.queue', 'subscribers.yml');
-      if (existsSync(candidate)) return candidate;
+      if (existsSync(candidate)) {
+        return candidate;
+      }
       const parent = dirname(current);
-      if (parent === current) break;
+      if (parent === current) {
+        break;
+      }
       current = parent;
     }
     return null;

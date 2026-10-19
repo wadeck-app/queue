@@ -61,8 +61,12 @@ describe('ciWaitCommand', () => {
   it('waits for a run that starts and completes later, then passes after the settle window', async () => {
     const h = harness((now) => {
       const entries: HistoryEntry[] = [];
-      if (now >= T0 + 5_000) entries.push(runEntry(T0 + 5_000, 'in_progress'));
-      if (now >= T0 + 60_000) entries.push(runEntry(T0 + 60_000, 'completed', 'success'));
+      if (now >= T0 + 5_000) {
+        entries.push(runEntry(T0 + 5_000, 'in_progress'));
+      }
+      if (now >= T0 + 60_000) {
+        entries.push(runEntry(T0 + 60_000, 'completed', 'success'));
+      }
       return entries;
     });
     expect(await ciWaitCommand(base, h.deps)).toBe(CI_EXIT.PASSED);

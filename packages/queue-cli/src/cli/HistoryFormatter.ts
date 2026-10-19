@@ -18,14 +18,22 @@ export class HistoryFormatter {
 
   private static formatSubscriber(sub: HistorySubscriberOutcome): string {
     const tgt = sub.target ? ` -> ${sub.target}` : '';
-    if (sub.status === 'success') return `[ok] ${sub.subscriberId}${tgt}`;
-    if (sub.status === 'failed') return `[fail] ${sub.subscriberId}${tgt}`;
-    if (sub.status === 'dlq') return `[warn] dlq ${sub.subscriberId}${tgt}`;
+    if (sub.status === 'success') {
+      return `[ok] ${sub.subscriberId}${tgt}`;
+    }
+    if (sub.status === 'failed') {
+      return `[fail] ${sub.subscriberId}${tgt}`;
+    }
+    if (sub.status === 'dlq') {
+      return `[warn] dlq ${sub.subscriberId}${tgt}`;
+    }
     return `[miss] filtered ${sub.subscriberId}${HistoryFormatter.formatFilterDetail(sub)}`;
   }
 
   private static formatFilterDetail(sub: HistorySubscriberOutcome): string {
-    if (!sub.filter) return '';
+    if (!sub.filter) {
+      return '';
+    }
     const found = sub.actual !== undefined ? ` (found "${sub.actual}")` : '';
     return ` when "${sub.filter}"${found}`;
   }

@@ -41,9 +41,13 @@ function parseHistoryFlags(args: string[]): ParsedHistoryFlags {
 
   const getArg = (flag: string): string | undefined => {
     const idx = args.indexOf(flag);
-    if (idx === -1) return undefined;
+    if (idx === -1) {
+      return undefined;
+    }
     const next = args[idx + 1];
-    if (!next || next.startsWith('--')) return undefined;
+    if (!next || next.startsWith('--')) {
+      return undefined;
+    }
     return next;
   };
 

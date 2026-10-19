@@ -85,7 +85,9 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
         `[fail] Timed out after ${Math.round(options.timeoutMs / 1000)}s: ${verdict.reason}. ` +
         `Cross-check with "gh run list --commit ${options.sha}"; re-run "queue wait ci" to keep waiting.\n`,
       );
-      if (options.json) io.stdout.write(JSON.stringify({ sha: options.sha, result: 'timeout', reason: verdict.reason, runs: verdict.runs }, null, 2) + '\n');
+      if (options.json) {
+        io.stdout.write(JSON.stringify({ sha: options.sha, result: 'timeout', reason: verdict.reason, runs: verdict.runs }, null, 2) + '\n');
+      }
       return CI_EXIT.TIMEOUT;
     }
 

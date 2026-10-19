@@ -180,7 +180,9 @@ describe('ensureDaemonRunning', () => {
     mockIsRunning.mockImplementation(async () => {
       const result = callSequence[callCount];
       callCount++;
-      if (result instanceof Error) throw result;
+      if (result instanceof Error) {
+        throw result;
+      }
       return result;
     });
 
@@ -246,7 +248,9 @@ describe('ensureDaemonRunning', () => {
 
     const testIsRunning = vi.fn(async (cd: string) => {
       // Initially not running for config dir
-      if (cd !== configDir) return false;
+      if (cd !== configDir) {
+        return false;
+      }
       // First call sequence: not running, then running after spawn fails
       // Second call: not running, then running after successful spawn
       return false;

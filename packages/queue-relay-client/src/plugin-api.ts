@@ -31,7 +31,9 @@ export interface RelayPlugin {
 }
 
 function isRelayPlugin(value: unknown): value is RelayPlugin {
-  if (!value || typeof value !== 'object') return false;
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
   const candidate = value as Partial<RelayPlugin>;
   return typeof candidate.source === 'string' && typeof candidate.mapEvent === 'function';
 }

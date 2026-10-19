@@ -42,8 +42,12 @@ export type Inference =
   | { kind: 'unknown'; notes: string[] };
 
 function asStringList(value: unknown): string[] | undefined {
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value) && value.every((v) => typeof v === 'string')) return value as string[];
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
+    return value as string[];
+  }
   return undefined;
 }
 
@@ -54,7 +58,9 @@ export function parseWorkflowFile(file: string, content: string): WorkflowDef {
   } catch (err) {
     return { name: file, file, push: null, pullRequest: false, unreadable: getErrorMessage(err) };
   }
-  if (!doc || typeof doc !== 'object') return { name: file, file, push: null, pullRequest: false, unreadable: 'not a YAML mapping' };
+  if (!doc || typeof doc !== 'object') {
+    return { name: file, file, push: null, pullRequest: false, unreadable: 'not a YAML mapping' };
+  }
 
   const record = doc as Record<string, unknown>;
   const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : file;
@@ -75,15 +81,27 @@ export function parseWorkflowFile(file: string, content: string): WorkflowDef {
   };
 
   if (typeof on === 'string') {
-    if (on === 'push') push = {};
-    if (on === 'pull_request') pullRequest = true;
+    if (on === 'push') {
+      push = {};
+    }
+    if (on === 'pull_request') {
+      pullRequest = true;
+    }
   } else if (Array.isArray(on)) {
-    if (on.includes('push')) push = {};
-    if (on.includes('pull_request')) pullRequest = true;
+    if (on.includes('push')) {
+      push = {};
+    }
+    if (on.includes('pull_request')) {
+      pullRequest = true;
+    }
   } else if (on && typeof on === 'object') {
     const triggers = on as Record<string, unknown>;
-    if ('push' in triggers) push = readPush(triggers.push);
-    if ('pull_request' in triggers) pullRequest = true;
+    if ('push' in triggers) {
+      push = readPush(triggers.push);
+    }
+    if ('pull_request' in triggers) {
+      pullRequest = true;
+    }
   }
 
   return { name, file, push, pullRequest };
@@ -98,7 +116,9 @@ export function globToRegExp(pattern: string): RegExp {
       if (pattern[i + 1] === '*') {
         out += '.*';
         i++;
-        if (pattern[i + 1] === '/') i++;
+        if (pattern[i + 1] === '/') {
+          i++;
+        }
       } else {
         out += '[^/]*';
       }
@@ -135,7 +155,9 @@ export function inferExpectedWorkflows(facts: InferenceFacts): Inference {
       reasons.push(wf.pullRequest
         ? `"${wf.name}" only runs on pull requests (possible if a PR exists for this commit)`
         : `"${wf.name}" has no push trigger (manual or scheduled)`);
-      if (wf.pullRequest) possible.push(wf.name);
+      if (wf.pullRequest) {
+        possible.push(wf.name);
+      }
       continue;
     }
 
@@ -185,7 +207,9 @@ export function inferExpectedWorkflows(facts: InferenceFacts): Inference {
     expected.push(wf.name);
   }
 
-  if (expected.length > 0) return { kind: 'expected', workflows: expected, possible, notes };
+  if (expected.length > 0) {
+    return { kind: 'expected', workflows: expected, possible, notes };
+  }
   if (possible.length > 0) {
     notes.push(...reasons);
     return { kind: 'unknown', notes };

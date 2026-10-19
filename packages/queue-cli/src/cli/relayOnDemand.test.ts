@@ -20,7 +20,9 @@ afterEach(() => {
 function onDemand(options: { running?: boolean | 'rejects'; startCode?: number } = {}) {
   const startRelay = vi.fn(async () => options.startCode ?? 0);
   const isRunning = vi.fn(async () => {
-    if (options.running === 'rejects') throw new Error('ECONNREFUSED');
+    if (options.running === 'rejects') {
+      throw new Error('ECONNREFUSED');
+    }
     return options.running ?? false;
   });
   const subject = new RelayOnDemand({ relayDir, isRunning, startRelay, io: { stderr: { write: (s: string) => { stderr.push(s); } } } });

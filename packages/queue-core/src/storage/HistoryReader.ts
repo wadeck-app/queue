@@ -162,7 +162,9 @@ export class HistoryReader {
   }
 
   private listFiles(): string[] {
-    if (!existsSync(this.historyDir)) return [];
+    if (!existsSync(this.historyDir)) {
+      return [];
+    }
     return readdirSync(this.historyDir).filter(f => DATE_FILE.test(f)).sort();
   }
 
@@ -180,7 +182,9 @@ export class HistoryReader {
     const records: Record<string, unknown>[] = [];
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
-      if (trimmed === '') continue;
+      if (trimmed === '') {
+        continue;
+      }
       try {
         records.push(JSON.parse(trimmed));
       } catch (err) {
@@ -193,7 +197,9 @@ export class HistoryReader {
 
   private applyRecord(acc: Map<string, Accumulator>, record: Record<string, unknown>): void {
     const eventId = record['eventId'] as string | undefined;
-    if (!eventId) return;
+    if (!eventId) {
+      return;
+    }
     const entry = acc.get(eventId) ?? { eventId, subscribers: [] };
     acc.set(eventId, entry);
 
@@ -234,10 +240,18 @@ export class HistoryReader {
   }
 
   private matches(entry: HistoryEntry, filter: HistoryFilter): boolean {
-    if (filter.event && entry.event !== filter.event) return false;
-    if (filter.sinceMs !== undefined && Date.parse(entry.ts) < filter.sinceMs) return false;
-    if (filter.subscriberId && !entry.subscribers.some(s => s.subscriberId === filter.subscriberId)) return false;
-    if (filter.status && !entry.subscribers.some(s => s.status === filter.status)) return false;
+    if (filter.event && entry.event !== filter.event) {
+      return false;
+    }
+    if (filter.sinceMs !== undefined && Date.parse(entry.ts) < filter.sinceMs) {
+      return false;
+    }
+    if (filter.subscriberId && !entry.subscribers.some(s => s.subscriberId === filter.subscriberId)) {
+      return false;
+    }
+    if (filter.status && !entry.subscribers.some(s => s.status === filter.status)) {
+      return false;
+    }
     return true;
   }
 }

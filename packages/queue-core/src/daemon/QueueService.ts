@@ -98,7 +98,9 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         }
 
         const filtered = subscribers.filter(sub => {
-          if (!sub.when) return true;
+          if (!sub.when) {
+            return true;
+          }
           const evaluation = PayloadFilter.evaluate(sub.when, envelope);
           if (!evaluation.matched) {
             // Durable trace: the daemon's stderr is discarded, a `when:` typo would be invisible
@@ -175,7 +177,9 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       const req = payload as RetryRequest;
       const entries = wal.readAll();
       const entry = entries.find(e => e.id === req.eventId);
-      if (!entry) return { status: 'not-found' };
+      if (!entry) {
+        return { status: 'not-found' };
+      }
 
       const cwd = entry.meta.cwd;
       let subscribers: ResolvedSubscriber[];
@@ -242,7 +246,9 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       const req = payload as DlqReplayRequest;
       const entries = dlq.readAll();
       const entry = entries.find(e => e.id === req.id);
-      if (!entry) return { status: 'not-found' };
+      if (!entry) {
+        return { status: 'not-found' };
+      }
 
       const walEntry: WalEntry = {
         id: entry.id,

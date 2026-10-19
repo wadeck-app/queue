@@ -327,7 +327,9 @@ describe('RelayConnection', () => {
     async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
       const start = Date.now();
       while (Date.now() - start < maxMs) {
-        if (condition()) return;
+        if (condition()) {
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
@@ -907,7 +909,9 @@ plugins:
       async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
         const start = Date.now();
         while (Date.now() - start < maxMs) {
-          if (condition()) return;
+          if (condition()) {
+            return;
+          }
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
         throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
@@ -1157,7 +1161,9 @@ plugins:
     async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
       const start = Date.now();
       while (Date.now() - start < maxMs) {
-        if (condition()) return;
+        if (condition()) {
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
@@ -2121,7 +2127,9 @@ plugins:
     async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
       const start = Date.now();
       while (Date.now() - start < maxMs) {
-        if (condition()) return;
+        if (condition()) {
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
@@ -2221,7 +2229,9 @@ plugins:
           connectionCount++;
           ws.on('message', (data) => {
             const msg = JSON.parse(String(data)) as Record<string, unknown>;
-            if (msg.type === 'auth') ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
+            if (msg.type === 'auth') {
+              ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
+            }
           });
         });
 
@@ -2262,7 +2272,9 @@ plugins:
           connectionCount++;
           ws.on('message', (data) => {
             const msg = JSON.parse(String(data)) as Record<string, unknown>;
-            if (msg.type === 'auth') ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
+            if (msg.type === 'auth') {
+              ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
+            }
           });
         });
         // A later re-authentication clears lastError, so it must be read when the detection is logged
@@ -2460,7 +2472,9 @@ plugins:
             }
           });
           ws.on('close', () => {
-            if (messageInterval) clearInterval(messageInterval);
+            if (messageInterval) {
+              clearInterval(messageInterval);
+            }
           });
         });
 
@@ -2641,7 +2655,9 @@ plugins:
     async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
       const start = Date.now();
       while (Date.now() - start < maxMs) {
-        if (condition()) return;
+        if (condition()) {
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       throw new Error(`Timeout waiting for condition after ${maxMs}ms`);

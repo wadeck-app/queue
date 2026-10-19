@@ -19,7 +19,9 @@ function interpolateCommand(command: string, envelope: EventEnvelope): string {
   const raw = envelope.payload;
   return command.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, path: string) => {
     const key = path.startsWith('payload.') ? path.slice('payload.'.length) : path;
-    if (typeof raw !== 'object' || raw === null) return '';
+    if (typeof raw !== 'object' || raw === null) {
+      return '';
+    }
     const value = Reflect.get(raw, key);
     return value !== undefined && value !== null ? String(value) : '';
   });

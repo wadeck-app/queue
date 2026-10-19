@@ -30,7 +30,9 @@ export function createEnsureDaemonRunning(deps: EnsureDaemonRunningDeps) {
     const checkIsRunning = () => deps.isRunning(configDir);
 
     // First check: if already running, return immediately
-    if (await checkIsRunning().catch(() => false)) return;
+    if (await checkIsRunning().catch(() => false)) {
+      return;
+    }
 
     // Check if another caller is already starting the daemon for this configDir
     const existingPromise = inFlightStarts.get(configDir);
@@ -57,7 +59,9 @@ export function createEnsureDaemonRunning(deps: EnsureDaemonRunningDeps) {
         // Poll for daemon to become running
         const deadline = deps.now() + deps.timeoutMs;
         while (deps.now() < deadline) {
-          if (await checkIsRunning().catch(() => false)) return;
+          if (await checkIsRunning().catch(() => false)) {
+            return;
+          }
           await deps.sleep(200);
         }
 

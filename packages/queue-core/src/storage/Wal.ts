@@ -67,12 +67,16 @@ export class Wal {
   }
 
   readAll(): WalEntry[] {
-    if (!existsSync(this.filePath)) return [];
+    if (!existsSync(this.filePath)) {
+      return [];
+    }
     const content = readFileSync(this.filePath, 'utf-8');
     const entries: WalEntry[] = [];
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
-      if (!trimmed) continue;
+      if (!trimmed) {
+        continue;
+      }
       try {
         entries.push(JSON.parse(trimmed) as WalEntry);
       } catch {

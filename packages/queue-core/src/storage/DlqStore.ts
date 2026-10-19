@@ -57,12 +57,16 @@ export class DlqStore {
   }
 
   readAll(): DlqEntry[] {
-    if (!existsSync(this.filePath)) return [];
+    if (!existsSync(this.filePath)) {
+      return [];
+    }
     const content = readFileSync(this.filePath, 'utf-8');
     const entries: DlqEntry[] = [];
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
-      if (!trimmed) continue;
+      if (!trimmed) {
+        continue;
+      }
       try {
         entries.push(JSON.parse(trimmed) as DlqEntry);
       } catch {

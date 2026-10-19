@@ -82,7 +82,9 @@ export class PayloadFilter {
   }
 
   private static comparison(matched: boolean, path: string, expected: string, actual: string): FilterEvaluation {
-    if (matched) return { matched: true };
+    if (matched) {
+      return { matched: true };
+    }
     return { matched: false, reason: 'value mismatch', path, expected, actual };
   }
 
@@ -90,7 +92,9 @@ export class PayloadFilter {
     const parts = path.split('.');
     let current: unknown = obj;
     for (const part of parts) {
-      if (current === null || typeof current !== 'object') return undefined;
+      if (current === null || typeof current !== 'object') {
+        return undefined;
+      }
       current = Reflect.get(current, part);
     }
     return current;

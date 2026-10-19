@@ -115,9 +115,15 @@ describe('buildLaunchScript', () => {
       } finally {
         // Clean up test directory
         try {
-          if (existsSync(testJsPath)) unlinkSync(testJsPath);
-          if (existsSync(vbsPath)) unlinkSync(vbsPath);
-          if (existsSync(testTmpDir)) require('node:fs').rmdirSync(testTmpDir);
+          if (existsSync(testJsPath)) {
+            unlinkSync(testJsPath);
+          }
+          if (existsSync(vbsPath)) {
+            unlinkSync(vbsPath);
+          }
+          if (existsSync(testTmpDir)) {
+            require('node:fs').rmdirSync(testTmpDir);
+          }
         } catch {
           // Ignore cleanup errors
         }

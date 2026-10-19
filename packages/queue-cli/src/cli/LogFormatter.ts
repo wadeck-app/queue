@@ -10,7 +10,9 @@ export class LogFormatter {
 
   static format(raw: string): string {
     const trimmed = raw.trim();
-    if (trimmed === '') return '';
+    if (trimmed === '') {
+      return '';
+    }
     let entry: Record<string, unknown>;
     try {
       entry = JSON.parse(trimmed);
@@ -24,8 +26,12 @@ export class LogFormatter {
       const msg = entry['msg'].replace(/^cmd: /, '');
       return `[${ts}] ${msg}`;
     }
-    if (entry['type'] === 'dispatch') return LogFormatter.formatDispatch(ts, entry);
-    if (entry['type'] === 'filter-miss') return LogFormatter.formatFilterMiss(ts, entry);
+    if (entry['type'] === 'dispatch') {
+      return LogFormatter.formatDispatch(ts, entry);
+    }
+    if (entry['type'] === 'filter-miss') {
+      return LogFormatter.formatFilterMiss(ts, entry);
+    }
     if (entry['type'] === 'diagnostic') {
       return `[${ts}] [info] ${String(entry['source'])}: ${String(entry['message'])}`;
     }
@@ -41,9 +47,15 @@ export class LogFormatter {
     const attempts = entry['attempts'] !== undefined ? ` (attempts: ${String(entry['attempts'])})` : '';
     const output = LogFormatter.formatOutput(entry);
 
-    if (status === 'success') return `[${ts}] [ok] ${sub}${tgt}${dur}${output}`;
-    if (status === 'failed') return `[${ts}] [fail] ${sub}${tgt}${err}${dur}${output}`;
-    if (status === 'dlq') return `[${ts}] [warn] dlq ${sub}${tgt}${err}${attempts}${output}`;
+    if (status === 'success') {
+      return `[${ts}] [ok] ${sub}${tgt}${dur}${output}`;
+    }
+    if (status === 'failed') {
+      return `[${ts}] [fail] ${sub}${tgt}${err}${dur}${output}`;
+    }
+    if (status === 'dlq') {
+      return `[${ts}] [warn] dlq ${sub}${tgt}${err}${attempts}${output}`;
+    }
     return JSON.stringify(entry);
   }
 
@@ -52,7 +64,9 @@ export class LogFormatter {
     let rendered = '';
     for (const stream of ['stdout', 'stderr'] as const) {
       const value = entry[stream];
-      if (typeof value !== 'string' || value === '') continue;
+      if (typeof value !== 'string' || value === '') {
+        continue;
+      }
       for (const line of value.replace(/\n+$/, '').split('\n')) {
         rendered += `\n${LogFormatter.OUTPUT_INDENT}${stream} | ${line}`;
       }

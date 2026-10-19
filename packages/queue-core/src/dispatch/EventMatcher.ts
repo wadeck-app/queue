@@ -1,6 +1,8 @@
 export class EventMatcher {
   static matches(pattern: string, event: string): boolean {
-    if (pattern === '**' || pattern === '>') return true;
+    if (pattern === '**' || pattern === '>') {
+      return true;
+    }
 
     const patternParts = pattern.split('.');
     const eventParts = event.split('.');

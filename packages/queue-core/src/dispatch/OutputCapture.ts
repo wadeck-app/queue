@@ -21,7 +21,9 @@ export class OutputCapture {
       throw new Error(`OutputCapture.tail: maxBytes must be > 0, got ${maxBytes}`);
     }
     const buffer = Buffer.from(text, 'utf-8');
-    if (buffer.byteLength <= maxBytes) return text;
+    if (buffer.byteLength <= maxBytes) {
+      return text;
+    }
     const kept = buffer.subarray(buffer.byteLength - maxBytes).toString('utf-8');
     return `[truncated: kept last ${maxBytes} of ${buffer.byteLength} bytes]\n${kept}`;
   }

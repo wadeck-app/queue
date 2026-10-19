@@ -405,7 +405,9 @@ describe('relay daemon bundle smoke test (integration)', () => {
         ws.on('message', (raw) => {
           const message = JSON.parse(String(raw)) as { type: string; filter?: unknown };
           received.push(message);
-          if (message.type === 'auth') ws.send(JSON.stringify({ type: 'authenticated', username: 'smoke' }));
+          if (message.type === 'auth') {
+            ws.send(JSON.stringify({ type: 'authenticated', username: 'smoke' }));
+          }
         });
       });
 

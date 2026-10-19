@@ -168,7 +168,9 @@ export class RelayConnection {
         this.sleepAbortController = new AbortController();
         await sleep(this.retryDelayMs, this.sleepAbortController.signal);
         // Check stopped flag after sleep before retrying config load
-        if (this.stopped) break;
+        if (this.stopped) {
+          break;
+        }
         continue;
       }
 
@@ -182,7 +184,9 @@ export class RelayConnection {
         this.sleepAbortController = new AbortController();
         await sleep(this.retryDelayMs, this.sleepAbortController.signal);
         // Check stopped flag after sleep before retrying
-        if (this.stopped) break;
+        if (this.stopped) {
+          break;
+        }
         continue;
       }
 
@@ -203,12 +207,16 @@ export class RelayConnection {
         this.sleepAbortController = new AbortController();
         await sleep(this.retryDelayMs, this.sleepAbortController.signal);
         // Check stopped flag after sleep before retrying
-        if (this.stopped) break;
+        if (this.stopped) {
+          break;
+        }
         continue;
       }
 
       // Check stopped flag after plugin load completes before attempting connection
-      if (this.stopped) break;
+      if (this.stopped) {
+        break;
+      }
 
       // Check if token was previously refused and has not changed
       if (this.refusedAuthConfig) {
@@ -219,7 +227,9 @@ export class RelayConnection {
           // Token hasn't changed; stay in retry loop without reconnecting
           this.sleepAbortController = new AbortController();
           await sleep(this.retryDelayMs, this.sleepAbortController.signal);
-          if (this.stopped) break;
+          if (this.stopped) {
+            break;
+          }
           continue;
         } else {
           // Token or URL changed; clear refusal state and attempt connection
@@ -234,7 +244,9 @@ export class RelayConnection {
       }
 
       this.connected = false;
-      if (this.stopped) break;
+      if (this.stopped) {
+        break;
+      }
 
       // Determine the backoff delay based on the reason for disconnection
       let backoffMs: number;
@@ -260,7 +272,9 @@ export class RelayConnection {
       this.sleepAbortController = new AbortController();
       await sleep(backoffMs, this.sleepAbortController.signal);
       // Check stopped flag after sleep before retrying
-      if (this.stopped) break;
+      if (this.stopped) {
+        break;
+      }
     }
   }
 
@@ -359,7 +373,9 @@ export class RelayConnection {
           this.heartbeatTimer = null;
         }
         // Record the close code for diagnostics (only when the websocket really opened)
-        if (opened) this.lastCloseCode = code;
+        if (opened) {
+          this.lastCloseCode = code;
+        }
 
         // Handle close codes indicating auth refusal
         if (code === 4401) {
@@ -517,7 +533,9 @@ export class RelayConnection {
   }
 
   private subscribeAll(): void {
-    if (!this.ws) return;
+    if (!this.ws) {
+      return;
+    }
     // Send ONE subscribe message per loaded plugin with union of eventTypes and empty payloadMatch.
     // The relay-side filter is deliberately coarse; precise filtering happens on the client
     // via matchesPayload in dispatchEvent, allowing subscriptions to override each other
@@ -570,7 +588,9 @@ export class RelayConnection {
     const matchingSubscription = loaded.config.subscriptions.find((subscription) => {
       // Check eventType match
       const eventTypeMatches = !subscription.eventType || subscription.eventType.length === 0 || subscription.eventType.includes(envelope.eventType);
-      if (!eventTypeMatches) return false;
+      if (!eventTypeMatches) {
+        return false;
+      }
 
       // Check payload match
       return matchesPayload(envelope.payload, subscription.payloadMatch);

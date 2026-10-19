@@ -17,11 +17,16 @@ export function parseDotEnv(text: string): Record<string, string> {
     const line = rawLine.trim();
 
     // Ignore blank lines and comments
-    if (!line || line.startsWith('#')) continue;
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
 
     // Find the = separator
     const eqIdx = line.indexOf('=');
-    if (eqIdx === -1) continue; // Ignore malformed lines
+    // Ignore malformed lines
+    if (eqIdx === -1) {
+      continue;
+    }
 
     // Extract key (and strip 'export ' prefix if present)
     let key = line.slice(0, eqIdx).trim();

@@ -105,7 +105,9 @@ function inspectRepository(sha: string, repo: string | undefined, remoteRepo: st
     return { proceed: false, exitCode: CI_EXIT.NO_RUN };
   }
 
-  if (!infer) return { proceed: true, workflows: [], notes };
+  if (!infer) {
+    return { proceed: true, workflows: [], notes };
+  }
 
   const listing = git(['ls-tree', '-r', '--name-only', resolved, '--', '.github/workflows']);
   const files = (listing ?? '').split('\n').filter((f) => /\.ya?ml$/i.test(f));
@@ -120,7 +122,9 @@ function inspectRepository(sha: string, repo: string | undefined, remoteRepo: st
   const inference = inferExpectedWorkflows({ workflows, branch: branch && branch !== 'HEAD' ? branch : null, changedFiles });
 
   if (inference.kind === 'expected') {
-    if (inference.possible.length > 0) notes.push(`not waited for, but may also run: ${inference.possible.map((p) => `"${p}"`).join(', ')}`);
+    if (inference.possible.length > 0) {
+      notes.push(`not waited for, but may also run: ${inference.possible.map((p) => `"${p}"`).join(', ')}`);
+    }
     notes.push(...inference.notes);
     return { proceed: true, workflows: inference.workflows, notes };
   }
@@ -151,7 +155,9 @@ function fail(message: string): number {
 async function eventWait(configDir: string, args: string[], startRelay: StartRelay): Promise<number> {
   warnUnknownArgs(args.filter((arg) => arg.startsWith('-')), EVENT_WAIT_KNOWN_FLAGS, 'queue wait', EVENT_WAIT_FLAGS_WITH_VALUE);
   const parsed = parseEventWaitArgs(args, Date.now());
-  if (!parsed.ok) return fail(parsed.message);
+  if (!parsed.ok) {
+    return fail(parsed.message);
+  }
 
   const { options } = parsed;
   process.stderr.write(`[info] waiting for ${options.event}${options.whens.length ? ` where ${options.whens.join(' and ')}` : ''} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
@@ -197,7 +203,9 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     process.stdout.write(WAIT_HELP);
     return target ? CI_EXIT.PASSED : CI_EXIT.USAGE;
   }
-  if (target !== 'ci') return eventWait(configDir, args, startRelay);
+  if (target !== 'ci') {
+    return eventWait(configDir, args, startRelay);
+  }
 
   const rest = args.slice(1);
 
@@ -206,8 +214,12 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
   const positional = positionalIndex === -1 ? undefined : rest[positionalIndex];
   warnUnknownArgs(rest.filter((_, i) => i !== positionalIndex), KNOWN_FLAGS, 'queue wait ci', FLAGS_WITH_VALUE);
   const sha = positional ?? git(['rev-parse', 'HEAD']);
-  if (!sha) return fail('No commit given and the current directory is not a git repository. Pass the SHA: queue wait ci <sha>.');
-  if (!/^[0-9a-f]{7,40}$/i.test(sha)) return fail(`"${sha}" is not a commit SHA (7 to 40 hexadecimal characters). Branch names are not resolved: pass the SHA.`);
+  if (!sha) {
+    return fail('No commit given and the current directory is not a git repository. Pass the SHA: queue wait ci <sha>.');
+  }
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+    return fail(`"${sha}" is not a commit SHA (7 to 40 hexadecimal characters). Branch names are not resolved: pass the SHA.`);
+  }
 
   const remote = git(['remote', 'get-url', 'origin']);
   const repo = collectValues(rest, '--repo')[0] ?? (remote ? parseGithubRepo(remote) ?? undefined : undefined);
@@ -230,7 +242,9 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
   let workflows = explicitWorkflows;
   if (!rest.includes('--no-infer')) {
     const step = inspectRepository(sha, repo, remote ? parseGithubRepo(remote) : null, explicitWorkflows.length === 0);
-    if (!step.proceed) return step.exitCode;
+    if (!step.proceed) {
+      return step.exitCode;
+    }
     for (const note of step.notes) process.stderr.write(`[info] ${note}\n`);
     if (explicitWorkflows.length === 0 && step.workflows.length > 0) {
       workflows = step.workflows;
@@ -260,7 +274,9 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     // Called only when the history holds nothing for this commit yet: a CI that already finished never starts the relay
     relayStatus: async () => {
       const wasRunning = await relay.isRunning().catch(() => false);
-      if (!wasRunning && !(await onDemand.ensureRunning())) return { running: false, connected: false };
+      if (!wasRunning && !(await onDemand.ensureRunning())) {
+        return { running: false, connected: false };
+      }
       const readStatus = async (): Promise<boolean> => {
         const status = await relay.send('status', undefined).catch(() => null);
         return Boolean(status && (status as { connected?: boolean }).connected);

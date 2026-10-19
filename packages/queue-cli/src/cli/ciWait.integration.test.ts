@@ -28,7 +28,9 @@ describe('queue wait ci (bundled CLI)', () => {
       windowsHide: true,
     });
     bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
-    if (!existsSync(bundlePath)) throw new Error(`Bundle not found at ${bundlePath}`);
+    if (!existsSync(bundlePath)) {
+      throw new Error(`Bundle not found at ${bundlePath}`);
+    }
   }, 90_000);
 
   beforeEach(() => {

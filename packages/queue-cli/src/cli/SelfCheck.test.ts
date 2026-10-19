@@ -33,7 +33,9 @@ describe('queue cli self-check output', () => {
       await withArgv(['cli', 'self-check'], runQueueCommand);
     } catch (e) {
       // process.exit throws via mock — expected
-      if (!(e instanceof Error) || getErrorMessage(e) !== 'process.exit called') throw e;
+      if (!(e instanceof Error) || getErrorMessage(e) !== 'process.exit called') {
+        throw e;
+      }
     } finally {
       if (origEnv === undefined) {
         delete process.env['QUEUE_CONFIG_DIR'];
@@ -66,7 +68,9 @@ describe('queue cli self-check output', () => {
     try {
       await withArgv(['cli', 'self-check'], () => runQueueCommand());
     } catch (e) {
-      if (!(e instanceof Error) || getErrorMessage(e) !== 'process.exit called') throw e;
+      if (!(e instanceof Error) || getErrorMessage(e) !== 'process.exit called') {
+        throw e;
+      }
     } finally {
       if (origEnv === undefined) {
         delete process.env['QUEUE_CONFIG_DIR'];

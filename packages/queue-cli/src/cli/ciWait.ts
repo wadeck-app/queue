@@ -77,16 +77,26 @@ export function collectRuns(entries: HistoryEntry[], options: Pick<CiWaitOptions
   const chronological = [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
 
   for (const entry of chronological) {
-    if (entry.event !== WORKFLOW_RUN_EVENT || entry.orphan) continue;
+    if (entry.event !== WORKFLOW_RUN_EVENT || entry.orphan) {
+      continue;
+    }
     const payload = entry.payload as WorkflowRunPayload | undefined;
     const run = payload?.workflow_run;
-    if (!run || typeof run.id !== 'number' || typeof run.head_sha !== 'string') continue;
-    if (!shaMatches(options.sha, run.head_sha)) continue;
-    if (options.repo && payload?.repository?.full_name?.toLowerCase() !== options.repo.toLowerCase()) continue;
+    if (!run || typeof run.id !== 'number' || typeof run.head_sha !== 'string') {
+      continue;
+    }
+    if (!shaMatches(options.sha, run.head_sha)) {
+      continue;
+    }
+    if (options.repo && payload?.repository?.full_name?.toLowerCase() !== options.repo.toLowerCase()) {
+      continue;
+    }
 
     const attempt = run.run_attempt ?? 1;
     const known = byId.get(run.id);
-    if (known && known.attempt > attempt) continue;
+    if (known && known.attempt > attempt) {
+      continue;
+    }
 
     byId.set(run.id, {
       id: run.id,
@@ -140,9 +150,13 @@ export function evaluateRuns(runs: CiRun[], options: CiWaitOptions, nowMs: numbe
 }
 
 export function formatDuration(run: CiRun): string {
-  if (!run.startedAt) return '';
+  if (!run.startedAt) {
+    return '';
+  }
   const ms = Date.parse(run.seenAt) - Date.parse(run.startedAt);
-  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (!Number.isFinite(ms) || ms < 0) {
+    return '';
+  }
   const s = Math.round(ms / 1000);
   return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
 }
