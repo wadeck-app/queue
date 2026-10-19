@@ -36,6 +36,33 @@
         "type": "path",
         "value": "./src/dsl-views/history-page.yaml"
       }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
+      "label": "Queue DLQ",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/dlq-page.yaml"
+      }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
+      "label": "Queue Subscribers",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/subscribers-page.yaml"
+      }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
+      "label": "Queue Logs",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/logs-page.yaml"
+      }
     }
   ]
 }

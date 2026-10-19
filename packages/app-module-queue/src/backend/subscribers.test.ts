@@ -35,6 +35,23 @@ describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () 
     expect(listSubscribers(configDir, projectDir, 'onBar').map(s => s.event)).toEqual(['onBar']);
   });
 
+  it('masks the values of headers and env (tokens) but keeps their names', () => {
+    writeProjectSubscribers(
+      'subscribers:\n  onFoo:\n    - type: http\n      url: https://example.test/hook\n      headers:\n        Authorization: Bearer secret-token\n      env:\n        API_KEY: secret-key\n',
+    );
+    const [subscriber] = listSubscribers(configDir, projectDir);
+    expect(subscriber?.headers).toEqual({ Authorization: '***' });
+    expect(subscriber?.env).toEqual({ API_KEY: '***' });
+    expect(JSON.stringify(subscriber)).not.toContain('secret');
+  });
+
+  it('has no headers or env in the answer when the subscriber has none', () => {
+    writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo foo\n');
+    const [subscriber] = listSubscribers(configDir, projectDir);
+    expect(subscriber?.headers).toBeUndefined();
+    expect(subscriber?.env).toBeUndefined();
+  });
+
   it('throws on an invalid subscribers.yml instead of answering with an empty list', () => {
     writeProjectSubscribers('subscribers: [broken\n');
     expect(() => listSubscribers(configDir, projectDir)).toThrow();

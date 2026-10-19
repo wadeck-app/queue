@@ -15,6 +15,7 @@ const {
   mockPushEvent,
   mockGetLogs,
   mockRetryEvent,
+  mockGetDaemonState,
 } = vi.hoisted(() => ({
   mockGetStatus: vi.fn(),
   mockGetActivity: vi.fn(),
@@ -28,17 +29,25 @@ const {
   mockPushEvent: vi.fn(),
   mockGetLogs: vi.fn(),
   mockRetryEvent: vi.fn(),
+  mockGetDaemonState: vi.fn(),
 }));
 
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
 vi.mock('./activity.js', () => ({ getActivity: mockGetActivity }));
 vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: mockGetHistoryEntry }));
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
-vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlqEntry, clearDlqEntry: mockClearDlqEntry }));
+// dlqOptions stays the real one: the route answer carries its output
+vi.mock('./dlq.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./dlq.js')>()),
+  listDlq: mockListDlq,
+  replayDlqEntry: mockReplayDlqEntry,
+  clearDlqEntry: mockClearDlqEntry,
+}));
 vi.mock('./subscribers.js', () => ({ listSubscribers: mockListSubscribers }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
 vi.mock('./retry.js', () => ({ retryEvent: mockRetryEvent }));
+vi.mock('./daemon.js', () => ({ getDaemonState: mockGetDaemonState }));
 
 import backend from './index.js';
 
@@ -92,6 +101,7 @@ describe('backend', () => {
       'POST /history/:eventId/replay',
       'GET /logs',
       'POST /retry/:eventId',
+      'GET /daemon',
       'GET /dlq',
       'POST /dlq/:id/replay',
       'POST /dlq/:id/clear',
@@ -422,6 +432,17 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ error: 'Unexpected error' });
   });
 
+  it('GET /dlq answers the entries and the choices of the replay and clear forms', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const entry = { id: 'd 1', event: 'onFoo', subscriberId: 'onFoo[0]', payload: {}, meta: {}, attempts: 5, lastError: 'x', movedAt: '2026-10-19T10:00:00.000Z' };
+    mockListDlq.mockReturnValue([entry]);
+    const reply = fakeReply();
+    await routes.get('GET /dlq')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ entries: [entry], options: [{ value: 'd%201', label: 'onFoo / onFoo[0] (d 1)' }] });
+  });
+
   it('GET /dlq returns 500 with the reason when reading the DLQ fails (the daemon is not involved)', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
@@ -495,6 +516,26 @@ describe('backend', () => {
     const broken = fakeReply();
     await routes.get('GET /logs')!(fakeReq({ query: {} }), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
+  });
+
+  it('GET /daemon answers the daemon state', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetDaemonState.mockResolvedValue({ running: false, hint: 'start it' });
+    const reply = fakeReply();
+    await routes.get('GET /daemon')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ running: false, hint: 'start it' });
+  });
+
+  it('GET /daemon answers 500 with the reason when the check itself fails', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetDaemonState.mockRejectedValue(new Error('unexpected'));
+    const reply = fakeReply();
+    await routes.get('GET /daemon')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'unexpected' });
   });
 
   it('POST /retry/:eventId answers 200 with the daemon answer when the retry was enqueued', async () => {

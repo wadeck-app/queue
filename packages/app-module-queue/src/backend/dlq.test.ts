@@ -10,7 +10,7 @@ vi.mock('./client.js', () => ({
   createQueueAppClient: vi.fn(() => ({ isRunning: mockIsRunning, send: mockSend })),
 }));
 
-import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
+import { listDlq, dlqOptions, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { DaemonUnreachableError } from './errors.js';
 
 let configDir: string;
@@ -25,6 +25,22 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(configDir, { recursive: true, force: true });
+});
+
+describe('dlqOptions (choices of the dashboard forms)', () => {
+  const entry = (id: string) => JSON.parse(dlqLine(id));
+
+  it('labels each entry with its event, subscriber and id', () => {
+    expect(dlqOptions([entry('d1')])).toEqual([{ value: 'd1', label: 'onFoo / s (d1)' }]);
+  });
+
+  it('URL-encodes the value, since the dashboard builds the action URL by text substitution', () => {
+    expect(dlqOptions([entry('a/b c?')])[0]?.value).toBe('a%2Fb%20c%3F');
+  });
+
+  it('is empty for an empty queue', () => {
+    expect(dlqOptions([])).toEqual([]);
+  });
 });
 
 describe('dlq reads and clearing work on the queue files directly', () => {

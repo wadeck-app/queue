@@ -1,0 +1,27 @@
+$sources:
+  logs:
+    url: GET /api/modules/queue/logs
+    params:
+      limit: $urlParam.size
+      date: $urlParam.date
+
+$type: PageContent
+sections:
+  - $type: PageHeader
+    title: Dispatch log
+    subtitle: $sources.logs.date
+  - $type: Badge
+    $if: $sources.logs.omitted
+    label: Older records of this day are not shown (raise the size, or use queue logs).
+    variant: info
+  - $type: DataTable
+    rows: $sources.logs.lines
+    emptyMessage: Nothing was logged on this day
+    columns:
+      - { key: "text", label: "Record", mono: true }
+  - $type: HorizontalStack
+    justify: justify-end
+    items:
+      - $type: PageSizeSelect
+        urlParam: size
+        options: [200, 500, 1000, 2000]

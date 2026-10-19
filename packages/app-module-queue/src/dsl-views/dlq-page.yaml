@@ -1,0 +1,74 @@
+$sources:
+  dlq:
+    url: GET /api/modules/queue/dlq
+  daemon:
+    url: GET /api/modules/queue/daemon
+
+# {id} and {eventId} are filled from the form field of the same name; the backend URL-encodes the ids it offers.
+$actions:
+  replayEntry:
+    url: POST /api/modules/queue/dlq/{id}/replay
+    reloadSources: true
+  clearEntry:
+    url: POST /api/modules/queue/dlq/{id}/clear
+    confirm: Remove this entry from the dead-letter queue? It cannot be recovered.
+    reloadSources: true
+  retryPending:
+    url: POST /api/modules/queue/retry/{eventId}
+    reloadSources: true
+
+$type: PageContent
+sections:
+  - $type: PageHeader
+    title: Dead-letter queue
+    subtitle: Dispatches that failed after all their retries.
+  - $type: Badge
+    $if: $sources.daemon.hint
+    label: $sources.daemon.hint
+    variant: warning
+  - $type: DataTable
+    rows: $sources.dlq.entries
+    emptyMessage: No failed event
+    columns:
+      - { key: "movedAt", label: "Failed at", format: "datetime" }
+      - { key: "event", label: "Event" }
+      - { key: "subscriberId", label: "Subscriber" }
+      - { key: "attempts", label: "Attempts" }
+      - { key: "lastError", label: "Last error" }
+      - { key: "id", label: "Id", mono: true }
+  - $type: Form
+    $if: $sources.dlq.options
+    onSubmit: $ctx.replayEntry
+    initialData: { id: "" }
+    fields:
+      - $type: FieldSelect
+        label: Entry to replay (runs the subscriber again)
+        bind: id
+        options: $sources.dlq.options
+        placeholder: Choose an entry
+    actions:
+      - $type: ButtonSave
+        label: Replay
+  - $type: Form
+    $if: $sources.dlq.options
+    onSubmit: $ctx.clearEntry
+    initialData: { id: "" }
+    fields:
+      - $type: FieldSelect
+        label: Entry to remove
+        bind: id
+        options: $sources.dlq.options
+        placeholder: Choose an entry
+    actions:
+      - $type: ButtonSave
+        label: Remove
+  - $type: Form
+    onSubmit: $ctx.retryPending
+    initialData: { eventId: "" }
+    fields:
+      - $type: FieldText
+        label: Retry a pending event (id from the WAL, as in queue retry --event)
+        bind: eventId
+    actions:
+      - $type: ButtonSave
+        label: Retry

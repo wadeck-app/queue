@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,5 +33,11 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
       expect(path).toMatch(/^\.\/src\/dsl-views\/[\w.-]+\.ya?ml$/);
       expect(existsSync(join(packageDir, path))).toBe(true);
     }
+  });
+
+  it('references every view file of src/dsl-views: a view nobody lists is never shown', () => {
+    const listed = manifest.extensionPoints.map((point) => point.view.value.replace('./src/dsl-views/', '')).sort();
+    const present = readdirSync(join(packageDir, 'src/dsl-views')).sort();
+    expect(listed).toEqual(present);
   });
 });

@@ -6,9 +6,10 @@ import { getActivity } from './activity.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError } from './errors.js';
-import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
+import { listDlq, dlqOptions, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
 import { retryEvent } from './retry.js';
+import { getDaemonState } from './daemon.js';
 import { listSubscribers } from './subscribers.js';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery } from './historyQuery.js';
@@ -110,9 +111,18 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
+  ctx.registerRoute('GET', '/daemon', async (_req, reply) => {
+    try {
+      return reply.code(200).send(await getDaemonState(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
   ctx.registerRoute('GET', '/dlq', (_req, reply) => {
     try {
-      return reply.code(200).send({ entries: listDlq(configDir) });
+      const entries = listDlq(configDir);
+      return reply.code(200).send({ entries, options: dlqOptions(entries) });
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }
