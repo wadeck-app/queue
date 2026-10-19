@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRelayApiClient, RelayApiError } from './relayApi.js';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 interface MockFetchOptions {
   method?: string;
@@ -128,8 +129,8 @@ describe('relayApi', () => {
           expect(err).toBeInstanceOf(RelayApiError);
           expect(err.status).toBe(401);
           expect(err.kind).toBe('unauthorized');
-          expect(err.message).toContain('The relay refused the token');
-          expect(err.message).not.toContain('test-token-12345');
+          expect(getErrorMessage(err)).toContain('The relay refused the token');
+          expect(getErrorMessage(err)).not.toContain('test-token-12345');
         }
       });
 
@@ -164,7 +165,7 @@ describe('relayApi', () => {
           expect(err).toBeInstanceOf(RelayApiError);
           expect(err.status).toBe(429);
           expect(err.kind).toBe('blocked');
-          expect(err.message).toContain('HTTP 429');
+          expect(getErrorMessage(err)).toContain('HTTP 429');
         }
       });
 
@@ -194,8 +195,8 @@ describe('relayApi', () => {
         } catch (err: any) {
           expect(err).toBeInstanceOf(RelayApiError);
           expect(err.kind).toBe('network');
-          expect(err.message).toContain('Cannot reach the relay');
-          expect(err.message).not.toContain('test-token-12345');
+          expect(getErrorMessage(err)).toContain('Cannot reach the relay');
+          expect(getErrorMessage(err)).not.toContain('test-token-12345');
         }
       });
 
@@ -227,7 +228,7 @@ describe('relayApi', () => {
         } catch (err: any) {
           expect(err).toBeInstanceOf(RelayApiError);
           expect(err.kind).toBe('timeout');
-          expect(err.message).toContain('did not answer within');
+          expect(getErrorMessage(err)).toContain('did not answer within');
         }
       });
 
@@ -265,8 +266,8 @@ describe('relayApi', () => {
         } catch (err: any) {
           expect(err).toBeInstanceOf(RelayApiError);
           expect(err.kind).toBe('protocol');
-          expect(err.message).toContain('Unexpected response');
-          expect(err.message).toContain('success');
+          expect(getErrorMessage(err)).toContain('Unexpected response');
+          expect(getErrorMessage(err)).toContain('success');
         }
       });
     });
@@ -399,7 +400,7 @@ describe('relayApi', () => {
         } catch (err: any) {
           expect(err).toBeInstanceOf(RelayApiError);
           expect(err.kind).toBe('protocol');
-          expect(err.message).toContain('entries');
+          expect(getErrorMessage(err)).toContain('entries');
         }
       });
     });

@@ -12,6 +12,7 @@ vi.mock('./client.js', () => ({
 
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayError, ReplayNotFoundError } from './errors.js';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 let configDir: string;
 
@@ -80,8 +81,8 @@ describe('replayEvent', () => {
 
     await expect(replayEvent(configDir, 'e1')).rejects.toThrow(ReplayError);
     const err = await replayEvent(configDir, 'e1').catch(e => e);
-    expect(err.message).toMatch(/has no recorded working directory/);
-    expect(err.message).toMatch(/cd .* && queue replay/);
+    expect(getErrorMessage(err)).toMatch(/has no recorded working directory/);
+    expect(getErrorMessage(err)).toMatch(/cd .* && queue replay/);
   });
 
   it('throws ReplayError when entry has cwd but directory no longer exists', async () => {
@@ -101,8 +102,8 @@ describe('replayEvent', () => {
 
     await expect(replayEvent(configDir, 'e1')).rejects.toThrow(ReplayError);
     const err = await replayEvent(configDir, 'e1').catch(e => e);
-    expect(err.message).toMatch(/working directory.*no longer exists/);
-    expect(err.message).toContain(missingDir);
+    expect(getErrorMessage(err)).toMatch(/working directory.*no longer exists/);
+    expect(getErrorMessage(err)).toContain(missingDir);
   });
 
   it('uses entry.cwd when recorded and directory exists', async () => {
@@ -152,7 +153,7 @@ describe('replayEvent', () => {
     // (cwd check happens before daemon check)
     const err = await replayEvent(configDir, 'e1').catch(e => e);
     expect(err).toBeInstanceOf(ReplayError);
-    expect(err.message).toMatch(/working directory.*no longer exists/);
-    expect(err.message).not.toMatch(/Daemon is not running/);
+    expect(getErrorMessage(err)).toMatch(/working directory.*no longer exists/);
+    expect(getErrorMessage(err)).not.toMatch(/Daemon is not running/);
   });
 });

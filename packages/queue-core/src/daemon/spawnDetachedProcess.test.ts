@@ -5,9 +5,14 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildLaunchScript, spawnDetachedProcess } from './spawnDetachedProcess';
 
+// violations-suppress: shared/no-out-of-repo-path fixture string for the VBScript builder, never touched on disk
+const NODE_PATH = 'C:\\Node\\node.exe';
+// violations-suppress: shared/no-out-of-repo-path fixture string for the VBScript builder, never touched on disk
+const SCRIPT_PATH = 'C:\\script.js';
+
 describe('buildLaunchScript', () => {
   it('should include environment variable lines', () => {
-    const script = buildLaunchScript('C:\\Node\\node.exe', 'C:\\script.js', {
+    const script = buildLaunchScript(NODE_PATH, SCRIPT_PATH, {
       FOO: 'bar',
       BAZ: 'qux',
     });
@@ -16,31 +21,37 @@ describe('buildLaunchScript', () => {
   });
 
   it('should include the Run line with SW_HIDE (0) and False', () => {
-    const script = buildLaunchScript('C:\\Node\\node.exe', 'C:\\script.js', {});
+    const script = buildLaunchScript(NODE_PATH, SCRIPT_PATH, {});
     expect(script).toContain('oShell.Run');
     // Format: oShell.Run """node.exe"" ""script.js""", 0, False
     expect(script).toContain(', 0, False');
   });
 
   it('should escape double quotes in paths', () => {
-    const script = buildLaunchScript(
-      'C:\\Program Files\\Node "test"\\node.exe',
-      'C:\\Scripts\\"my script".js',
-      {}
-    );
-    expect(script).toContain('C:\\Program Files\\Node ""test""\\node.exe');
-    expect(script).toContain('C:\\Scripts\\""my script"".js');
+    // violations-suppress: shared/no-out-of-repo-path fixture string for the VBScript builder, never touched on disk
+    const quotedNode = 'C:\\Program Files\\Node "test"\\node.exe';
+    // violations-suppress: shared/no-out-of-repo-path fixture string for the VBScript builder, never touched on disk
+    const quotedScript = 'C:\\Scripts\\"my script".js';
+    // violations-suppress: shared/no-out-of-repo-path fixture string for the VBScript builder, never touched on disk
+    const escapedNode = 'C:\\Program Files\\Node ""test""\\node.exe';
+    // violations-suppress: shared/no-out-of-repo-path fixture string for the VBScript builder, never touched on disk
+    const escapedScript = 'C:\\Scripts\\""my script"".js';
+
+    const script = buildLaunchScript(quotedNode, quotedScript, {});
+
+    expect(script).toContain(escapedNode);
+    expect(script).toContain(escapedScript);
   });
 
   it('should escape double quotes in environment values', () => {
-    const script = buildLaunchScript('C:\\Node\\node.exe', 'C:\\script.js', {
+    const script = buildLaunchScript(NODE_PATH, SCRIPT_PATH, {
       QUOTED_VAR: 'value with "quotes" inside',
     });
     expect(script).toContain('oShell.Environment("Process")("QUOTED_VAR") = "value with ""quotes"" inside"');
   });
 
   it('should include self-delete statement at the end after Run line', () => {
-    const script = buildLaunchScript('C:\\Node\\node.exe', 'C:\\script.js', {
+    const script = buildLaunchScript(NODE_PATH, SCRIPT_PATH, {
       FOO: 'bar',
     });
     const lines = script.split('\r\n');
@@ -54,7 +65,7 @@ describe('buildLaunchScript', () => {
   });
 
   it('should have proper VBScript structure', () => {
-    const script = buildLaunchScript('C:\\Node\\node.exe', 'C:\\script.js', {
+    const script = buildLaunchScript(NODE_PATH, SCRIPT_PATH, {
       FOO: 'bar',
     });
     expect(script).toMatch(/^Dim oShell\r\nSet oShell = CreateObject\("WScript\.Shell"\)/);
