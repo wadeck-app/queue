@@ -23,7 +23,7 @@ describe('relayWebhookList', () => {
   });
 
   it('prints a table of configured webhooks', async () => {
-    (mockClient.listWebhookConfigs as any).mockResolvedValue([
+    vi.mocked(mockClient.listWebhookConfigs).mockResolvedValue([
       {
         id: 'cfg-1',
         source: 'github',
@@ -42,7 +42,7 @@ describe('relayWebhookList', () => {
     const exitCode = await relayWebhookList(mockClient, io, {});
 
     expect(exitCode).toBe(0);
-    const output = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+    const output = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
     expect(output).toContain('cfg-1');
     expect(output).toContain('github');
     expect(output).toContain('My Webhook');
@@ -53,7 +53,7 @@ describe('relayWebhookList', () => {
   });
 
   it('formats null timestamps as "never"', async () => {
-    (mockClient.listWebhookConfigs as any).mockResolvedValue([
+    vi.mocked(mockClient.listWebhookConfigs).mockResolvedValue([
       {
         id: 'cfg-1',
         source: 'github',
@@ -72,24 +72,24 @@ describe('relayWebhookList', () => {
     const exitCode = await relayWebhookList(mockClient, io, {});
 
     expect(exitCode).toBe(0);
-    const output = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+    const output = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
     expect(output).toContain('never');
   });
 
   it('returns empty list message when no webhooks configured', async () => {
-    (mockClient.listWebhookConfigs as any).mockResolvedValue([]);
+    vi.mocked(mockClient.listWebhookConfigs).mockResolvedValue([]);
 
     const exitCode = await relayWebhookList(mockClient, io, {});
 
     expect(exitCode).toBe(0);
-    const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+    const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
     expect(stderrOutput).toContain('[info]');
     expect(stderrOutput).toContain('No webhook configured');
     expect(stderrOutput).toContain('/webhook/github');
   });
 
   it('outputs JSON when --json flag is set', async () => {
-    (mockClient.listWebhookConfigs as any).mockResolvedValue([
+    vi.mocked(mockClient.listWebhookConfigs).mockResolvedValue([
       {
         id: 'cfg-1',
         source: 'github',
@@ -108,36 +108,34 @@ describe('relayWebhookList', () => {
     const exitCode = await relayWebhookList(mockClient, io, { json: true });
 
     expect(exitCode).toBe(0);
-    const output = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+    const output = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
     const parsed = JSON.parse(output);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].id).toBe('cfg-1');
   });
 
   it('returns exit code 1 on API error', async () => {
-    const error = new Error('Connection failed');
-    (error as any).kind = 'network';
-    (error as any).message = 'Cannot reach the relay';
-    (mockClient.listWebhookConfigs as any).mockRejectedValue(error);
+    const error = Object.assign(new Error('Cannot reach the relay'), { kind: 'network' });
+    vi.mocked(mockClient.listWebhookConfigs).mockRejectedValue(error);
 
     const exitCode = await relayWebhookList(mockClient, io, {});
 
     expect(exitCode).toBe(1);
-    const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+    const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
     expect(stderrOutput).toContain('[fail]');
     expect(stderrOutput).toContain('Cannot reach the relay');
   });
 
   it('prints the full webhook URL (origin + path, never truncated) and the full id to paste into GitHub', async () => {
     const id = 'fb47bebb-ad6d-4320-8dcd-34ca496a240c';
-    (mockClient.listWebhookConfigs as any).mockResolvedValue([
+    vi.mocked(mockClient.listWebhookConfigs).mockResolvedValue([
       { id, source: 'github', name: 'wadeck-app', createdAt: '2026-10-14T21:30:05.230Z', webhookUrl: `/webhook/github/${id}`, stats: { verified24h: 0, rejected24h: 0, lastDeliveryAt: null, lastVerifiedAt: null } },
     ]);
 
     const exitCode = await relayWebhookList(mockClient, io, { origin: 'https://assistant.wadeck.ch' });
 
     expect(exitCode).toBe(0);
-    const output = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+    const output = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
     expect(output).toContain(`https://assistant.wadeck.ch/webhook/github/${id}`);
     expect(output).toContain(id);
     expect(output).toContain('wadeck-app');
@@ -145,17 +143,17 @@ describe('relayWebhookList', () => {
   });
 
   it('does not crash and says so when the relay reports no statistics for a webhook', async () => {
-    (mockClient.listWebhookConfigs as any).mockResolvedValue([
+    vi.mocked(mockClient.listWebhookConfigs).mockResolvedValue([
       { id: 'cfg-9', source: 'github', name: 'no-stats', createdAt: '2026-10-14T21:30:05Z', webhookUrl: '/webhook/github/cfg-9' },
     ]);
 
     const exitCode = await relayWebhookList(mockClient, io, {});
 
     expect(exitCode).toBe(0);
-    const output = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+    const output = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
     expect(output).toContain('cfg-9');
     expect(output).toContain('statistics not reported by this relay');
     expect(output).toContain('1 webhook');
-    expect((io.stderr.write as any).mock.calls.length).toBe(0);
+    expect(vi.mocked(io.stderr.write).mock.calls.length).toBe(0);
   });
 });

@@ -19,6 +19,24 @@ const { mockPushModule } = vi.hoisted(() => {
 
 vi.mock('./push.js', () => mockPushModule);
 
+/** The port a test server listens on. */
+function portOf(wss: WebSocketServer): number {
+  const address = wss.address();
+  if (address === null || typeof address === 'string') {
+    throw new Error(`The test server is not listening on a TCP port (address: ${String(address)})`);
+  }
+  return address.port;
+}
+
+/** A JSON message received by the test server. */
+function parseMessage(data: unknown): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(String(data));
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error(`Expected a JSON object from the client, got: ${String(data)}`);
+  }
+  return Object.fromEntries(Object.entries(parsed));
+}
+
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-relay-connection-test-${crypto.randomUUID()}`);
   mkdirSync(dir, { recursive: true });
@@ -342,7 +360,7 @@ describe('RelayConnection', () => {
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -367,7 +385,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'error', error: 'Invalid token' }));
               ws.close(4001, 'Unauthorized');
@@ -423,7 +441,7 @@ plugins:
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -448,7 +466,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.close(4401, 'Token revoked');
             }
@@ -486,7 +504,7 @@ plugins:
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -512,7 +530,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               if (String(msg.token) === 'bad-token-v1') {
                 ws.send(JSON.stringify({ type: 'error', error: 'Invalid token' }));
@@ -578,7 +596,7 @@ plugins:
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -603,7 +621,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.close(4001, 'Auth timeout');
             }
@@ -654,7 +672,7 @@ plugins:
         const connectionTimes: number[] = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -679,7 +697,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionTimes.push(Date.now());
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.close(4429, 'Too many failed auth attempts');
             }
@@ -746,7 +764,7 @@ plugins:
         const logs: string[] = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -770,7 +788,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.close(4429, 'Too many failed attempts');
             }
@@ -820,7 +838,7 @@ plugins:
       const logs: string[] = [];
 
       const wss = new WebSocketServer({ port: 0 });
-      const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+      const port = portOf(wss);
 
       const pluginPath = join(tmpDir, 'plugin.js');
       writeFileSync(
@@ -844,7 +862,7 @@ plugins:
 
       wss.on('connection', (ws) => {
         ws.on('message', (data) => {
-          const msg = JSON.parse(String(data)) as Record<string, unknown>;
+          const msg = parseMessage(data);
           if (msg.type === 'auth') {
             // Send error message then close with 4001
             ws.send(JSON.stringify({ type: 'error', error: 'Invalid token' }));
@@ -882,7 +900,7 @@ plugins:
       const connections: any[] = [];
 
       const wss = new WebSocketServer({ port: 0 });
-      const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+      const port = portOf(wss);
 
       const pluginPath = join(tmpDir, 'plugin.js');
       writeFileSync(
@@ -920,7 +938,7 @@ plugins:
       wss.on('connection', (ws) => {
         connections.push(ws);
         ws.on('message', (data) => {
-          const msg = JSON.parse(String(data)) as Record<string, unknown>;
+          const msg = parseMessage(data);
           if (msg.type === 'auth') {
             if (String(msg.token) === 'test-token-v1') {
               // First auth with v1 token: send error and close
@@ -1090,7 +1108,7 @@ plugins:
       const logs: string[] = [];
 
       const wss = new WebSocketServer({ port: 0 });
-      const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+      const port = portOf(wss);
 
       const pluginPath = join(tmpDir, 'plugin.js');
       writeFileSync(
@@ -1176,7 +1194,7 @@ plugins:
         const receivedMessages: Array<Record<string, unknown>> = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         // Write test plugin module
         const pluginPath = join(tmpDir, 'plugin.js');
@@ -1203,7 +1221,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1244,7 +1262,7 @@ plugins:
         const receivedMessages: Array<Record<string, unknown>> = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         // Write test plugin module
         const pluginPath = join(tmpDir, 'plugin.js');
@@ -1272,7 +1290,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1316,7 +1334,7 @@ plugins:
         });
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1341,7 +1359,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1394,7 +1412,7 @@ plugins:
         });
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1418,7 +1436,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1473,7 +1491,7 @@ plugins:
         });
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1504,7 +1522,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1559,7 +1577,7 @@ plugins:
         });
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1588,7 +1606,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1644,7 +1662,7 @@ plugins:
         });
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1669,7 +1687,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1729,7 +1747,7 @@ plugins:
         );
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1753,7 +1771,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1812,7 +1830,7 @@ plugins:
         );
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1836,7 +1854,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1891,7 +1909,7 @@ plugins:
         );
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1915,7 +1933,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -1971,7 +1989,7 @@ plugins:
         );
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -1995,7 +2013,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -2050,7 +2068,7 @@ plugins:
         );
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -2074,7 +2092,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -2142,7 +2160,7 @@ plugins:
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0, autoPong: true });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -2167,7 +2185,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
             }
@@ -2222,13 +2240,13 @@ plugins:
 
         // autoPong:false makes this server ignore the client's pings, like a dead process would
         const wss = new WebSocketServer({ port: 0, autoPong: false });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
         writeRelayYml(tmpDir, port);
 
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
             }
@@ -2266,12 +2284,12 @@ plugins:
         let connectionCount = 0;
         let diagnosticsAtDetection: { lastError: string | null; lastErrorAt: string | null } | null = null;
         const wss = new WebSocketServer({ port: 0, autoPong: false });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
         writeRelayYml(tmpDir, port);
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
             }
@@ -2316,12 +2334,12 @@ plugins:
         const pingTimers: NodeJS.Timeout[] = [];
 
         const wss = new WebSocketServer({ port: 0, autoPong: false });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
         writeRelayYml(tmpDir, port);
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
               // Server-initiated pings every 20 ms: the client answers them automatically and they count as activity
@@ -2363,7 +2381,7 @@ plugins:
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -2388,7 +2406,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
             }
@@ -2432,7 +2450,7 @@ plugins:
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -2458,7 +2476,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
               // Send a message every 35ms to keep activity alive (heartbeat is 50ms timeout)
@@ -2514,7 +2532,7 @@ plugins:
         const serverPings: number[] = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -2538,7 +2556,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
             }
@@ -2588,7 +2606,7 @@ plugins:
         let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -2613,7 +2631,7 @@ plugins:
         wss.on('connection', (ws) => {
           connectionCount++;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'error', error: 'Invalid token' }));
               ws.close(4001, 'Unauthorized');
@@ -2670,7 +2688,7 @@ plugins:
         const receivedMessages: Array<Record<string, unknown>> = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         // Plugin 1
         const plugin1Path = join(tmpDir, 'plugin1.js');
@@ -2709,7 +2727,7 @@ plugins:
         wss.on('connection', (ws) => {
           let subscribeCount = 0;
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -2771,7 +2789,7 @@ plugins:
         const receivedMessages: Array<Record<string, unknown>> = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         // Plugin 1
         const plugin1Path = join(tmpDir, 'plugin1.js');
@@ -2810,7 +2828,7 @@ plugins:
         let subscribeCount = 0;
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -2866,7 +2884,7 @@ plugins:
         const receivedMessages: Array<Record<string, unknown>> = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
         writeFileSync(
@@ -2890,7 +2908,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
@@ -2945,7 +2963,7 @@ plugins:
         const receivedMessages: Array<Record<string, unknown>> = [];
 
         const wss = new WebSocketServer({ port: 0 });
-        const port = ((wss as unknown as { _server: { address: () => { port: number } } })._server.address() as { port: number }).port;
+        const port = portOf(wss);
 
         // Plugin 1
         const plugin1Path = join(tmpDir, 'plugin1.js');
@@ -2983,7 +3001,7 @@ plugins:
 
         wss.on('connection', (ws) => {
           ws.on('message', (data) => {
-            const msg = JSON.parse(String(data)) as Record<string, unknown>;
+            const msg = parseMessage(data);
             receivedMessages.push(msg);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));

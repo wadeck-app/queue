@@ -26,7 +26,7 @@ describe('relayWebhookHistory', () => {
     it('returns error exit code when --limit is not an integer', async () => {
       const exitCode = await relayWebhookHistory(mockClient, io, {}, ['--limit', 'abc']);
       expect(exitCode).toBe(1);
-      const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
       expect(stderrOutput).toContain('[fail]');
       expect(stderrOutput).toContain('--limit');
       // No network call should have been made
@@ -36,7 +36,7 @@ describe('relayWebhookHistory', () => {
     it('returns error exit code when --limit is out of range', async () => {
       const exitCode = await relayWebhookHistory(mockClient, io, {}, ['--limit', '500']);
       expect(exitCode).toBe(1);
-      const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
       expect(stderrOutput).toContain('[fail]');
       expect(stderrOutput).toContain('--limit');
       expect(mockClient.listDeliveries).not.toHaveBeenCalled();
@@ -48,7 +48,7 @@ describe('relayWebhookHistory', () => {
         '--rejected',
       ]);
       expect(exitCode).toBe(1);
-      const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
       expect(stderrOutput).toContain('[fail]');
       expect(mockClient.listDeliveries).not.toHaveBeenCalled();
     });
@@ -56,7 +56,7 @@ describe('relayWebhookHistory', () => {
     it('returns error exit code when --event has no value', async () => {
       const exitCode = await relayWebhookHistory(mockClient, io, {}, ['--event']);
       expect(exitCode).toBe(1);
-      const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
       expect(stderrOutput).toContain('[fail]');
       expect(mockClient.listDeliveries).not.toHaveBeenCalled();
     });
@@ -64,7 +64,7 @@ describe('relayWebhookHistory', () => {
     it('returns error exit code when --source has no value', async () => {
       const exitCode = await relayWebhookHistory(mockClient, io, {}, ['--source']);
       expect(exitCode).toBe(1);
-      const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
       expect(stderrOutput).toContain('[fail]');
       expect(mockClient.listDeliveries).not.toHaveBeenCalled();
     });
@@ -72,7 +72,7 @@ describe('relayWebhookHistory', () => {
 
   describe('successful listing', () => {
     it('prints one line per delivery with default limit 20', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([
         {
           receivedAt: '2026-10-14T14:30:00Z',
           source: 'github',
@@ -97,7 +97,7 @@ describe('relayWebhookHistory', () => {
         })
       );
 
-      const stdoutOutput = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stdoutOutput = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
       expect(stdoutOutput).toContain('2026-10-14T14:30:00Z');
       expect(stdoutOutput).toContain('github');
       expect(stdoutOutput).toContain('push');
@@ -105,7 +105,7 @@ describe('relayWebhookHistory', () => {
     });
 
     it('applies --limit, --event, --source, --verified filters', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([]);
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([]);
 
       const exitCode = await relayWebhookHistory(mockClient, io, {}, [
         '--limit',
@@ -130,7 +130,7 @@ describe('relayWebhookHistory', () => {
     });
 
     it('applies --rejected filter', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([]);
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([]);
 
       await relayWebhookHistory(mockClient, io, {}, ['--rejected']);
 
@@ -142,7 +142,7 @@ describe('relayWebhookHistory', () => {
     });
 
     it('does not set includePayload when --payload is not provided', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([]);
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([]);
 
       await relayWebhookHistory(mockClient, io, {}, []);
 
@@ -154,7 +154,7 @@ describe('relayWebhookHistory', () => {
     });
 
     it('prints REJECTED when verified=false and shows error', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([
         {
           receivedAt: '2026-10-14T14:30:00Z',
           source: 'github',
@@ -169,13 +169,13 @@ describe('relayWebhookHistory', () => {
 
       await relayWebhookHistory(mockClient, io, {}, []);
 
-      const stdoutOutput = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stdoutOutput = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
       expect(stdoutOutput).toContain('REJECTED');
       expect(stdoutOutput).toContain('Signature mismatch');
     });
 
     it('prints payload as indented JSON when --payload flag is set', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([
         {
           receivedAt: '2026-10-14T14:30:00Z',
           source: 'github',
@@ -189,7 +189,7 @@ describe('relayWebhookHistory', () => {
 
       await relayWebhookHistory(mockClient, io, {}, ['--payload']);
 
-      const stdoutOutput = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stdoutOutput = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
       expect(stdoutOutput).toContain('"foo"');
       expect(stdoutOutput).toContain('bar');
       expect(stdoutOutput).toContain('nested');
@@ -199,7 +199,7 @@ describe('relayWebhookHistory', () => {
 
   describe('JSON output', () => {
     it('outputs raw array when --json is set', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([
         {
           receivedAt: '2026-10-14T14:30:00Z',
           source: 'github',
@@ -214,14 +214,14 @@ describe('relayWebhookHistory', () => {
       const exitCode = await relayWebhookHistory(mockClient, io, { json: true }, []);
 
       expect(exitCode).toBe(0);
-      const stdoutOutput = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stdoutOutput = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
       const parsed = JSON.parse(stdoutOutput);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed[0].eventType).toBe('push');
     });
 
     it('includes --payload in --json output when both flags are set', async () => {
-      (mockClient.listDeliveries as any).mockResolvedValue([
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([
         {
           receivedAt: '2026-10-14T14:30:00Z',
           source: 'github',
@@ -235,7 +235,7 @@ describe('relayWebhookHistory', () => {
 
       await relayWebhookHistory(mockClient, io, { json: true }, ['--payload']);
 
-      const stdoutOutput = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stdoutOutput = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
       const parsed = JSON.parse(stdoutOutput);
       expect(parsed[0].payload.foo).toBe('bar');
     });
@@ -244,25 +244,25 @@ describe('relayWebhookHistory', () => {
   describe('error handling', () => {
     it('returns exit code 1 on API error', async () => {
       const error = new Error('Connection failed');
-      (mockClient.listDeliveries as any).mockRejectedValue(error);
+      vi.mocked(mockClient.listDeliveries).mockRejectedValue(error);
 
       const exitCode = await relayWebhookHistory(mockClient, io, {}, []);
 
       expect(exitCode).toBe(1);
-      const stderrOutput = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stderrOutput = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
       expect(stderrOutput).toContain('[fail]');
       expect(stderrOutput).toContain('Connection failed');
     });
 
     it('does not print token in error messages', async () => {
       const error = new Error('The relay refused the token (HTTP 401)');
-      (mockClient.listDeliveries as any).mockRejectedValue(error);
+      vi.mocked(mockClient.listDeliveries).mockRejectedValue(error);
 
       const exitCode = await relayWebhookHistory(mockClient, io, {}, []);
 
       expect(exitCode).toBe(1);
-      const stderr = (io.stderr.write as any).mock.calls.map((c: any) => c[0]).join('');
-      const stdout = (io.stdout.write as any).mock.calls.map((c: any) => c[0]).join('');
+      const stderr = vi.mocked(io.stderr.write).mock.calls.map(c => c[0]).join('');
+      const stdout = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
       // Token should never appear in output
       const output = stderr + stdout;
       expect(output).not.toContain('test-token');
