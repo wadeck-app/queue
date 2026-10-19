@@ -15,8 +15,9 @@ describe('activity-widget.yaml', () => {
     expect(source?.['url']).toBe('GET /api/modules/queue/activity');
   });
 
-  it('is one row of three tiles; `items` is the key HorizontalStack reads (a `children` key renders blank)', () => {
-    expect(doc['$type']).toBe('HorizontalStack');
+  // Dashboard columns are about 270 px wide: three tiles in a row wrap their labels and overflow (seen in agent-browser)
+  it('is a column of three tiles; `items` is the key the stack reads (a `children` key renders blank)', () => {
+    expect(doc['$type']).toBe('VerticalStack');
     expect(doc['children']).toBeUndefined();
     expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile']);
   });

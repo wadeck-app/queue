@@ -49,6 +49,10 @@ Nothing starts the relay at logon. `queue relay start` runs it until `queue rela
 
 `queue-core`, `queue-relay-client` and `plugin-github` each expose one `src/index.ts` (package.json `main`/`types`). It is the list of what may cross a package boundary; removing it would open `dist/...` internals to every consumer. The `ts/no-barrel-index` rule is suppressed on those three files with a stated reason. Add an export there only for a symbol another package really consumes.
 
+## A dashboard view is not done until it was seen rendered
+
+Passing route and YAML tests does not show a wrapped label or a clipped tile. Package the module (`BUNDLE_VERSION=x npm run bundle` in `packages/app-module-queue`), serve it with `APP_CORE_PORT=<free port> app-core-cli dev dist-module` (never 4850, that is the real app-core), and look at it with agent-browser in light, dark and a ~380 px viewport. Dashboard columns are about 270 px wide: stack tiles vertically.
+
 ## From lessons learned
 
 - Never validate behavior with `node dist-bundle/queue.cjs` directly — the correct workflow is `git commit && git push` → CI passes → `npm install -g @wadeck-app/queue-cli` → test with `queue <cmd>`; the Go launcher, file resolution paths, and published package content all diverge from the local bundle.

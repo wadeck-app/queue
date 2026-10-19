@@ -2,8 +2,8 @@ $sources:
   activity:
     url: GET /api/modules/queue/activity
 
-$type: HorizontalStack
-gap: gap-3
+$type: VerticalStack
+gap: gap-2
 items:
   - $type: StatTile
     label: Events, last 5 min
