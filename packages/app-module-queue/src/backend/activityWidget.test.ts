@@ -50,3 +50,12 @@ describe('activity-widget.yaml chart', () => {
     expect(series?.['color']).toBe('var(--color-primary)');
   });
 });
+
+describe('activity-widget.yaml chart, compact form', () => {
+  const chart = items.find((item) => item['$type'] === 'Chart') as Node;
+
+  it('is an inline sparkline whose y values are counts, not bytes (Chart defaults to bytes: 1753 prints "1.8 KB")', () => {
+    expect(chart['variant']).toBe('sparkline');
+    expect(chart['yFormat']).toBe('number');
+  });
+});

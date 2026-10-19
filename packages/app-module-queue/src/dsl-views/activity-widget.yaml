@@ -16,11 +16,15 @@ items:
   - $type: StatTile
     label: Events, last 24 h
     value: $sources.activity.last24Hours
-  # The hourly series (/activity/series lastDay) waits for a number format on Chart: its y axis prints 1753 as "1.8 KB".
+  # variant and yFormat need dsl-ui >= 2026.10.19-117; an older shell draws the full chart. The explicit colour is for that
+  # older shell (no palette: black bars). The hourly chart (/activity/series lastDay, area) waits for the new shell:
+  # the old one prints 1753 as "1.8 KB".
   - $type: Chart
+    variant: sparkline
     data: $sources.series.lastHour
     xAxisKey: label
     xAxisType: category
-    height: 140
+    yFormat: number
+    height: 80
     series:
       - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }

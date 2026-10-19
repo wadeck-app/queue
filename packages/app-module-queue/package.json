@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "files": ["dist-module"],
+  "files": [
+    "dist-module"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "check": "app-core-cli check .",
@@ -22,7 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "@wadeck-app/app-core-cli": "latest",
+    "@wadeck-app/app-core-cli": "^2026.10.19-056-69a287b1",
     "@wadeck-app/app-core-sdk": "latest",
     "rimraf": "^6.0.1",
     "typescript": "^7.0.0",
