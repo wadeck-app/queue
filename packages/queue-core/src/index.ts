@@ -1,3 +1,4 @@
+// violations-suppress: ts/no-barrel-index package entry point (package.json main/types): its exports are the package's public API, deleting it would expose dist internals to every consumer
 // Public barrel for @wadeck-app/queue-core.
 // Exposes the symbols consumed across the package boundary by queue-cli and app-module-queue.
 export { getErrorMessage } from './errors.js';

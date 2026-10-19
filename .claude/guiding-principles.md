@@ -45,6 +45,10 @@ Nothing starts the relay at logon. `queue relay start` runs it until `queue rela
 - A relay started by hand has no marker and is never stopped by this logic. `queue relay start` on an on-demand relay removes the marker (pins it); `queue relay stop` removes it too.
 - The remote relay does not replay missed events to a client that connects (by design; observed: no event pushed on connect). A wait only sees events that arrive while the relay is connected; the remote keeps its own history (`queue relay webhook history`, a dedicated endpoint).
 
+## Package barrels are the public API, and are kept
+
+`queue-core`, `queue-relay-client` and `plugin-github` each expose one `src/index.ts` (package.json `main`/`types`). It is the list of what may cross a package boundary; removing it would open `dist/...` internals to every consumer. The `ts/no-barrel-index` rule is suppressed on those three files with a stated reason. Add an export there only for a symbol another package really consumes.
+
 ## From lessons learned
 
 - Never validate behavior with `node dist-bundle/queue.cjs` directly — the correct workflow is `git commit && git push` → CI passes → `npm install -g @wadeck-app/queue-cli` → test with `queue <cmd>`; the Go launcher, file resolution paths, and published package content all diverge from the local bundle.

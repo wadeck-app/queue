@@ -1,3 +1,4 @@
+// violations-suppress: ts/no-barrel-index package entry point (package.json main/types): its exports are the package's public API, deleting it would expose dist internals to every consumer
 // Public barrel for @wadeck-app/queue-relay-client.
 export type { RelayPlugin, RelayEnvelope, MappedEvent } from './plugin-api.js';
 export { loadPlugin, registerBuiltinPlugin, listBuiltinPlugins } from './plugin-api.js';
