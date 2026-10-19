@@ -15,6 +15,7 @@
     "clean": "rimraf dist-module"
   },
   "dependencies": {
+    "@wadeck-app/plugin-github": "*",
     "@wadeck-app/queue-core": "*",
     "@wadeck-app/queue-relay-client": "*",
     "@wadeck-app/singleton-daemon-kit": "latest"

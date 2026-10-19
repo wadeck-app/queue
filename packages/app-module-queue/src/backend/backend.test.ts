@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
+import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
   mockGetStatus,
@@ -18,6 +19,8 @@ const {
   mockRetryEvent,
   mockGetDaemonState,
   mockGetRelayInfo,
+  mockListWebhooks,
+  mockListDeliveries,
 } = vi.hoisted(() => ({
   mockGetStatus: vi.fn(),
   mockGetActivity: vi.fn(),
@@ -34,6 +37,8 @@ const {
   mockRetryEvent: vi.fn(),
   mockGetDaemonState: vi.fn(),
   mockGetRelayInfo: vi.fn(),
+  mockListWebhooks: vi.fn(),
+  mockListDeliveries: vi.fn(),
 }));
 
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
@@ -53,6 +58,7 @@ vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
 vi.mock('./retry.js', () => ({ retryEvent: mockRetryEvent }));
 vi.mock('./daemon.js', () => ({ getDaemonState: mockGetDaemonState }));
 vi.mock('./relay.js', () => ({ getRelayInfo: mockGetRelayInfo }));
+vi.mock('./relayWebhooks.js', () => ({ listWebhooks: mockListWebhooks, listDeliveries: mockListDeliveries }));
 
 import backend from './index.js';
 
@@ -109,6 +115,8 @@ describe('backend', () => {
       'POST /retry/:eventId',
       'GET /daemon',
       'GET /relay',
+      'GET /relay/webhooks',
+      'GET /relay/deliveries',
       'GET /dlq',
       'POST /dlq/:id/replay',
       'POST /dlq/:id/clear',
@@ -575,6 +583,46 @@ describe('backend', () => {
     await routes.get('GET /relay')!(fakeReq(), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
     expect(broken.send).toHaveBeenCalledWith({ error: 'relay answered garbage' });
+  });
+
+  it('GET /relay/webhooks and /relay/deliveries answer what the remote relay says', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListWebhooks.mockResolvedValueOnce({ webhooks: [] });
+    const webhooks = fakeReply();
+    await routes.get('GET /relay/webhooks')!(fakeReq(), asReply(webhooks));
+    expect(webhooks.code).toHaveBeenCalledWith(200);
+    expect(webhooks.send).toHaveBeenCalledWith({ webhooks: [] });
+
+    mockListDeliveries.mockResolvedValueOnce({ deliveries: [] });
+    const deliveries = fakeReply();
+    await routes.get('GET /relay/deliveries')!(fakeReq({ query: { limit: '5', status: 'rejected' } }), asReply(deliveries));
+    expect(mockListDeliveries).toHaveBeenCalledWith(expect.any(String), { limit: '5', status: 'rejected' });
+    expect(deliveries.code).toHaveBeenCalledWith(200);
+  });
+
+  it.each([
+    ['a bad query', new InvalidQueryError('limit must be an integer between 1 and 200, got: "0"'), 400],
+    ['a relay that is not configured here', new RelayNotConfiguredError('No relay.yml in /cfg.'), 503],
+    ['a remote relay that refuses or fails', new RelayApiError('The relay refused the token', 401, 'unauthorized'), 502],
+    ['anything else', new Error('boom'), 500],
+  ])('GET /relay/deliveries answers the right status for %s', async (_name, error, status) => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListDeliveries.mockRejectedValueOnce(error);
+    const reply = fakeReply();
+    await routes.get('GET /relay/deliveries')!(fakeReq({ query: {} }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(status);
+    expect(reply.send).toHaveBeenCalledWith({ error: error.message });
+  });
+
+  it('GET /relay/webhooks uses the same status mapping', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListWebhooks.mockRejectedValueOnce(new RelayNotConfiguredError('No relay.yml in /cfg.'));
+    const reply = fakeReply();
+    await routes.get('GET /relay/webhooks')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(503);
   });
 
   it('POST /retry/:eventId answers 200 with the daemon answer when the retry was enqueued', async () => {

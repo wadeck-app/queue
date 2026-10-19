@@ -67,6 +67,15 @@
     {
       "kind": "page",
       "slot": "nav",
+      "label": "Queue Webhooks",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/webhooks-page.yaml"
+      }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
       "label": "Queue Logs",
       "view": {
         "type": "path",

@@ -5,17 +5,30 @@ import { getStatus } from './status.js';
 import { getActivity, getActivitySeries } from './activity.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
+import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, dlqOptions, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
 import { retryEvent } from './retry.js';
 import { getDaemonState } from './daemon.js';
 import { getRelayInfo } from './relay.js';
+import { listWebhooks, listDeliveries } from './relayWebhooks.js';
 import { listSubscribers } from './subscribers.js';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery } from './historyQuery.js';
 
 interface QueryParams { [key: string]: string | string[] | undefined }
+
+/** 400 bad query, 503 relay not configured here, 502 the remote relay failed or refused, 500 anything else. */
+function relayErrorStatus(err: unknown): number {
+  if (err instanceof InvalidQueryError) {
+    return 400;
+  }
+  if (err instanceof RelayNotConfiguredError) {
+    return 503;
+  }
+  return err instanceof RelayApiError ? 502 : 500;
+}
 
 /**
  * backendEntryPath target declared in manifest.json. app-core calls this once at module
@@ -133,6 +146,23 @@ export default function (ctx: ModuleContext): void {
       return reply.code(200).send(await getRelayInfo(configDir));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('GET', '/relay/webhooks', async (_req, reply) => {
+    try {
+      return reply.code(200).send(await listWebhooks(configDir));
+    } catch (err) {
+      return reply.code(relayErrorStatus(err)).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('GET', '/relay/deliveries', async (req, reply) => {
+    const query = (req as { query?: QueryParams }).query ?? {};
+    try {
+      return reply.code(200).send(await listDeliveries(configDir, query));
+    } catch (err) {
+      return reply.code(relayErrorStatus(err)).send({ error: getErrorMessage(err) });
     }
   });
 

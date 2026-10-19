@@ -1,0 +1,32 @@
+$sources:
+  webhooks:
+    url: GET /api/modules/queue/relay/webhooks
+  deliveries:
+    url: GET /api/modules/queue/relay/deliveries
+
+$type: PageContent
+sections:
+  - $type: PageHeader
+    title: Webhooks
+    subtitle: Asked to the remote relay with the relay token. Payloads are not shown (queue relay webhook history --payload).
+  - $type: DataTable
+    rows: $sources.webhooks.webhooks
+    emptyMessage: No webhook configured on the relay
+    columns:
+      - { key: "name", label: "Name" }
+      - { key: "source", label: "Source" }
+      - { key: "verified24h", label: "Verified 24 h" }
+      - { key: "rejected24h", label: "Rejected 24 h" }
+      - { key: "lastDeliveryAt", label: "Last delivery", format: "datetime" }
+      - { key: "payloadUrl", label: "Payload URL", mono: true }
+  - $type: PageHeader
+    title: Recent deliveries
+    subtitle: The latest 20, newest first.
+  - $type: DataTable
+    rows: $sources.deliveries.deliveries
+    emptyMessage: No delivery received yet
+    columns:
+      - { key: "receivedAt", label: "Received", format: "datetime" }
+      - { key: "eventType", label: "Event" }
+      - { key: "status", label: "Status" }
+      - { key: "summary", label: "Summary" }
