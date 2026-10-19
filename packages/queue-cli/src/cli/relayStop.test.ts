@@ -34,9 +34,9 @@ describe('relayStop', () => {
     it('returns 0 and writes [ok] relay client was not running to stderr', async () => {
       const client = createMockClient({ isRunning: vi.fn().mockResolvedValue(false) });
       const stderr: string[] = [];
-      const io = { stderr: { write: (s: string) => stderr.push(s) } };
+      const io = { stdout: { write: () => undefined }, stderr: { write: (s: string) => { stderr.push(s); } } };
 
-      const exitCode = await relayStop(client, tmpDir, io as any);
+      const exitCode = await relayStop(client, tmpDir, io);
 
       expect(exitCode).toBe(0);
       expect(stderr.join('')).toContain('[ok] relay client was not running');
@@ -50,9 +50,9 @@ describe('relayStop', () => {
         send: vi.fn().mockRejectedValue(new Error('Connection refused')),
       });
       const stderr: string[] = [];
-      const io = { stderr: { write: (s: string) => stderr.push(s) } };
+      const io = { stdout: { write: () => undefined }, stderr: { write: (s: string) => { stderr.push(s); } } };
 
-      const exitCode = await relayStop(client, tmpDir, io as any);
+      const exitCode = await relayStop(client, tmpDir, io);
 
       expect(exitCode).toBe(1);
       const output = stderr.join('');
@@ -73,9 +73,9 @@ describe('relayStop', () => {
         send: vi.fn().mockRejectedValue(new Error('Connection refused')),
       });
       const stderr: string[] = [];
-      const io = { stderr: { write: (s: string) => stderr.push(s) } };
+      const io = { stdout: { write: () => undefined }, stderr: { write: (s: string) => { stderr.push(s); } } };
 
-      const exitCode = await relayStop(client, tmpDir, io as any);
+      const exitCode = await relayStop(client, tmpDir, io);
 
       // Should be treated as idempotent success (case a), not hard failure (case b)
       expect(exitCode).toBe(0);
@@ -91,9 +91,9 @@ describe('relayStop', () => {
         send: vi.fn().mockResolvedValue(undefined),
       });
       const stdout: string[] = [];
-      const io = { stdout: { write: (s: string) => stdout.push(s) } };
+      const io = { stdout: { write: (s: string) => { stdout.push(s); } }, stderr: { write: () => undefined } };
 
-      const exitCode = await relayStop(client, tmpDir, io as any);
+      const exitCode = await relayStop(client, tmpDir, io);
 
       expect(exitCode).toBe(0);
       expect(stdout.join('')).toContain('[ok] relay client stopped');

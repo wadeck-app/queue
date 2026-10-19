@@ -188,7 +188,7 @@ describe('matchesPayload', () => {
     const payload = { value: NaN };
     const match = { value: NaN };
     // NaN !== NaN by definition of strict equality
-    expect(matchesPayload(payload, match as any)).toBe(false);
+    expect(matchesPayload(payload, match)).toBe(false);
   });
 
   it('returns false when intermediate value is undefined', () => {

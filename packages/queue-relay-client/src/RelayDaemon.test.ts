@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { createDaemonClient, type DaemonClient } from '@wadeck-app/singleton-daemon-kit';
 import { RELAY_DAEMON_PORT, startRelayDaemon, handleConnectionCrash, type RelayCommands } from './RelayDaemon.js';
 
@@ -247,7 +247,7 @@ describe('daemon stop command closes connection and prevents reconnect', () => {
   let daemonHandle: Awaited<ReturnType<typeof startRelayDaemon>> | null = null;
   let wsServer: WebSocketServer | null = null;
   let serverPort = 0;
-  let clientConnections: WebSocket[] = [];
+  let clientConnections: ServerSocket[] = [];
   let authMessagesReceived = 0;
   let closedConnections = 0;
 
@@ -260,10 +260,14 @@ describe('daemon stop command closes connection and prevents reconnect', () => {
     await new Promise<void>((resolve) => {
       wsServer!.once('listening', resolve);
     });
-    serverPort = (wsServer.address() as any).port;
+    const address = wsServer.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error(`The test server is not listening on a TCP port (address: ${String(address)})`);
+    }
+    serverPort = address.port;
 
     wsServer.on('connection', (ws) => {
-      clientConnections.push(ws as any);
+      clientConnections.push(ws);
       ws.on('message', (msg) => {
         const data = JSON.parse(msg.toString());
         if (data.type === 'auth') {
@@ -301,7 +305,7 @@ plugins:
   afterEach(async () => {
     // Close all server connections
     for (const ws of clientConnections) {
-      (ws as any).terminate?.();
+      ws.terminate();
     }
     clientConnections = [];
 
@@ -365,14 +369,14 @@ plugins:
     // Mock setTimeout to capture the safety timeout
     const origSetTimeout = global.setTimeout;
     const mockSetTimeout = vi.fn((fn: () => void, ms: number) => {
-      const id = origSetTimeout(fn, ms);
+      const timer = origSetTimeout(fn, ms);
       timeouts.push({ fn, ms, unref: false });
-      return {
-        unref: () => {
-          timeouts[timeouts.length - 1].unref = true;
-          return (id as any).unref();
-        },
-      } as any;
+      const realUnref = timer.unref.bind(timer);
+      timer.unref = () => {
+        timeouts[timeouts.length - 1].unref = true;
+        return realUnref();
+      };
+      return timer;
     });
     vi.stubGlobal('setTimeout', mockSetTimeout);
 

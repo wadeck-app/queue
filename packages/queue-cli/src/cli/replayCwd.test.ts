@@ -2,13 +2,18 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import type { HistoryEntry } from '@wadeck-app/queue-core';
 import { resolveReplayCwd } from './replayCwd.js';
+
+function entryWith(fields: { cwd?: string }): HistoryEntry {
+  return { ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'test', subscribers: [], orphan: false, ...fields };
+}
 
 describe('resolveReplayCwd', () => {
   it('returns recorded cwd when it exists', () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'replay-project-'));
     try {
-      const entry = { eventId: 'e1', cwd: projectDir } as any;
+      const entry = entryWith({ cwd: projectDir });
       const result = resolveReplayCwd(entry, '/current/dir');
 
       expect(result).toEqual({ cwd: projectDir, warning: undefined });
@@ -18,7 +23,7 @@ describe('resolveReplayCwd', () => {
   });
 
   it('returns warning when cwd is not recorded with exact message', () => {
-    const entry = { eventId: 'e1' /* no cwd */ } as any;
+    const entry = entryWith({});
     const currentDir = '/current/dir';
     const result = resolveReplayCwd(entry, currentDir);
 
@@ -30,7 +35,7 @@ describe('resolveReplayCwd', () => {
 
   it('returns warning when cwd is recorded but does not exist with exact message', () => {
     const missingDir = '/this/path/definitely/does/not/exist/test-' + Math.random();
-    const entry = { eventId: 'e1', cwd: missingDir } as any;
+    const entry = entryWith({ cwd: missingDir });
     const currentDir = '/current/dir';
     const result = resolveReplayCwd(entry, currentDir);
 
@@ -42,7 +47,7 @@ describe('resolveReplayCwd', () => {
 
   it('accepts custom existsSync function', () => {
     const fakeExistsSync = vi.fn().mockReturnValue(true);
-    const entry = { eventId: 'e1', cwd: '/project/dir' } as any;
+    const entry = entryWith({ cwd: '/project/dir' });
     const result = resolveReplayCwd(entry, '/current/dir', fakeExistsSync);
 
     expect(result).toEqual({ cwd: '/project/dir', warning: undefined });

@@ -280,8 +280,7 @@ describe('secrets', () => {
       await fs.writeFile(envFile, 'QUEUE_RELAY_TOKEN=token\n');
 
       const mockReadFile = vi.fn(() => {
-        const err = new Error('Permission denied') as any;
-        err.code = 'EACCES';
+        const err = Object.assign(new Error('Permission denied'), { code: 'EACCES' });
         throw err;
       });
 
@@ -302,8 +301,7 @@ describe('secrets', () => {
       await fs.writeFile(envFile, 'QUEUE_RELAY_TOKEN=token\n');
 
       const mockReadFile = vi.fn(() => {
-        const err = new Error('Permission denied') as any;
-        err.code = 'EACCES';
+        const err = Object.assign(new Error('Permission denied'), { code: 'EACCES' });
         throw err;
       });
 
@@ -324,8 +322,7 @@ describe('secrets', () => {
       await fs.writeFile(envFile, 'QUEUE_RELAY_TOKEN=super-secret-token-value\n');
 
       const mockReadFile = vi.fn(() => {
-        const err = new Error('Permission denied') as any;
-        err.code = 'EACCES';
+        const err = Object.assign(new Error('Permission denied'), { code: 'EACCES' });
         throw err;
       });
 

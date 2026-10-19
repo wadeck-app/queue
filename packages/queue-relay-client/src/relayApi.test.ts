@@ -206,8 +206,7 @@ describe('relayApi', () => {
             // Wait for abort
             return new Promise((_, reject) => {
               opts.signal?.addEventListener('abort', () => {
-                const error = new Error('The operation was aborted');
-                (error as any).name = 'AbortError';
+                const error = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
                 reject(error);
               });
             });

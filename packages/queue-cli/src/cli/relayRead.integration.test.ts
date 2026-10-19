@@ -170,7 +170,11 @@ describe('relayRead integration', () => {
       });
 
       server.listen(0, '127.0.0.1', () => {
-        port = (server.address() as any).port;
+        const address = server.address();
+        if (address === null || typeof address === 'string') {
+          throw new Error(`The test server is not listening on a TCP port (address: ${String(address)})`);
+        }
+        port = address.port;
         resolve();
       });
     });

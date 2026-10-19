@@ -3,7 +3,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import yaml from 'js-yaml';
-import { DEFAULT_HISTORY_LIMIT } from '@wadeck-app/queue-core';
+import { DEFAULT_HISTORY_LIMIT, isRecord } from '@wadeck-app/queue-core';
+
+function asRecord(value: unknown): Record<string, unknown> {
+	if (!isRecord(value)) {
+		throw new Error(`Expected an object in history-page.yaml, got: ${JSON.stringify(value)}`);
+	}
+	return value;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -17,15 +24,13 @@ describe('history-page.yaml pagination structure', () => {
 	const doc = yaml.load(yamlContent) as YamlDoc;
 
 	it('$sources.history.url resolves to GET endpoint', () => {
-		const historySource = (doc.$sources as Record<string, unknown>)
-			?.history as Record<string, unknown>;
-		expect(historySource?.url).toBe('GET /api/modules/queue/history');
+		const historySource = asRecord(asRecord(doc.$sources).history);
+		expect(historySource.url).toBe('GET /api/modules/queue/history');
 	});
 
 	it('$sources.history.params deep-equals page/limit from urlParam', () => {
-		const historySource = (doc.$sources as Record<string, unknown>)
-			?.history as Record<string, unknown>;
-		const params = historySource?.params as Record<string, unknown>;
+		const historySource = asRecord(asRecord(doc.$sources).history);
+		const params = asRecord(historySource.params);
 		expect(params).toEqual({
 			page: '$urlParam.page',
 			limit: '$urlParam.size',

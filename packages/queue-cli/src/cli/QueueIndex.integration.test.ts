@@ -70,7 +70,7 @@ describe('bundled app-module manifest (integration)', () => {
       expect(existsSync(join(appModuleDir, point.view.value))).toBe(true);
     }
     // app-core's loader needs `default` to be the function itself: the packaged CJS bundle collapses module.exports
-    const backend = createRequire(import.meta.url)(join(appModuleDir, manifest.backendEntryPath)) as unknown;
+    const backend: unknown = createRequire(import.meta.url)(join(appModuleDir, manifest.backendEntryPath));
     expect(typeof backend).toBe('function');
     expect(existsSync(join(appModuleDir, 'src'))).toBe(false);
   });

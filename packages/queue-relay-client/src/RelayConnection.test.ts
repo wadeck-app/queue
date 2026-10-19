@@ -5,6 +5,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WebSocketServer } from 'ws';
+import { isRecord } from '@wadeck-app/queue-core';
 import { RelayConnection } from './RelayConnection.js';
 
 // Mock push.js before RelayConnection imports it
@@ -304,13 +305,12 @@ describe('RelayConnection', () => {
 
       // Track connectOnce calls
       let connectOnceCalls = 0;
-      const originalWS = (global as any).WebSocket;
-      (global as any).WebSocket = class {
+      vi.stubGlobal('WebSocket', class {
         constructor() {
           connectOnceCalls++;
           throw new Error('Should not attempt connection');
         }
-      };
+      });
 
       try {
         const connection = new RelayConnection({
@@ -335,7 +335,7 @@ describe('RelayConnection', () => {
         // (connectOnce only called if plugins are configured)
         expect(connectOnceCalls).toBe(0);
       } finally {
-        (global as any).WebSocket = originalWS;
+        vi.unstubAllGlobals();
       }
     });
   });
@@ -718,7 +718,7 @@ plugins:
 
         const connection = new RelayConnection({
           configDir: tmpDir,
-          ...injectedOptions as any,
+          ...injectedOptions,
           onLog: (line) => logs.push(line),
         });
 
@@ -809,7 +809,7 @@ plugins:
 
         const connection = new RelayConnection({
           configDir: tmpDir,
-          ...injectedOptions as any,
+          ...injectedOptions,
           onLog: (line) => logs.push(line),
         });
 
@@ -1239,11 +1239,12 @@ plugins:
           const startPromise = connection.start();
           await waitFor(() => receivedMessages.some((m) => m.type === 'subscribe'), 2000);
 
-          const subscribeMsg = receivedMessages.find((m) => m.type === 'subscribe') as any;
+          const subscribeMsg = receivedMessages.find((m) => m.type === 'subscribe');
           expect(subscribeMsg).toBeDefined();
-          expect(subscribeMsg.filter.source).toBe('github');
-          expect(subscribeMsg.filter.eventType).toEqual(expect.arrayContaining(['push', 'pull_request']));
-          expect(subscribeMsg.filter.payloadMatch).toEqual({});
+          const filter = isRecord(subscribeMsg?.filter) ? subscribeMsg.filter : {};
+          expect(filter.source).toBe('github');
+          expect(filter.eventType).toEqual(expect.arrayContaining(['push', 'pull_request']));
+          expect(filter.payloadMatch).toEqual({});
 
           // Verify only ONE subscribe message (not multiple per subscription)
           const subscribeCount = receivedMessages.filter((m) => m.type === 'subscribe').length;
@@ -1308,10 +1309,11 @@ plugins:
           const startPromise = connection.start();
           await waitFor(() => receivedMessages.some((m) => m.type === 'subscribe'), 2000);
 
-          const subscribeMsg = receivedMessages.find((m) => m.type === 'subscribe') as any;
+          const subscribeMsg = receivedMessages.find((m) => m.type === 'subscribe');
           expect(subscribeMsg).toBeDefined();
+          const filter = isRecord(subscribeMsg?.filter) ? subscribeMsg.filter : {};
           // Any subscription with no eventType means send empty array (all events)
-          expect(subscribeMsg.filter.eventType).toEqual([]);
+          expect(filter.eventType).toEqual([]);
 
           connection.stop();
           await startPromise;

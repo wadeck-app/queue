@@ -209,7 +209,7 @@ describe('RelayLogger', () => {
     tmpDir = makeTmpDir();
     const logPath = join(tmpDir, 'relay.log');
 
-    const logger = createRelayLogger(logPath) as any;
+    const logger = createRelayLogger(logPath);
 
     // Should have getLastError method
     expect(typeof logger.getLastError).toBe('function');
@@ -222,7 +222,7 @@ describe('RelayLogger', () => {
     writeFileSync(parentPath, 'not a directory');
 
     const logPath2 = join(parentPath, 'relay.log');
-    const logger2 = createRelayLogger(logPath2) as any;
+    const logger2 = createRelayLogger(logPath2);
 
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
@@ -232,7 +232,7 @@ describe('RelayLogger', () => {
     // Now getLastError should return a string
     const lastError = logger2.getLastError();
     expect(typeof lastError).toBe('string');
-    expect(lastError.length).toBeGreaterThan(0);
+    expect(lastError?.length).toBeGreaterThan(0);
     expect(lastError).toContain(logPath2);
 
     stderrSpy.mockRestore();
@@ -270,7 +270,7 @@ describe('RelayLogger', () => {
     writeFileSync(parentPath, 'not a directory');
 
     const logPath2 = join(parentPath, 'relay.log');
-    const logger = createRelayLogger(logPath2) as any;
+    const logger = createRelayLogger(logPath2);
 
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
