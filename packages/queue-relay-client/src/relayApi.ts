@@ -322,6 +322,11 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
   };
 }
 
+/** A property of an unknown JSON value; undefined unless the value is an object that has it. */
+function field(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined;
+}
+
 /**
  * Summarize a GitHub webhook payload into a human-readable string (max 110 chars).
  * Returns "(no summary)" if the payload shape is unknown.
@@ -338,87 +343,84 @@ export function summarizePayload(
   const parts: string[] = [];
 
   // Repository name
-  const repo = (payload as any).repository?.full_name;
+  const repo = field(field(payload, 'repository'), 'full_name');
   if (typeof repo === 'string') {
     parts.push(repo);
   }
 
   // Actor (sender login)
-  const sender = (payload as any).sender?.login;
+  const sender = field(field(payload, 'sender'), 'login');
   if (typeof sender === 'string') {
     parts.push(`by ${sender}`);
   }
 
   // Action
-  const action = (payload as any).action;
+  const action = field(payload, 'action');
   if (typeof action === 'string') {
     parts.push(`action=${action}`);
   }
 
   // Branch/ref (strip refs/heads/ prefix)
-  let ref = (payload as any).ref;
+  const ref = field(payload, 'ref');
   if (typeof ref === 'string') {
-    if (ref.startsWith('refs/heads/')) {
-      ref = ref.slice(11);
-    }
-    parts.push(ref);
+    parts.push(ref.startsWith('refs/heads/') ? ref.slice(11) : ref);
   }
 
   // Commit message first line
-  const commitMsg = (payload as any).head_commit?.message;
+  const commitMsg = field(field(payload, 'head_commit'), 'message');
   if (typeof commitMsg === 'string') {
     const firstLine = commitMsg.split('\n')[0];
     parts.push(`"${firstLine}"`);
   }
 
   // Commits count
-  const commits = (payload as any).commits;
+  const commits = field(payload, 'commits');
   if (Array.isArray(commits)) {
     parts.push(`${commits.length} commits`);
   }
 
   // Pull request number and title
-  const pr = (payload as any).pull_request;
+  const pr = field(payload, 'pull_request');
   if (typeof pr === 'object' && pr !== null) {
-    const num = (pr as any).number;
-    const title = (pr as any).title;
+    const num = field(pr, 'number');
+    const title = field(pr, 'title');
     if (typeof num === 'number' && typeof title === 'string') {
       parts.push(`#${num} ${title}`);
     }
   }
 
   // Issue number and title
-  const issue = (payload as any).issue;
+  const issue = field(payload, 'issue');
   if (typeof issue === 'object' && issue !== null) {
-    const num = (issue as any).number;
-    const title = (issue as any).title;
+    const num = field(issue, 'number');
+    const title = field(issue, 'title');
     if (typeof num === 'number' && typeof title === 'string') {
       parts.push(`#${num} ${title}`);
     }
   }
 
   // Workflow run name and conclusion
-  const workflow = (payload as any).workflow_run;
+  const workflow = field(payload, 'workflow_run');
   if (typeof workflow === 'object' && workflow !== null) {
-    const name = (workflow as any).name;
-    const conclusion = (workflow as any).conclusion;
+    const name = field(workflow, 'name');
+    const conclusion = field(workflow, 'conclusion');
     if (typeof name === 'string' && typeof conclusion === 'string') {
       parts.push(`${name} ${conclusion}`);
     }
   }
 
   // Check run name and conclusion
-  const checkRun = (payload as any).check_run;
+  const checkRun = field(payload, 'check_run');
   if (typeof checkRun === 'object' && checkRun !== null) {
-    const name = (checkRun as any).name;
-    const conclusion = (checkRun as any).conclusion;
+    const name = field(checkRun, 'name');
+    const conclusion = field(checkRun, 'conclusion');
     if (typeof name === 'string' && typeof conclusion === 'string') {
       parts.push(`${name} ${conclusion}`);
     }
   }
 
   // Comment body (first 40 chars)
-  const comment = (payload as any).comment?.body;
+  const comment = field(field(payload, 'comment'), 'body');
   if (typeof comment === 'string') {
     const truncated = comment.length > 40 ? comment.slice(0, 40) + '…' : comment;
     parts.push(`comment: "${truncated}"`);
