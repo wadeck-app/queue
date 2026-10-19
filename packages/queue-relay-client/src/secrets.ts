@@ -106,7 +106,7 @@ export function resolveRelayToken(deps: ResolveRelayTokenDeps): ResolveRelayToke
       secretsFileLacksToken = true;
     } catch (err) {
       // If the file exists but is unreadable (e.g., EACCES), throw with details
-      const error = err as any;
+      const error = err as NodeJS.ErrnoException;
       throw new Error(
         `[queue-relay-client] Failed to read ${secretsEnvFile}: ${error.code ?? 'unknown error'} (${error.message})`
       );

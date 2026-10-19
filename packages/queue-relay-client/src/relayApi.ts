@@ -84,8 +84,8 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
       return response;
     } catch (err) {
       // Distinguish between timeout and network error
-      const errName = (err as any)?.name;
-      const errCode = (err as any)?.code;
+      const errName = field(err, 'name');
+      const errCode = field(err, 'code');
       const errMsg = (err as Error).message || String(err);
 
       if (errName === 'AbortError' || errCode === 'ABORT_ERR') {

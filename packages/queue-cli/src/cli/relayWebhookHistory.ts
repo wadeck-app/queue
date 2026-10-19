@@ -5,6 +5,7 @@
 
 import type { DeliveryInfo, DeliveryQuery } from '@wadeck-app/queue-relay-client';
 import { summarizePayload } from '@wadeck-app/queue-relay-client';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 export interface RelayApiClient {
   listDeliveries(query?: DeliveryQuery): Promise<DeliveryInfo[]>;
@@ -195,7 +196,7 @@ export async function relayWebhookHistory(
 
     return 0;
   } catch (err) {
-    const message = (err as any)?.message ?? String(err);
+    const message = getErrorMessage(err);
     io.stderr.write(`[fail] ${message}\n`);
     return 1;
   }

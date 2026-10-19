@@ -4,6 +4,7 @@
  */
 
 import type { WebhookConfigInfo } from '@wadeck-app/queue-relay-client';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 export interface RelayApiClient {
   listWebhookConfigs(): Promise<WebhookConfigInfo[]>;
@@ -66,7 +67,7 @@ export async function relayWebhookList(
 
     return 0;
   } catch (err) {
-    const message = (err as any)?.message ?? String(err);
+    const message = getErrorMessage(err);
     io.stderr.write(`[fail] ${message}\n`);
     return 1;
   }

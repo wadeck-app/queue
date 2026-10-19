@@ -110,7 +110,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
   const deps: ShutdownDeps = shutdownDeps || {
     setTimeout: (fn, ms) => {
       const id = globalThis.setTimeout(fn, ms);
-      return { unref: () => { (id as any).unref(); } };
+      return { unref: () => { id.unref(); } };
     },
     exit: process.exit,
     log: (line) => relayLogger(line),
