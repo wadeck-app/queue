@@ -1,3 +1,4 @@
+import { isRecord } from '@wadeck-app/queue-core';
 /**
  * Matches a payload against a filter with support for dotted paths.
  * Returns true if all match conditions are satisfied (AND logic).
@@ -43,13 +44,13 @@ export function matchesPayload(
     let current: unknown = payload;
     for (const segment of segments) {
       // Current must be an object to traverse further
-      if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      if (!isRecord(current)) {
         // Path doesn't exist or intermediate is not an object
         return false;
       }
 
       // Get the next level
-      current = (current as Record<string, unknown>)[segment];
+      current = current[segment];
     }
 
     // Strict equality check

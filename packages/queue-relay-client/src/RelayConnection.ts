@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { getErrorMessage } from '@wadeck-app/queue-core';
+import { getErrorMessage, isRecord } from '@wadeck-app/queue-core';
 import { loadRelayConfig, type RelayConfig, type PluginConfig } from './config.js';
 import { loadPlugin, type RelayPlugin, type RelayEnvelope } from './plugin-api.js';
 import { ensureDaemonRunning, pushToQueue } from './push.js';
@@ -345,9 +345,9 @@ export class RelayConnection {
         // Track activity for heartbeat liveness
         this.lastActivityAt = Date.now();
         const rawStr = String(raw);
-        const msg = JSON.parse(rawStr) as Record<string, unknown>;
+        const msg: unknown = JSON.parse(rawStr);
         // Start heartbeat after successful authentication
-        if (msg.type === 'authenticated') {
+        if (isRecord(msg) && msg.type === 'authenticated') {
           startHeartbeat();
         }
         void this.handleMessage(rawStr, config).catch((err) => {
@@ -469,7 +469,10 @@ export class RelayConnection {
     raw: string,
     config: RelayConfig
   ): Promise<void> {
-    const msg = JSON.parse(raw) as Record<string, unknown>;
+    const msg: unknown = JSON.parse(raw);
+    if (!isRecord(msg)) {
+      throw new Error(`The relay sent a message that is not a JSON object: ${raw.slice(0, 100)}`);
+    }
     switch (msg.type) {
       case 'authenticated':
         this.connected = true;

@@ -1,3 +1,4 @@
+import { isRecord } from '@wadeck-app/queue-core';
 /**
  * REST API client for the relay webhook service.
  * Handles authentication, error handling with specific error kinds,
@@ -175,7 +176,7 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
     }
 
     // Validate response shape
-    if (typeof json !== 'object' || json === null) {
+    if (!isRecord(json)) {
       throw new RelayApiError(
         `Unexpected response from /api/webhook-configs: response is not an object`,
         response.status,
@@ -183,7 +184,7 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
       );
     }
 
-    const obj = json as Record<string, unknown>;
+    const obj = json;
     if (typeof obj.success !== 'boolean' || !obj.success) {
       throw new RelayApiError(
         `Unexpected response from /api/webhook-configs: missing success field`,
@@ -288,7 +289,7 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
     }
 
     // Validate response shape
-    if (typeof json !== 'object' || json === null) {
+    if (!isRecord(json)) {
       throw new RelayApiError(
         `Unexpected response from /api/webhook-history: response is not an object`,
         response.status,
@@ -296,7 +297,7 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
       );
     }
 
-    const obj = json as Record<string, unknown>;
+    const obj = json;
     if (typeof obj.success !== 'boolean' || !obj.success) {
       throw new RelayApiError(
         `Unexpected response from /api/webhook-history: missing success field`,

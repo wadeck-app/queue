@@ -6,7 +6,7 @@
  * shared infrastructure used BY every plugin; it is not a plugin itself.
  */
 
-import { getErrorMessage } from '@wadeck-app/queue-core';
+import { getErrorMessage, isRecord } from '@wadeck-app/queue-core';
 
 export interface RelayEnvelope {
   source: string;
@@ -124,8 +124,8 @@ export async function loadPlugin(moduleName: string): Promise<RelayPlugin> {
 
   // Dynamic import
   try {
-    const mod = (await import(moduleName)) as Record<string, unknown>;
-    const candidate = mod.default ?? mod.plugin ?? mod;
+    const mod: unknown = await import(moduleName);
+    const candidate = isRecord(mod) ? (mod.default ?? mod.plugin ?? mod) : mod;
     if (!isRelayPlugin(candidate)) {
       throw new Error(
         `[queue-relay-client] Module "${moduleName}" does not export a valid RelayPlugin ` +

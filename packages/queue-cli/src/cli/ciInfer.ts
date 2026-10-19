@@ -8,7 +8,7 @@
  */
 
 import { load as yamlLoad } from 'js-yaml';
-import { getErrorMessage } from '@wadeck-app/queue-core';
+import { getErrorMessage, isRecord } from '@wadeck-app/queue-core';
 
 export interface PushFilters {
   branches?: string[];
@@ -58,11 +58,11 @@ export function parseWorkflowFile(file: string, content: string): WorkflowDef {
   } catch (err) {
     return { name: file, file, push: null, pullRequest: false, unreadable: getErrorMessage(err) };
   }
-  if (!doc || typeof doc !== 'object') {
+  if (!isRecord(doc)) {
     return { name: file, file, push: null, pullRequest: false, unreadable: 'not a YAML mapping' };
   }
 
-  const record = doc as Record<string, unknown>;
+  const record = doc;
   const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : file;
   // YAML 1.1 parsers may turn the bare key `on` into `true`; js-yaml keeps it a string, but stay tolerant
   const on = record.on ?? record['true'];
@@ -70,7 +70,7 @@ export function parseWorkflowFile(file: string, content: string): WorkflowDef {
   let push: PushFilters | null = null;
   let pullRequest = false;
   const readPush = (cfg: unknown): PushFilters => {
-    const c = (cfg && typeof cfg === 'object' ? cfg : {}) as Record<string, unknown>;
+    const c = isRecord(cfg) ? cfg : {};
     return {
       branches: asStringList(c.branches),
       branchesIgnore: asStringList(c['branches-ignore']),
@@ -94,8 +94,8 @@ export function parseWorkflowFile(file: string, content: string): WorkflowDef {
     if (on.includes('pull_request')) {
       pullRequest = true;
     }
-  } else if (on && typeof on === 'object') {
-    const triggers = on as Record<string, unknown>;
+  } else if (isRecord(on)) {
+    const triggers = on;
     if ('push' in triggers) {
       push = readPush(triggers.push);
     }

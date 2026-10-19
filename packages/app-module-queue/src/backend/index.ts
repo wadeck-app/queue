@@ -1,6 +1,6 @@
 // violations-suppress: ts/no-barrel-index app-core requires the backend entry of an app-module to be src/backend/index.ts (app-core-cli check)
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
-import { getErrorMessage, getQueueConfigDir } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, isRecord } from '@wadeck-app/queue-core';
 import { getStatus } from './status.js';
 import { getActivity } from './activity.js';
 import { listHistory, getHistoryEntry } from './history.js';
@@ -140,14 +140,13 @@ export default function (ctx: ModuleContext): void {
     const body = (req as { body: unknown }).body;
 
     // Validate body before try block
-    if (body === null || body === undefined || typeof body !== 'object') {
+    if (!isRecord(body)) {
       return reply.code(400).send({
         error: `POST /push expects a JSON body { event: string, payload?: any, cwd?: string, timeout?: number }; got: ${JSON.stringify(body)}`,
       });
     }
 
-    const bodyObj = body as Record<string, unknown>;
-    const { event, payload, cwd, timeout } = bodyObj;
+    const { event, payload, cwd, timeout } = body;
 
     // Validate event
     if (typeof event !== 'string' || event === '') {
