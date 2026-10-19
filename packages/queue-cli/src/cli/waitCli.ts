@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { join as pathJoin } from 'node:path';
-import { HistoryReader } from '@wadeck-app/queue-core';
+import { HistoryReader, getErrorMessage } from '@wadeck-app/queue-core';
 import { warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { createRelayClient } from './RelayClient.js';
@@ -223,7 +223,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     timeoutMs = parseDuration(collectValues(rest, '--timeout')[0] ?? '15m');
     settleMs = parseDuration(collectValues(rest, '--settle')[0] ?? '20s');
   } catch (err) {
-    return fail(`${err instanceof Error ? err.message : String(err)} (durations look like 30s, 15m, 1h).`);
+    return fail(`${getErrorMessage(err)} (durations look like 30s, 15m, 1h).`);
   }
 
   const explicitWorkflows = collectValues(rest, '--workflow');

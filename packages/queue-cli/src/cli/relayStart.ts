@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@wadeck-app/queue-core';
 import { join } from 'node:path';
 import type { RelayStopIO } from './relayStop.js';
 import type { DaemonClient } from '@wadeck-app/singleton-daemon-kit';
@@ -41,7 +42,7 @@ export async function relayStart(deps: RelayStartDeps, configDir: string): Promi
     config = deps.loadConfig(configDir);
   } catch (err) {
     // Validation error: invalid YAML or schema violation (case c)
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = getErrorMessage(err);
     deps.io.stderr.write(`[fail] ${errorMsg}\n`);
     return 1;
   }
@@ -84,7 +85,7 @@ export async function relayStart(deps: RelayStartDeps, configDir: string): Promi
     daemonScript = deps.resolveDaemonScript();
     queueDaemonScript = deps.getQueueDaemonScript();
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = getErrorMessage(err);
     deps.io.stderr.write(`[fail] The relay daemon script was not found (${errorMsg}).\n`);
     deps.io.stderr.write(`Reinstall or update the queue CLI ('queue cli update'), or use a development build of the queue repo.\n`);
     return 1;

@@ -2,6 +2,7 @@ import { startRelayDaemon, registerBuiltinPlugin } from '@wadeck-app/queue-relay
 import githubPlugin from '@wadeck-app/plugin-github';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 // Register GitHub plugin as built-in
 registerBuiltinPlugin('@wadeck-app/plugin-github', githubPlugin, ['github']);
@@ -16,7 +17,7 @@ if (!configDir) {
 // Start relay daemon with error handling
 startRelayDaemon(configDir)
   .catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     const errorMsg = `[relay] Relay daemon failed to start: ${message}`;
     console.error(errorMsg);
 

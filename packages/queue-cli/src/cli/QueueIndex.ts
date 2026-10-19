@@ -624,7 +624,7 @@ Both commands make exactly one HTTP request to the relay, using the relay token 
     try {
       config = loadRelayConfig(configDir);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = getErrorMessage(err);
       process.stderr.write(`[fail] ${errorMsg}\n`);
       process.exit(1);
     }

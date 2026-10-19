@@ -8,6 +8,7 @@
  */
 
 import { load as yamlLoad } from 'js-yaml';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 
 export interface PushFilters {
   branches?: string[];
@@ -51,7 +52,7 @@ export function parseWorkflowFile(file: string, content: string): WorkflowDef {
   try {
     doc = yamlLoad(content);
   } catch (err) {
-    return { name: file, file, push: null, pullRequest: false, unreadable: err instanceof Error ? err.message : String(err) };
+    return { name: file, file, push: null, pullRequest: false, unreadable: getErrorMessage(err) };
   }
   if (!doc || typeof doc !== 'object') return { name: file, file, push: null, pullRequest: false, unreadable: 'not a YAML mapping' };
 

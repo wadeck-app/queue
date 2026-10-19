@@ -6,6 +6,8 @@
  * shared infrastructure used BY every plugin; it is not a plugin itself.
  */
 
+import { getErrorMessage } from '@wadeck-app/queue-core';
+
 export interface RelayEnvelope {
   source: string;
   webhookConfigId: string;
@@ -132,7 +134,7 @@ export async function loadPlugin(moduleName: string): Promise<RelayPlugin> {
   } catch (err) {
     const builtinList = listBuiltinPlugins();
     const builtinDesc = builtinList.length > 0 ? builtinList.join(', ') : 'none';
-    const originalMessage = err instanceof Error ? err.message : String(err);
+    const originalMessage = getErrorMessage(err);
     const newError = new Error(
       `Cannot load relay plugin module "${moduleName}": ${originalMessage}. ` +
       `Built-in plugins: ${builtinDesc}. ` +
