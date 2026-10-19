@@ -5,6 +5,7 @@ import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryE
 const {
   mockGetStatus,
   mockGetActivity,
+  mockGetActivitySeries,
   mockListHistory,
   mockGetHistoryEntry,
   mockReplayEvent,
@@ -20,6 +21,7 @@ const {
 } = vi.hoisted(() => ({
   mockGetStatus: vi.fn(),
   mockGetActivity: vi.fn(),
+  mockGetActivitySeries: vi.fn(),
   mockListHistory: vi.fn(),
   mockGetHistoryEntry: vi.fn(),
   mockReplayEvent: vi.fn(),
@@ -35,7 +37,7 @@ const {
 }));
 
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
-vi.mock('./activity.js', () => ({ getActivity: mockGetActivity }));
+vi.mock('./activity.js', () => ({ getActivity: mockGetActivity, getActivitySeries: mockGetActivitySeries }));
 vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: mockGetHistoryEntry }));
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 // dlqOptions stays the real one: the route answer carries its output
@@ -99,6 +101,7 @@ describe('backend', () => {
     expect([...routes.keys()]).toEqual([
       'GET /status',
       'GET /activity',
+      'GET /activity/series',
       'GET /history',
       'GET /history/:eventId',
       'POST /history/:eventId/replay',
@@ -494,6 +497,22 @@ describe('backend', () => {
     const reply = fakeReply();
     await routes.get('POST /dlq/:id/replay')!(fakeReq({ params: { id: 'd1' } }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(503);
+  });
+
+  it('GET /activity/series answers the series, and 500 with the reason when the history cannot be read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetActivitySeries.mockReturnValueOnce({ lastHour: [{ label: '12:00', events: 1 }], lastDay: [] });
+    const ok = fakeReply();
+    await routes.get('GET /activity/series')!(fakeReq(), asReply(ok));
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith({ lastHour: [{ label: '12:00', events: 1 }], lastDay: [] });
+
+    mockGetActivitySeries.mockImplementationOnce(() => { throw new Error('EACCES: history'); });
+    const broken = fakeReply();
+    await routes.get('GET /activity/series')!(fakeReq(), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: history' });
   });
 
   it('GET /logs forwards the query to getLogs', async () => {

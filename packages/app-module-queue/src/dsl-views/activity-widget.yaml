@@ -1,6 +1,8 @@
 $sources:
   activity:
     url: GET /api/modules/queue/activity
+  series:
+    url: GET /api/modules/queue/activity/series
 
 $type: VerticalStack
 gap: gap-2
@@ -14,3 +16,11 @@ items:
   - $type: StatTile
     label: Events, last 24 h
     value: $sources.activity.last24Hours
+  # The hourly series (/activity/series lastDay) waits for a number format on Chart: its y axis prints 1753 as "1.8 KB".
+  - $type: Chart
+    data: $sources.series.lastHour
+    xAxisKey: label
+    xAxisType: category
+    height: 140
+    series:
+      - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "#3b82f6" }

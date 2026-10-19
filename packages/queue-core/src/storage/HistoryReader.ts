@@ -136,7 +136,37 @@ export class HistoryReader {
     if (windowsMs.length === 0) {
       return counts;
     }
-    const oldestDay = new Date(nowMs - Math.max(...windowsMs)).toISOString().slice(0, 10);
+    this.forEachTrigger(nowMs, Math.max(...windowsMs), (ts) => {
+      windowsMs.forEach((window, i) => {
+        if (ts >= nowMs - window) {
+          counts[i]!++;
+        }
+      });
+    });
+    return counts;
+  }
+
+  /**
+   * How many events were pushed in each of the last `bucketCount` buckets of `bucketMs`, oldest first. The buckets
+   * are aligned on the local clock (a one-hour bucket starts on the hour) and the last one is the current, partial
+   * one: `startMs` is the start of the first bucket. Same cost and same line matching as {@link countTriggers}.
+   */
+  bucketTriggers(nowMs: number, bucketMs: number, bucketCount: number): { startMs: number; counts: number[] } {
+    const counts = new Array<number>(bucketCount).fill(0);
+    const offsetMs = -new Date(nowMs).getTimezoneOffset() * 60_000;
+    const currentStartMs = Math.floor((nowMs + offsetMs) / bucketMs) * bucketMs - offsetMs;
+    const startMs = currentStartMs - (bucketCount - 1) * bucketMs;
+    this.forEachTrigger(nowMs, nowMs - startMs, (ts) => {
+      if (ts >= startMs) {
+        counts[Math.floor((ts - startMs) / bucketMs)]!++;
+      }
+    });
+    return { startMs, counts };
+  }
+
+  /** Calls `visit` with the time of every trigger record in the `lookbackMs` before `nowMs` (and none after it). */
+  private forEachTrigger(nowMs: number, lookbackMs: number, visit: (ts: number) => void): void {
+    const oldestDay = new Date(nowMs - lookbackMs).toISOString().slice(0, 10);
     for (const file of this.listFiles()) {
       if (file.slice(0, 10) < oldestDay) {
         continue;
@@ -151,14 +181,9 @@ export class HistoryReader {
         if (Number.isNaN(ts) || ts > nowMs) {
           continue;
         }
-        windowsMs.forEach((window, i) => {
-          if (ts >= nowMs - window) {
-            counts[i]!++;
-          }
-        });
+        visit(ts);
       }
     }
-    return counts;
   }
 
   private listFiles(): string[] {

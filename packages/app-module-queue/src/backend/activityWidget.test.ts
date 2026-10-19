@@ -16,18 +16,37 @@ describe('activity-widget.yaml', () => {
   });
 
   // Dashboard columns are about 270 px wide: three tiles in a row wrap their labels and overflow (seen in agent-browser)
-  it('is a column of three tiles; `items` is the key the stack reads (a `children` key renders blank)', () => {
+  it('is a column of three tiles and the 5-minute chart; `items` is the key the stack reads (a `children` key renders blank)', () => {
     expect(doc['$type']).toBe('VerticalStack');
     expect(doc['children']).toBeUndefined();
-    expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile']);
+    expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile', 'Chart']);
   });
 
   it('shows the last 5 minutes, 60 minutes and 24 hours, in that order', () => {
-    expect(items.map((item) => item['label'])).toEqual(['Events, last 5 min', 'Events, last 60 min', 'Events, last 24 h']);
-    expect(items.map((item) => item['value'])).toEqual([
+    const tiles = items.filter((item) => item['$type'] === 'StatTile');
+    expect(tiles.map((item) => item['label'])).toEqual(['Events, last 5 min', 'Events, last 60 min', 'Events, last 24 h']);
+    expect(tiles.map((item) => item['value'])).toEqual([
       '$sources.activity.last5Min',
       '$sources.activity.last60Min',
       '$sources.activity.last24Hours',
     ]);
+  });
+});
+
+describe('activity-widget.yaml chart', () => {
+  const chart = items.find((item) => item['$type'] === 'Chart') as Node;
+
+  it('plots the series route of the last hour, labelled by the preformatted slice start', () => {
+    const sources = doc['$sources'] as Record<string, Node>;
+    expect(sources['series']?.['url']).toBe('GET /api/modules/queue/activity/series');
+    expect(chart['data']).toBe('$sources.series.lastHour');
+    expect(chart['xAxisKey']).toBe('label');
+    expect(chart['xAxisType']).toBe('category');
+  });
+
+  it('gives its series a colour: without one the bars render black', () => {
+    const [series] = chart['series'] as Node[];
+    expect(series?.['key']).toBe('events');
+    expect(series?.['color']).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });

@@ -365,3 +365,70 @@ describe('HistoryReader.countTriggers (activity counters, without parsing the pa
     expect(new HistoryReader(historyDir).countTriggers(Date.now(), WINDOWS)).toEqual([1, 1, 1]);
   });
 });
+
+describe('HistoryReader.bucketTriggers (events per time slice, for the dashboard charts)', () => {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  let historyDir: string;
+
+  beforeEach(() => {
+    historyDir = join(tmpdir(), `queue-history-buckets-test-${crypto.randomUUID()}`);
+    mkdirSync(historyDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(historyDir, { recursive: true, force: true });
+  });
+
+  const trigger = (atMs: number, eventId: string) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId, event: 'onFoo', matchedCount: 0, totalCount: 0 });
+  const NOW = Date.parse('2026-01-02T12:34:56.000Z');
+  const localOffsetMs = (atMs: number) => -new Date(atMs).getTimezoneOffset() * MINUTE;
+
+  it('aligns the buckets on the local clock: the first starts on a bucket boundary, the last holds now', () => {
+    const { startMs, counts } = new HistoryReader(historyDir).bucketTriggers(NOW, HOUR, 24);
+    expect(counts).toHaveLength(24);
+    expect((startMs + localOffsetMs(NOW)) % HOUR).toBe(0);
+    const lastStart = startMs + 23 * HOUR;
+    expect(lastStart).toBeLessThanOrEqual(NOW);
+    expect(NOW).toBeLessThan(lastStart + HOUR);
+  });
+
+  it('puts each trigger in its own bucket and ignores what is outside the range or after now', () => {
+    const reader = new HistoryReader(historyDir);
+    const { startMs } = reader.bucketTriggers(NOW, HOUR, 3);
+    writeDay(historyDir, '2026-01-02', [
+      trigger(startMs, 'first-bucket-start'),
+      trigger(startMs + HOUR - 1, 'first-bucket-end'),
+      trigger(startMs + HOUR, 'second-bucket'),
+      trigger(NOW, 'now'),
+      trigger(NOW + MINUTE, 'future'),
+      trigger(startMs - 1, 'before-range'),
+    ]);
+    expect(reader.bucketTriggers(NOW, HOUR, 3).counts).toEqual([2, 1, 1]);
+  });
+
+  it('reads the previous day file when the range crosses midnight (UTC)', () => {
+    const reader = new HistoryReader(historyDir);
+    const { startMs } = reader.bucketTriggers(NOW, HOUR, 24);
+    writeDay(historyDir, '2026-01-01', [trigger(startMs + MINUTE, 'yesterday')]);
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - MINUTE, 'today')]);
+    const { counts } = reader.bucketTriggers(NOW, HOUR, 24);
+    expect(counts[0]).toBe(1);
+    expect(counts[23]).toBe(1);
+    expect(counts.reduce((sum, n) => sum + n, 0)).toBe(2);
+  });
+
+  it('counts only trigger records, and gives zeros for a missing history directory', () => {
+    writeDay(historyDir, '2026-01-02', [{ ts: new Date(NOW - MINUTE).toISOString(), type: 'outcome', eventId: 'a', event: 'onFoo', subscriberId: 's', status: 'success' }]);
+    expect(new HistoryReader(historyDir).bucketTriggers(NOW, HOUR, 4).counts).toEqual([0, 0, 0, 0]);
+    expect(new HistoryReader(join(historyDir, 'missing')).bucketTriggers(NOW, HOUR, 4).counts).toEqual([0, 0, 0, 0]);
+  });
+
+  it('agrees with countTriggers on the total', () => {
+    const reader = new HistoryReader(historyDir);
+    const { startMs } = reader.bucketTriggers(NOW, 5 * MINUTE, 12);
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - MINUTE, 'a'), trigger(NOW - 20 * MINUTE, 'b'), trigger(NOW - 40 * MINUTE, 'c')]);
+    const inRange = reader.bucketTriggers(NOW, 5 * MINUTE, 12).counts.reduce((sum, n) => sum + n, 0);
+    expect(inRange).toBe(reader.countTriggers(NOW, [NOW - startMs])[0]);
+  });
+});
