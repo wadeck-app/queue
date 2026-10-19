@@ -11,12 +11,12 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
-import { execFileSync, spawn } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { tmpdir, platform } from 'os';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { createServer, Server, IncomingMessage, ServerResponse } from 'node:http';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { tmpdir, platform } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');

@@ -3,10 +3,10 @@
  * Tests the stdio mode detection and user notification logic.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as path from 'path';
-import * as os from 'os';
-import * as fs from 'fs';
-import { createRequire } from 'module';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 
 describe('launcherTemplate resolveStdio', () => {
   let tempDir: string;
@@ -42,7 +42,7 @@ describe('launcherTemplate resolveStdio', () => {
     delete require.cache[require.resolve(modulePath)];
 
     // Spy on child_process to ensure no side effects on require
-    const Module = require('module');
+    const Module = require('node:module');
     const originalRequire = Module.prototype.require;
     let childProcessCalled = false;
     Module.prototype.require = function(id: string) {
@@ -292,7 +292,7 @@ describe('launcherTemplate resolveStdio', () => {
       };
 
       const originalRequire = require;
-      const Module = require('module');
+      const Module = require('node:module');
       const originalRequireImpl = Module.prototype.require;
 
       let intercepted = false;

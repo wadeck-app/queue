@@ -3020,7 +3020,7 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
 
-        const http = require('http');
+        const http = require('node:http');
         const server = http.createServer();
 
         writeFileSync(join(tmpDir, 'plugin.js'), "export default { source: 'test', mapEvent: () => null };");
@@ -3090,7 +3090,7 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
 
-        const http = require('http');
+        const http = require('node:http');
         const server = http.createServer();
 
         writeFileSync(join(tmpDir, 'plugin.js'), "export default { source: 'test', mapEvent: () => null };");
@@ -3155,7 +3155,7 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
 
-        const http = require('http');
+        const http = require('node:http');
         const server = http.createServer();
 
         writeFileSync(join(tmpDir, 'plugin.js'), "export default { source: 'test', mapEvent: () => null };");

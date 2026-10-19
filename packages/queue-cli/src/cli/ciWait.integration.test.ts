@@ -5,11 +5,11 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { execFileSync, spawn } from 'child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'fs';
-import { tmpdir } from 'os';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');

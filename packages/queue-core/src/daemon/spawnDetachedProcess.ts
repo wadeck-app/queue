@@ -49,6 +49,7 @@ export function spawnDetachedProcess(scriptPath: string, env: Record<string, str
     const child = spawn(process.execPath, [scriptPath], {
       detached: true,
       stdio: 'ignore',
+      windowsHide: true,
       env: childEnv,
     });
     child.unref();
