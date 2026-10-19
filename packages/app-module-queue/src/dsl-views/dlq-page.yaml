@@ -8,13 +8,19 @@ $sources:
 $actions:
   replayEntry:
     url: POST /api/modules/queue/dlq/{id}/replay
+    successMessage: Replay started
+    errorPrefix: Could not replay
     reloadSources: true
   clearEntry:
     url: POST /api/modules/queue/dlq/{id}/clear
     confirm: Remove this entry from the dead-letter queue? It cannot be recovered.
+    successMessage: Entry removed
+    errorPrefix: Could not remove the entry
     reloadSources: true
   retryPending:
     url: POST /api/modules/queue/retry/{eventId}
+    successMessage: Retry enqueued
+    errorPrefix: Could not retry
     reloadSources: true
 
 $type: PageContent
