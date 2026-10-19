@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Wal } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
-import { readQueueCounts, listDlqEntries, clearDlqEntries, listQueueSubscribers } from './operations.js';
+import { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, listQueueSubscribers } from './operations.js';
 
 let configDir: string;
 let projectDir: string;
@@ -93,5 +93,21 @@ describe('clearDlqEntries with an unknown id', () => {
     new DlqStore(join(configDir, 'dlq.ndjson')).append(dlqEntry('x'));
     expect(clearDlqEntries(configDir, 'nope')).toBe(0);
     expect(listDlqEntries(configDir).map(e => e.id)).toEqual(['x']);
+  });
+});
+
+describe('listInFlightEntries', () => {
+  it('lists the events still on their way (pending and failed), oldest first, and leaves out the finished ones', () => {
+    const wal = new Wal(join(configDir, 'wal.ndjson'));
+    wal.append(walEntry('p1', 'pending'));
+    wal.append(walEntry('a1', 'acked'));
+    wal.append(walEntry('f1', 'failed'));
+    wal.append(walEntry('d1', 'dlq'));
+    wal.append(walEntry('p2', 'pending'));
+    expect(listInFlightEntries(configDir).map((entry) => entry.id)).toEqual(['p1', 'f1', 'p2']);
+  });
+
+  it('is empty without a WAL file', () => {
+    expect(listInFlightEntries(configDir)).toEqual([]);
   });
 });

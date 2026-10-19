@@ -58,10 +58,28 @@
     {
       "kind": "page",
       "slot": "nav",
+      "label": "Queue Overview",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/overview-page.yaml"
+      }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
       "label": "Queue History",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/history-page.yaml"
+      }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
+      "label": "Queue Pending",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/pending-page.yaml"
       }
     },
     {

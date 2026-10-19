@@ -10,6 +10,7 @@ const {
   mockGetActivitySeries,
   mockGetOutcomes,
   mockGetBreakdown,
+  mockListPending,
   mockListHistory,
   mockGetHistoryEntry,
   mockReplayEvent,
@@ -30,6 +31,7 @@ const {
   mockGetActivitySeries: vi.fn(),
   mockGetOutcomes: vi.fn(),
   mockGetBreakdown: vi.fn(),
+  mockListPending: vi.fn(),
   mockListHistory: vi.fn(),
   mockGetHistoryEntry: vi.fn(),
   mockReplayEvent: vi.fn(),
@@ -50,6 +52,7 @@ vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
 vi.mock('./activity.js', () => ({ getActivity: mockGetActivity, getActivitySeries: mockGetActivitySeries }));
 vi.mock('./outcomes.js', () => ({ getOutcomes: mockGetOutcomes }));
 vi.mock('./breakdown.js', () => ({ getBreakdown: mockGetBreakdown }));
+vi.mock('./pending.js', () => ({ listPending: mockListPending }));
 vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: mockGetHistoryEntry }));
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 // dlqOptions stays the real one: the route answer carries its output
@@ -126,6 +129,7 @@ describe('backend', () => {
       'GET /relay',
       'GET /relay/webhooks',
       'GET /relay/deliveries',
+      'GET /pending',
       'GET /dlq',
       'POST /dlq/:id/replay',
       'POST /dlq/:id/clear',
@@ -564,6 +568,22 @@ describe('backend', () => {
     await routes.get('GET /breakdown')!(fakeReq(), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
     expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: history' });
+  });
+
+  it('GET /pending answers the in-flight events with the retry choices, and 500 with the reason when the WAL cannot be read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListPending.mockReturnValueOnce({ entries: [], options: [] });
+    const ok = fakeReply();
+    await routes.get('GET /pending')!(fakeReq(), asReply(ok));
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith({ entries: [], options: [] });
+
+    mockListPending.mockImplementationOnce(() => { throw new Error('EACCES: wal.ndjson'); });
+    const broken = fakeReply();
+    await routes.get('GET /pending')!(fakeReq(), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: wal.ndjson' });
   });
 
   it('GET /logs forwards the query to getLogs', async () => {

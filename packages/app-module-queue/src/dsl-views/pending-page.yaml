@@ -1,0 +1,47 @@
+$sources:
+  pending:
+    url: GET /api/modules/queue/pending
+  daemon:
+    url: GET /api/modules/queue/daemon
+
+# {eventId} is filled from the form field of the same name; the backend URL-encodes the ids it offers.
+$actions:
+  retryPending:
+    url: POST /api/modules/queue/retry/{eventId}
+    successMessage: Retry enqueued
+    errorPrefix: Could not retry
+    reloadSources: true
+
+$type: PageContent
+sections:
+  - $type: PageHeader
+    title: Pending events
+    subtitle: Written to the WAL and not delivered yet. The daemon retries them by itself; retrying one here runs its subscriber now.
+  - $type: Badge
+    $if: $sources.daemon.hint
+    label: $sources.daemon.hint
+    variant: warning
+  - $type: DataTable
+    rows: $sources.pending.entries
+    emptyMessage: Nothing is waiting
+    columns:
+      - { key: "queuedAt", label: "Queued at", format: "datetime" }
+      - { key: "event", label: "Event" }
+      - { key: "subscriberId", label: "Subscriber" }
+      - { key: "status", label: "Status" }
+      - { key: "attempts", label: "Attempts" }
+      - { key: "lastError", label: "Last error" }
+      - { key: "id", label: "Id", mono: true }
+  - $type: Form
+    $if: $sources.pending.options
+    onSubmit: $ctx.retryPending
+    initialData: { eventId: "" }
+    fields:
+      - $type: FieldSelect
+        label: Event to retry now
+        bind: eventId
+        options: $sources.pending.options
+        placeholder: Choose an event
+    actions:
+      - $type: ButtonSave
+        label: Retry

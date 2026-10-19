@@ -4,7 +4,7 @@ $sources:
   daemon:
     url: GET /api/modules/queue/daemon
 
-# {id} and {eventId} are filled from the form field of the same name; the backend URL-encodes the ids it offers.
+# {id} is filled from the form field of the same name; the backend URL-encodes the ids it offers.
 $actions:
   replayEntry:
     url: POST /api/modules/queue/dlq/{id}/replay
@@ -16,11 +16,6 @@ $actions:
     confirm: Remove this entry from the dead-letter queue? It cannot be recovered.
     successMessage: Entry removed
     errorPrefix: Could not remove the entry
-    reloadSources: true
-  retryPending:
-    url: POST /api/modules/queue/retry/{eventId}
-    successMessage: Retry enqueued
-    errorPrefix: Could not retry
     reloadSources: true
 
 $type: PageContent
@@ -68,13 +63,3 @@ sections:
     actions:
       - $type: ButtonSave
         label: Remove
-  - $type: Form
-    onSubmit: $ctx.retryPending
-    initialData: { eventId: "" }
-    fields:
-      - $type: FieldText
-        label: Retry a pending event (id from the WAL, as in queue retry --event)
-        bind: eventId
-    actions:
-      - $type: ButtonSave
-        label: Retry

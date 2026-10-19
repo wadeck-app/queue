@@ -5,6 +5,7 @@ import { getStatus } from './status.js';
 import { getActivity, getActivitySeries } from './activity.js';
 import { getOutcomes } from './outcomes.js';
 import { getBreakdown } from './breakdown.js';
+import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
@@ -181,6 +182,14 @@ export default function (ctx: ModuleContext): void {
       return reply.code(200).send(await listDeliveries(configDir, query));
     } catch (err) {
       return reply.code(relayErrorStatus(err)).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('GET', '/pending', (_req, reply) => {
+    try {
+      return reply.code(200).send(listPending(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
     }
   });
 

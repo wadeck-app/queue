@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { Wal } from './storage/Wal.js';
+import type { WalEntry } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
 import type { DlqEntry } from './storage/DlqStore.js';
 import { ConfigLoader } from './ConfigLoader.js';
@@ -36,6 +37,11 @@ export function removeFromDlq(dlq: DlqStore, id?: string): number {
 
 export function readQueueCounts(configDir: string): QueueCounts {
   return countQueue(new Wal(join(configDir, 'wal.ndjson')), new DlqStore(join(configDir, 'dlq.ndjson')));
+}
+
+/** The events still on their way: written to the WAL and neither delivered (acked) nor given up (dlq). Oldest first. */
+export function listInFlightEntries(configDir: string): WalEntry[] {
+  return new Wal(join(configDir, 'wal.ndjson')).readAll().filter((entry) => entry.status === 'pending' || entry.status === 'failed');
 }
 
 export function listDlqEntries(configDir: string): DlqEntry[] {
