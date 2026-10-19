@@ -13,6 +13,8 @@ const {
   mockClearDlqEntry,
   mockListSubscribers,
   mockPushEvent,
+  mockGetLogs,
+  mockRetryEvent,
 } = vi.hoisted(() => ({
   mockGetStatus: vi.fn(),
   mockGetActivity: vi.fn(),
@@ -24,6 +26,8 @@ const {
   mockClearDlqEntry: vi.fn(),
   mockListSubscribers: vi.fn(),
   mockPushEvent: vi.fn(),
+  mockGetLogs: vi.fn(),
+  mockRetryEvent: vi.fn(),
 }));
 
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
@@ -33,6 +37,8 @@ vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlqEntry, clearDlqEntry: mockClearDlqEntry }));
 vi.mock('./subscribers.js', () => ({ listSubscribers: mockListSubscribers }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
+vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
+vi.mock('./retry.js', () => ({ retryEvent: mockRetryEvent }));
 
 import backend from './index.js';
 
@@ -84,6 +90,8 @@ describe('backend', () => {
       'GET /history',
       'GET /history/:eventId',
       'POST /history/:eventId/replay',
+      'GET /logs',
+      'POST /retry/:eventId',
       'GET /dlq',
       'POST /dlq/:id/replay',
       'POST /dlq/:id/clear',
@@ -461,6 +469,67 @@ describe('backend', () => {
     const reply = fakeReply();
     await routes.get('POST /dlq/:id/replay')!(fakeReq({ params: { id: 'd1' } }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(503);
+  });
+
+  it('GET /logs forwards the query to getLogs', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetLogs.mockReturnValue({ date: '2026-10-18', present: true, omitted: 0, lines: [{ text: 'x' }] });
+    const reply = fakeReply();
+    await routes.get('GET /logs')!(fakeReq({ query: { limit: '5', date: '2026-10-18' } }), asReply(reply));
+    expect(mockGetLogs).toHaveBeenCalledWith(expect.any(String), { limit: '5', date: '2026-10-18' });
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ date: '2026-10-18', present: true, omitted: 0, lines: [{ text: 'x' }] });
+  });
+
+  it('GET /logs answers 400 for a bad query and 500 for any other failure', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetLogs.mockImplementationOnce(() => { throw new InvalidQueryError('date must be a day as YYYY-MM-DD, got: "x"'); });
+    const bad = fakeReply();
+    await routes.get('GET /logs')!(fakeReq({ query: { date: 'x' } }), asReply(bad));
+    expect(bad.code).toHaveBeenCalledWith(400);
+    expect(bad.send).toHaveBeenCalledWith({ error: 'date must be a day as YYYY-MM-DD, got: "x"' });
+
+    mockGetLogs.mockImplementationOnce(() => { throw new Error('EACCES: permission denied'); });
+    const broken = fakeReply();
+    await routes.get('GET /logs')!(fakeReq({ query: {} }), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+  });
+
+  it('POST /retry/:eventId answers 200 with the daemon answer when the retry was enqueued', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockRetryEvent.mockResolvedValue({ status: 'ok' });
+    const reply = fakeReply();
+    await routes.get('POST /retry/:eventId')!(fakeReq({ params: { eventId: 'wal-1' } }), asReply(reply));
+    expect(mockRetryEvent).toHaveBeenCalledWith(expect.any(String), 'wal-1');
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ status: 'ok' });
+  });
+
+  it('POST /retry/:eventId answers 404 naming the cause when the event is not pending', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockRetryEvent.mockResolvedValue({ status: 'not-found' });
+    const reply = fakeReply();
+    await routes.get('POST /retry/:eventId')!(fakeReq({ params: { eventId: 'gone' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(404);
+    expect(reply.send).toHaveBeenCalledWith({ error: expect.stringContaining('No pending event with id gone') });
+  });
+
+  it('POST /retry/:eventId answers 500 when the daemon reports an error, 503 when it is not running', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockRetryEvent.mockResolvedValueOnce({ status: 'error' });
+    const failed = fakeReply();
+    await routes.get('POST /retry/:eventId')!(fakeReq({ params: { eventId: 'wal-1' } }), asReply(failed));
+    expect(failed.code).toHaveBeenCalledWith(500);
+
+    mockRetryEvent.mockRejectedValueOnce(new DaemonUnreachableError('Daemon is not running -- start it with `queue start`'));
+    const down = fakeReply();
+    await routes.get('POST /retry/:eventId')!(fakeReq({ params: { eventId: 'wal-1' } }), asReply(down));
+    expect(down.code).toHaveBeenCalledWith(503);
   });
 
   it('GET /status returns 500 when getStatus throws', async () => {

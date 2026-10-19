@@ -18,11 +18,10 @@ import { relayStop } from './relayStop.js';
 import { pinRelay } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
 import { queueWaitCommand } from './waitCli.js';
 import { relayStart } from './relayStart.js';
-import { LogFormatter } from './LogFormatter.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
@@ -174,27 +173,19 @@ function getConfigDir(): string {
 }
 
 async function queueLogsCommand(configDir: string, opts: { follow?: boolean } = {}): Promise<void> {
-  const { existsSync: fsExists, readFileSync: fsRead, watchFile, statSync, openSync, readSync, closeSync, unwatchFile } = await import('node:fs');
-  const { join: pJoin } = await import('node:path');
-  const today = new Date().toISOString().slice(0, 10);
-  const logFile = pJoin(configDir, 'logs', `${today}.ndjson`);
-  if (!fsExists(logFile)) {
+  const { existsSync: fsExists, watchFile, statSync, openSync, readSync, closeSync, unwatchFile } = await import('node:fs');
+  const tail = readLogTail(configDir, { limit: Number.POSITIVE_INFINITY });
+  const logFile = tail.file;
+  if (!tail.present) {
     process.stdout.write(`No log file for today: ${logFile}\n`);
     if (!opts.follow) {
       return;
     }
   }
-  let offset = 0;
-  if (fsExists(logFile)) {
-    const content = fsRead(logFile, 'utf8');
-    for (const line of content.split('\n')) {
-      const formatted = LogFormatter.format(line);
-      if (formatted) {
-        process.stdout.write(formatted + '\n');
-      }
-    }
-    offset = Buffer.byteLength(content, 'utf8');
+  for (const line of tail.lines) {
+    process.stdout.write(line + '\n');
   }
+  let offset = tail.bytes;
   if (!opts.follow) {
     return;
   }

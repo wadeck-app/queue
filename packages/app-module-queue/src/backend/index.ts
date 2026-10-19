@@ -7,6 +7,8 @@ import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError } from './errors.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
+import { getLogs } from './logs.js';
+import { retryEvent } from './retry.js';
 import { listSubscribers } from './subscribers.js';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery } from './historyQuery.js';
@@ -83,6 +85,28 @@ export default function (ctx: ModuleContext): void {
         return reply.code(422).send({ error: getErrorMessage(err) });
       }
       return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('GET', '/logs', (req, reply) => {
+    const query = (req as { query?: QueryParams }).query ?? {};
+    try {
+      return reply.code(200).send(getLogs(configDir, query));
+    } catch (err) {
+      return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('POST', '/retry/:eventId', async (req, reply) => {
+    const { eventId } = req.params;
+    try {
+      const response = await retryEvent(configDir, eventId);
+      if (response.status === 'not-found') {
+        return reply.code(404).send({ error: `No pending event with id ${eventId} (retry only applies to events still in the WAL)` });
+      }
+      return reply.code(response.status === 'ok' ? 200 : 500).send(response);
+    } catch (err) {
+      return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
   });
 

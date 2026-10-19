@@ -4,7 +4,7 @@ import { InvalidQueryError } from './errors.js';
 
 export const MAX_HISTORY_LIMIT = 500;
 
-interface QueryParams {
+export interface QueryParams {
   [key: string]: string | string[] | undefined;
 }
 
@@ -13,7 +13,7 @@ interface ParsedHistoryQuery {
   pagination: { limit?: number; offset?: number; page?: number };
 }
 
-function validateSingleString(param: unknown, name: string): string {
+export function validateSingleString(param: unknown, name: string): string {
   if (Array.isArray(param)) {
     throw new InvalidQueryError(`${name} must be given once, got ${param.length} values`);
   }
@@ -28,7 +28,7 @@ interface ParseDigitsOptions {
 
 // Helper to parse and validate digits-only parameters with consistent error messages.
 // Validates: single-value (via validateSingleString), empty check, /^\d+$/ regex, Number(), range/safe-integer checks.
-function parseDigits(
+export function parseDigits(
   param: unknown,
   name: string,
   options: ParseDigitsOptions & { expected: string },
