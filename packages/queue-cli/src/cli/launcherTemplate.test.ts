@@ -250,13 +250,13 @@ describe('launcherTemplate resolveStdio', () => {
     it('truth table: original stdio decision semantics preserved', () => {
       const cases = [
         // [stdinIsTTY, args, expected_stdio, expected_notice, description]
-        [true, ['history'], 'inherit', null, 'TTY with no flags → inherit'],
-        [false, ['history'], 'ignore', 'should exist', 'non-TTY with no flags → ignore + notice'],
-        [false, ['start'], 'ignore', null, 'non-TTY start command → ignore, no notice'],
-        [false, ['--help'], 'ignore', 'should exist', 'non-TTY help → ignore + notice'],
-        [true, ['--help'], 'inherit', null, 'TTY help → inherit, no notice'],
-        [false, ['--cli-foreground', 'history'], 'inherit', null, 'explicit foreground → inherit, no notice'],
-        [false, ['--cli-background', 'history'], 'ignore', null, 'explicit background → ignore, no notice'],
+        [true, ['history'], 'inherit', null, 'TTY with no flags -> inherit'],
+        [false, ['history'], 'ignore', 'should exist', 'non-TTY with no flags -> ignore + notice'],
+        [false, ['start'], 'ignore', null, 'non-TTY start command -> ignore, no notice'],
+        [false, ['--help'], 'ignore', 'should exist', 'non-TTY help -> ignore + notice'],
+        [true, ['--help'], 'inherit', null, 'TTY help -> inherit, no notice'],
+        [false, ['--cli-foreground', 'history'], 'inherit', null, 'explicit foreground -> inherit, no notice'],
+        [false, ['--cli-background', 'history'], 'ignore', null, 'explicit background -> ignore, no notice'],
         [false, ['--cli-background', '--cli-foreground', 'history'], 'inherit', null, 'last flag wins: foreground'],
         [false, ['--cli-foreground', '--cli-background', 'history'], 'ignore', null, 'last flag wins: background'],
       ] as const;

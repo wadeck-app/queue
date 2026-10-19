@@ -24,7 +24,7 @@ try {
         process.env['UPDATER_SELF_CHECK_CMD'] = selfCheckCmd;
     }
 } catch {
-    // Skip self-check if npm root is unavailable — update proceeds without verification.
+    // Skip self-check if npm root is unavailable - update proceeds without verification.
 }
 
 const appModuleManifest = npmRoot === undefined ? undefined : join(npmRoot, PKG_NAME, 'app-module', 'manifest.json');

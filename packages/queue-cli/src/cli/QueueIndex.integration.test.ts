@@ -82,7 +82,7 @@ describe('bundled app-module manifest (integration)', () => {
 });
 
 describe('queue cli self-check (integration)', () => {
-  it('produces output only on stderr — no duplicate lines on stdout', () => {
+  it('produces output only on stderr - no duplicate lines on stdout', () => {
     const { stdout, stderr } = runCli(['cli', 'self-check']);
 
     // stderr should have [ok] or [fail] lines
@@ -131,7 +131,7 @@ describe('daemon lifecycle (integration)', () => {
     runCli(['stop']);
   });
 
-  it('queue start → status running → stop → status not running', async () => {
+  it('queue start -> status running -> stop -> status not running', async () => {
     // Ensure clean state
     runCli(['stop']);
 
@@ -139,7 +139,7 @@ describe('daemon lifecycle (integration)', () => {
     expect(start.exitCode, `start stderr: ${start.stderr}`).toBe(0);
     expect(start.stderr).toContain('[ok] daemon started');
 
-    // status is non-TTY → outputs JSON
+    // status is non-TTY -> outputs JSON
     const statusRunning = JSON.parse(runCli(['status']).stdout);
     expect(statusRunning.daemonRunning).toBe(true);
 
@@ -416,7 +416,7 @@ describe('queue relay stop (integration)', () => {
     // Ensure relay is not running by stopping it first
     runCli(['relay', 'stop']);
 
-    // Now try to stop again — should be idempotent
+    // Now try to stop again - should be idempotent
     const { stderr, exitCode } = runCli(['relay', 'stop']);
 
     expect(exitCode).toBe(0);

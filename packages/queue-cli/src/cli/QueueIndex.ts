@@ -91,7 +91,7 @@ Usage:
 Options:
   --scope global|project   File target: global=$QUEUE_CONFIG_DIR/subscribers.yml (default)
                            project=.queue/subscribers.yml in cwd
-  --timeout <duration>     30s, 5m, 1h — dispatch timeout (default: 30s)
+  --timeout <duration>     30s, 5m, 1h - dispatch timeout (default: 30s)
   --retries <n>            Max retries before DLQ (default: 5)
   --backoff <strategy>     exponential|linear (default: exponential)
   --when <expr>            Filter: payload.field=value or JSONPath $.field
@@ -926,7 +926,7 @@ async function main(): Promise<void> {
     } else {
       const count = response.subscriberCount ?? 0;
       if (count === 0) {
-        process.stderr.write(`[warn] queued — no subscribers for '${event}'\n`);
+        process.stderr.write(`[warn] queued - no subscribers for '${event}'\n`);
       } else {
         process.stdout.write(`[ok] queued (${count} subscriber${count !== 1 ? 's' : ''})\n`);
       }

@@ -112,9 +112,9 @@ cpSync(packagedModule, appModuleOutDir, { recursive: true });
 const updaterSize = statSync(updaterOutfile).size;
 if (updaterSize > MAX_UPDATER_SIZE) {
   throw new Error(
-    `queue-updater.cjs is ${updaterSize} bytes (${(updaterSize / 1024).toFixed(1)} KB) — exceeds 500 KB limit.\n` +
+    `queue-updater.cjs is ${updaterSize} bytes (${(updaterSize / 1024).toFixed(1)} KB) - exceeds 500 KB limit.\n` +
     'The queue runtime may have been accidentally included. Check queue-updater-entry.ts imports.'
   );
 }
 
-console.log(`Bundled queue.cjs + queue-updater.cjs (${(updaterSize / 1024).toFixed(1)} KB) — version: ${version}`);
+console.log(`Bundled queue.cjs + queue-updater.cjs (${(updaterSize / 1024).toFixed(1)} KB) - version: ${version}`);

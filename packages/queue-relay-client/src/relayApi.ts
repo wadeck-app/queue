@@ -423,7 +423,7 @@ export function summarizePayload(
   // Comment body (first 40 chars)
   const comment = field(field(payload, 'comment'), 'body');
   if (typeof comment === 'string') {
-    const truncated = comment.length > 40 ? comment.slice(0, 40) + '…' : comment;
+    const truncated = comment.length > 40 ? comment.slice(0, 40) + '...' : comment;
     parts.push(`comment: "${truncated}"`);
   }
 
@@ -434,7 +434,7 @@ export function summarizePayload(
 
   let summary = parts.join(' | ');
   if (summary.length > 110) {
-    summary = summary.slice(0, 107) + '…';
+    summary = summary.slice(0, 107) + '...';
   }
 
   return summary;

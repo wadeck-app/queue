@@ -1,6 +1,6 @@
 # @wadeck-app/queue-cli
 
-Local event-queue daemon and CLI — publish events, dispatch to subscribers, inspect the dead-letter queue.
+Local event-queue daemon and CLI - publish events, dispatch to subscribers, inspect the dead-letter queue.
 
 ## Install
 

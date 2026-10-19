@@ -36,7 +36,7 @@ export async function relayStop(client: DaemonClient<RelayCommands>, configDir: 
     // not a hard failure (case b).
     const stillRunning = await client.isRunning().catch(() => false);
     if (!stillRunning) {
-      // Daemon exited between isRunning() and quit() — idempotent
+      // Daemon exited between isRunning() and quit() - idempotent
       io.stderr.write('[ok] relay client was not running\n');
       return 0;
     }

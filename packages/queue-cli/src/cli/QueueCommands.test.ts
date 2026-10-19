@@ -1,6 +1,6 @@
 /**
  * Unit tests for queue business commands: push, retry, status, dlq.
- * QueueClient is mocked — no real daemon required.
+ * QueueClient is mocked - no real daemon required.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { tmpdir } from 'node:os';

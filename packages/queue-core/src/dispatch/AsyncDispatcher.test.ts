@@ -160,7 +160,7 @@ describe('AsyncDispatcher - diagnosability', () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
       success: false,
       error: 'exited with code 3',
-      stdout: 'starting…',
+      stdout: 'starting...',
       stderr: "Cannot find module 'extension-points/extension-points.json'",
       durationMs: 7,
     });
@@ -171,7 +171,7 @@ describe('AsyncDispatcher - diagnosability', () => {
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
       status: 'failed',
       error: 'exited with code 3',
-      stdout: 'starting…',
+      stdout: 'starting...',
       stderr: "Cannot find module 'extension-points/extension-points.json'",
     }));
   });

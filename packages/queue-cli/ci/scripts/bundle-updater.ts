@@ -27,7 +27,7 @@ await build({
     outfile,
     // No externals -- all dependencies must be inlined
     external: [],
-    // top-level await in ESM → wrapped in async IIFE for CJS
+    // top-level await in ESM -> wrapped in async IIFE for CJS
     supported: { 'top-level-await': false },
     define: {
         'import.meta.url': '__importMetaUrl',
@@ -42,7 +42,7 @@ await build({
 const { size } = fs.statSync(outfile);
 if (size > MAX_SIZE_BYTES) {
     throw new Error(
-        `queue-updater.cjs is ${size} bytes (${(size / 1024).toFixed(1)} KB) — exceeds 500 KB limit.\n` +
+        `queue-updater.cjs is ${size} bytes (${(size / 1024).toFixed(1)} KB) - exceeds 500 KB limit.\n` +
             'The queue runtime may have been accidentally included. Check queue-updater-entry.ts imports.'
     );
 }

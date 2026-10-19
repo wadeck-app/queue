@@ -32,7 +32,7 @@ describe('queue cli self-check output', () => {
     try {
       await withArgv(['cli', 'self-check'], runQueueCommand);
     } catch (e) {
-      // process.exit throws via mock — expected
+      // process.exit throws via mock - expected
       if (!(e instanceof Error) || getErrorMessage(e) !== 'process.exit called') {
         throw e;
       }

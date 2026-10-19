@@ -107,7 +107,7 @@ describe('SyncDispatcher - diagnosability', () => {
 
   it('failed dispatch persists stdout and stderr, not only the abort reason', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
-      success: false, error: 'exited with code 3', stdout: 'checking…', stderr: 'Daemon did not start within 10000ms', durationMs: 3,
+      success: false, error: 'exited with code 3', stdout: 'checking...', stderr: 'Daemon did not start within 10000ms', durationMs: 3,
     });
 
     const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5000);
@@ -118,7 +118,7 @@ describe('SyncDispatcher - diagnosability', () => {
       subscriberId: 's1',
       status: 'failed',
       error: 'exited with code 3',
-      stdout: 'checking…',
+      stdout: 'checking...',
       stderr: 'Daemon did not start within 10000ms',
     }));
     expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'beforeTicket.create', subscriberId: 's1', status: 'failed', target: 'echo ok' });

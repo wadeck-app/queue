@@ -320,7 +320,7 @@ plugins:
           expect(port47910Free, 'Port 47910 (queue daemon) still in use after stop').toBe(true);
           expect(port47911Free, 'Port 47911 (relay) still in use after stop').toBe(true);
 
-          // Step 9: NEW ASSERTION — Verify relay process actually exited
+          // Step 9: NEW ASSERTION - Verify relay process actually exited
           // This assertion WILL FAIL until RelayDaemon.ts hooks.onShutdown is wired (expected)
           if (relayDaemonPid !== null) {
             let relayProcessExited = false;
