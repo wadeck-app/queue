@@ -4,6 +4,7 @@ import { getErrorMessage, getQueueConfigDir, isRecord } from '@wadeck-app/queue-
 import { getStatus } from './status.js';
 import { getActivity, getActivitySeries } from './activity.js';
 import { getOutcomes } from './outcomes.js';
+import { getBreakdown } from './breakdown.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
@@ -66,6 +67,14 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('GET', '/outcomes', (_req, reply) => {
     try {
       return reply.code(200).send(getOutcomes(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('GET', '/breakdown', (_req, reply) => {
+    try {
+      return reply.code(200).send(getBreakdown(configDir));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

@@ -22,5 +22,5 @@ export type { ResolvedSubscriber } from './types.js';
 export { readQueueCounts, listDlqEntries, clearDlqEntries, listQueueSubscribers } from './operations.js';
 export type { QueueCounts } from './operations.js';
 export { LogFormatter } from './storage/LogFormatter.js';
-export { readLogTail, logFilePath, isLogDate } from './storage/LogReader.js';
-export type { LogTail, LogTailOptions } from './storage/LogReader.js';
+export { readLogTail, logFilePath, isLogDate, readDispatchDurations } from './storage/LogReader.js';
+export type { LogTail, LogTailOptions, DispatchDurations } from './storage/LogReader.js';

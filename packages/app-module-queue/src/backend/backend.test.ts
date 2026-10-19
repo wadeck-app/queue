@@ -9,6 +9,7 @@ const {
   mockGetActivity,
   mockGetActivitySeries,
   mockGetOutcomes,
+  mockGetBreakdown,
   mockListHistory,
   mockGetHistoryEntry,
   mockReplayEvent,
@@ -28,6 +29,7 @@ const {
   mockGetActivity: vi.fn(),
   mockGetActivitySeries: vi.fn(),
   mockGetOutcomes: vi.fn(),
+  mockGetBreakdown: vi.fn(),
   mockListHistory: vi.fn(),
   mockGetHistoryEntry: vi.fn(),
   mockReplayEvent: vi.fn(),
@@ -47,6 +49,7 @@ const {
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
 vi.mock('./activity.js', () => ({ getActivity: mockGetActivity, getActivitySeries: mockGetActivitySeries }));
 vi.mock('./outcomes.js', () => ({ getOutcomes: mockGetOutcomes }));
+vi.mock('./breakdown.js', () => ({ getBreakdown: mockGetBreakdown }));
 vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: mockGetHistoryEntry }));
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 // dlqOptions stays the real one: the route answer carries its output
@@ -113,6 +116,7 @@ describe('backend', () => {
       'GET /activity',
       'GET /activity/series',
       'GET /outcomes',
+      'GET /breakdown',
       'GET /history',
       'GET /history/:eventId',
       'POST /history/:eventId/replay',
@@ -541,6 +545,23 @@ describe('backend', () => {
     mockGetOutcomes.mockImplementationOnce(() => { throw new Error('EACCES: history'); });
     const broken = fakeReply();
     await routes.get('GET /outcomes')!(fakeReq(), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: history' });
+  });
+
+  it('GET /breakdown answers the top events and subscribers, and 500 with the reason when the history cannot be read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const breakdown = { topEvents: [{ event: 'onFoo', count: 2 }], otherEvents: 0, subscribers: [] };
+    mockGetBreakdown.mockReturnValueOnce(breakdown);
+    const ok = fakeReply();
+    await routes.get('GET /breakdown')!(fakeReq(), asReply(ok));
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith(breakdown);
+
+    mockGetBreakdown.mockImplementationOnce(() => { throw new Error('EACCES: history'); });
+    const broken = fakeReply();
+    await routes.get('GET /breakdown')!(fakeReq(), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
     expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: history' });
   });

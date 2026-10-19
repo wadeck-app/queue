@@ -3,6 +3,8 @@ $sources:
     url: GET /api/modules/queue/subscribers
     params:
       cwd: $urlParam.cwd
+  breakdown:
+    url: GET /api/modules/queue/breakdown
 
 $type: PageContent
 sections:
@@ -20,3 +22,16 @@ sections:
       - { key: "url", label: "URL", mono: true }
       - { key: "when", label: "When", mono: true }
       - { key: "retries", label: "Retries" }
+  - $type: PageHeader
+    title: Last 24 hours
+    subtitle: How the dispatches of each subscriber ended, busiest first. Durations come from the dispatch log.
+  - $type: DataTable
+    rows: $sources.breakdown.subscribers
+    emptyMessage: No dispatch in the last 24 h
+    columns:
+      - { key: "subscriberId", label: "Subscriber", mono: true }
+      - { key: "delivered", label: "Delivered" }
+      - { key: "failedAttempts", label: "Failed attempts" }
+      - { key: "givenUp", label: "Given up (DLQ)" }
+      - { key: "avgMs", label: "Average (ms)" }
+      - { key: "maxMs", label: "Slowest (ms)" }

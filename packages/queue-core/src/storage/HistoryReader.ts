@@ -58,6 +58,21 @@ const TS_KEY = /"ts":"([^"]+)"/;
 const RECORD_TYPE = /"type":"(trigger|outcome|filtered)"/;
 // Outcome lines are small (no payload) and write `status` before the free-text `target`, so the first match is the status
 const OUTCOME_STATUS = /"status":"(success|failed|dlq)"/;
+// `event` / `subscriberId` come right after `ts`, `type` and `eventId`, before any payload: look at the start of the line only
+const KEY_SEARCH_CHARS = 400;
+const EVENT_KEY = /"event":"((?:[^"\\]|\\.)*)"/;
+const SUBSCRIBER_KEY = /"subscriberId":"((?:[^"\\]|\\.)*)"/;
+
+/** A JSON string body (still escaped) back to text. */
+function unescapeJson(body: string): string {
+  return body.includes('\\') ? (JSON.parse(`"${body}"`) as string) : body;
+}
+
+export interface OutcomeCounts {
+  success: number;
+  failed: number;
+  dlq: number;
+}
 
 interface Accumulator {
   ts?: string;
@@ -164,6 +179,36 @@ export class HistoryReader {
       }
     });
     return { startMs, counts };
+  }
+
+  /** How many events of each name were pushed in the `windowMs` before `nowMs`. Same cost and line matching as {@link countTriggers}. */
+  countTriggersByEvent(nowMs: number, windowMs: number): Map<string, number> {
+    const counts = new Map<string, number>();
+    this.forEachRecord('trigger', nowMs, windowMs, (ts, line) => {
+      const body = EVENT_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
+      if (ts >= nowMs - windowMs && body !== undefined) {
+        const event = unescapeJson(body);
+        counts.set(event, (counts.get(event) ?? 0) + 1);
+      }
+    });
+    return counts;
+  }
+
+  /** How the dispatches of each subscriber ended in the `windowMs` before `nowMs` (see {@link bucketOutcomes} for the statuses). */
+  countOutcomesBySubscriber(nowMs: number, windowMs: number): Map<string, OutcomeCounts> {
+    const counts = new Map<string, OutcomeCounts>();
+    this.forEachRecord('outcome', nowMs, windowMs, (ts, line) => {
+      const status = OUTCOME_STATUS.exec(line)?.[1] as keyof OutcomeCounts | undefined;
+      const body = SUBSCRIBER_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
+      if (ts < nowMs - windowMs || status === undefined || body === undefined) {
+        return;
+      }
+      const subscriberId = unescapeJson(body);
+      const entry = counts.get(subscriberId) ?? { success: 0, failed: 0, dlq: 0 };
+      entry[status]++;
+      counts.set(subscriberId, entry);
+    });
+    return counts;
   }
 
   /** Calls `visit` with the time of every trigger record in the `lookbackMs` before `nowMs` (and none after it). */

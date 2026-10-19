@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LogFormatter } from './LogFormatter.js';
+import { isRecord } from '../isRecord.js';
 
 export interface LogTail {
   /** Day of the log file (UTC, YYYY-MM-DD). */
@@ -56,4 +57,56 @@ export function readLogTail(configDir: string, options: LogTailOptions): LogTail
     omitted,
     bytes: Buffer.byteLength(content, 'utf8'),
   };
+}
+
+export interface DispatchDurations {
+  /** Dispatches of that subscriber that logged a duration. */
+  runs: number;
+  totalMs: number;
+  maxMs: number;
+}
+
+/**
+ * How long each subscriber took in the `windowMs` before `nowMs`, from the dispatch records of the daily logs.
+ * Best effort: the log is the verbose journal, a dispatch without a recorded duration is not counted, and an
+ * unreadable line is skipped. A day file is a few hundred KB; the history files (payloads) are never read here.
+ */
+export function readDispatchDurations(configDir: string, nowMs: number, windowMs: number): Map<string, DispatchDurations> {
+  const result = new Map<string, DispatchDurations>();
+  const firstDay = new Date(nowMs - windowMs).toISOString().slice(0, 10);
+  const lastDay = new Date(nowMs).toISOString().slice(0, 10);
+  for (let day = firstDay; day <= lastDay; day = new Date(Date.parse(day) + 86_400_000).toISOString().slice(0, 10)) {
+    const file = logFilePath(configDir, day);
+    if (!existsSync(file)) {
+      continue;
+    }
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      if (!line.includes('"type":"dispatch"')) {
+        continue;
+      }
+      let record: unknown;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!isRecord(record)) {
+        continue;
+      }
+      const { ts, subscriberId, durationMs } = record;
+      if (typeof ts !== 'string' || typeof subscriberId !== 'string' || typeof durationMs !== 'number') {
+        continue;
+      }
+      const at = Date.parse(ts);
+      if (Number.isNaN(at) || at > nowMs || at < nowMs - windowMs) {
+        continue;
+      }
+      const entry = result.get(subscriberId) ?? { runs: 0, totalMs: 0, maxMs: 0 };
+      entry.runs++;
+      entry.totalMs += durationMs;
+      entry.maxMs = Math.max(entry.maxMs, durationMs);
+      result.set(subscriberId, entry);
+    }
+  }
+  return result;
 }

@@ -495,3 +495,66 @@ describe('HistoryReader.bucketOutcomes (how dispatches ended, per time slice)', 
     expect(sum(new HistoryReader(join(historyDir, 'missing')).bucketOutcomes(NOW, HOUR, 4).success)).toBe(0);
   });
 });
+
+describe('HistoryReader breakdowns (events and subscribers over a window)', () => {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const NOW = Date.parse('2026-01-02T12:00:00.000Z');
+  let historyDir: string;
+
+  beforeEach(() => {
+    historyDir = join(tmpdir(), `queue-history-breakdown-test-${crypto.randomUUID()}`);
+    mkdirSync(historyDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(historyDir, { recursive: true, force: true });
+  });
+
+  const trigger = (atMs: number, event: string) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId: crypto.randomUUID(), event, matchedCount: 0, totalCount: 0, payload: { big: 'x'.repeat(2000) } });
+  const outcome = (atMs: number, subscriberId: string, status: string) => ({ ts: new Date(atMs).toISOString(), type: 'outcome', eventId: crypto.randomUUID(), event: 'onFoo', subscriberId, status, target: 'echo' });
+
+  it('countTriggersByEvent counts per event name inside the window only', () => {
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - MINUTE, 'onA'), trigger(NOW - 2 * MINUTE, 'onA'), trigger(NOW - HOUR, 'onB')]);
+    writeDay(historyDir, '2026-01-01', [trigger(NOW - 23 * HOUR, 'onA'), trigger(NOW - 30 * HOUR, 'onA')]);
+    const counts = new HistoryReader(historyDir).countTriggersByEvent(NOW, 24 * HOUR);
+    expect(Object.fromEntries(counts)).toEqual({ onA: 3, onB: 1 });
+  });
+
+  it('countTriggersByEvent reads names with dots, quotes and a backslash as they were pushed', () => {
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - MINUTE, 'on.github.workflow_run'), trigger(NOW - MINUTE, 'say "hi" \\ there')]);
+    const counts = new HistoryReader(historyDir).countTriggersByEvent(NOW, HOUR);
+    expect([...counts.keys()].sort()).toEqual(['on.github.workflow_run', 'say "hi" \\ there']);
+  });
+
+  it('countTriggersByEvent ignores outcome records and is empty for a missing directory', () => {
+    writeDay(historyDir, '2026-01-02', [outcome(NOW - MINUTE, 'onFoo[0]', 'success')]);
+    expect(new HistoryReader(historyDir).countTriggersByEvent(NOW, HOUR).size).toBe(0);
+    expect(new HistoryReader(join(historyDir, 'missing')).countTriggersByEvent(NOW, HOUR).size).toBe(0);
+  });
+
+  it('countOutcomesBySubscriber counts each status per subscriber inside the window', () => {
+    writeDay(historyDir, '2026-01-02', [
+      outcome(NOW - MINUTE, 'onA[0]', 'success'),
+      outcome(NOW - MINUTE, 'onA[0]', 'success'),
+      outcome(NOW - MINUTE, 'onA[0]', 'failed'),
+      outcome(NOW - MINUTE, 'onB[0]', 'dlq'),
+      outcome(NOW + MINUTE, 'onB[0]', 'success'),
+    ]);
+    writeDay(historyDir, '2026-01-01', [outcome(NOW - 30 * HOUR, 'onA[0]', 'success')]);
+    const counts = new HistoryReader(historyDir).countOutcomesBySubscriber(NOW, 24 * HOUR);
+    expect(Object.fromEntries(counts)).toEqual({
+      'onA[0]': { success: 2, failed: 1, dlq: 0 },
+      'onB[0]': { success: 0, failed: 0, dlq: 1 },
+    });
+  });
+
+  it('reads what HistoryLog writes', () => {
+    const log = new HistoryLog(historyDir);
+    log.logTrigger({ eventId: 'e1', event: 'onFoo', matchedCount: 1, totalCount: 1, payload: { a: 1 } });
+    log.logOutcome({ eventId: 'e1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'success', target: 'echo' });
+    const reader = new HistoryReader(historyDir);
+    expect(Object.fromEntries(reader.countTriggersByEvent(Date.now(), HOUR))).toEqual({ onFoo: 1 });
+    expect(Object.fromEntries(reader.countOutcomesBySubscriber(Date.now(), HOUR))).toEqual({ 'onFoo[0]': { success: 1, failed: 0, dlq: 0 } });
+  });
+});

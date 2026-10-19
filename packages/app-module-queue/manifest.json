@@ -40,6 +40,15 @@
     {
       "kind": "widget",
       "slot": "dashboard",
+      "label": "Queue Top Events",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/top-events-widget.yaml"
+      }
+    },
+    {
+      "kind": "widget",
+      "slot": "dashboard",
       "label": "Queue Relay",
       "view": {
         "type": "path",
