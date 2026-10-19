@@ -3,7 +3,7 @@
  * Makes exactly one HTTP request to /api/webhook-history with optional filters.
  */
 
-import type { DeliveryInfo, DeliveryQuery } from '@wadeck-app/queue-relay-client';
+import type { DeliveryInfo, DeliveryQuery, RelayPlugin } from '@wadeck-app/queue-relay-client';
 import { summarizePayload } from '@wadeck-app/queue-relay-client';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 
@@ -19,6 +19,8 @@ export interface HistoryIO {
 
 export interface HistoryOptions {
   json?: boolean;
+  /** Plugins that describe a delivery of their source; without one the summary reads "(no summary)". */
+  plugins?: readonly RelayPlugin[];
 }
 
 interface ParsedHistoryFlags {
@@ -180,7 +182,7 @@ export async function relayWebhookHistory(
       if (!delivery.verified && delivery.error) {
         summary = delivery.error;
       } else {
-        summary = summarizePayload(delivery.source, delivery.eventType, delivery.payload ?? undefined);
+        summary = summarizePayload(options.plugins ?? [], delivery.source, delivery.eventType, delivery.payload ?? undefined);
       }
 
       io.stdout.write(`${time}  ${source}  ${eventType}  ${status}  ${summary}\n`);

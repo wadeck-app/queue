@@ -28,6 +28,8 @@ export interface RelayPlugin {
   source: string;
   /** Returns null to drop the event -- a deliberate choice by the plugin, not an error. */
   mapEvent: (envelope: RelayEnvelope) => MappedEvent | null;
+  /** One line describing a delivery of this source in `queue relay webhook history`; null when there is nothing to say. Optional. */
+  summarize?: (eventType: string, payload: Record<string, unknown>) => string | null;
 }
 
 function isRelayPlugin(value: unknown): value is RelayPlugin {

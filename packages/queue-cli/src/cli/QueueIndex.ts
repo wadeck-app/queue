@@ -683,8 +683,9 @@ Both commands make exactly one HTTP request to the relay, using the relay token 
 
     if (webhookCmd === 'history') {
       const { relayWebhookHistory } = await import('./relayWebhookHistory.js');
+      const { BUILTIN_RELAY_PLUGINS } = await import('../relay/builtinPlugins.js');
       const json = rest.slice(2).includes('--json');
-      const exitCode = await relayWebhookHistory(apiClient, { stdout: process.stdout, stderr: process.stderr }, { json }, rest.slice(2));
+      const exitCode = await relayWebhookHistory(apiClient, { stdout: process.stdout, stderr: process.stderr }, { json, plugins: BUILTIN_RELAY_PLUGINS.map((entry) => entry.plugin) }, rest.slice(2));
       if (exitCode !== 0) {
         process.exit(exitCode);
       }

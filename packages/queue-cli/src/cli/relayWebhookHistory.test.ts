@@ -197,6 +197,37 @@ describe('relayWebhookHistory', () => {
     });
   });
 
+  describe('payload summary comes from the plugin of the delivery source', () => {
+    const delivery = {
+      receivedAt: '2026-10-14T14:30:00Z',
+      source: 'github',
+      webhookConfigId: 'cfg-1',
+      eventType: 'push',
+      deliveryId: 'del-1',
+      verified: true,
+      payload: { repository: { full_name: 'org/repo' } },
+    };
+
+    it('prints what the injected plugin says', async () => {
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([delivery]);
+      const plugin = { source: 'github', mapEvent: () => null, summarize: () => 'summary from the plugin' };
+
+      await relayWebhookHistory(mockClient, io, { plugins: [plugin] }, []);
+
+      const stdoutOutput = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
+      expect(stdoutOutput).toContain('summary from the plugin');
+    });
+
+    it('prints "(no summary)" when no plugin handles the source', async () => {
+      vi.mocked(mockClient.listDeliveries).mockResolvedValue([delivery]);
+
+      await relayWebhookHistory(mockClient, io, {}, []);
+
+      const stdoutOutput = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
+      expect(stdoutOutput).toContain('(no summary)');
+    });
+  });
+
   describe('JSON output', () => {
     it('outputs raw array when --json is set', async () => {
       vi.mocked(mockClient.listDeliveries).mockResolvedValue([

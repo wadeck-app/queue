@@ -1,4 +1,5 @@
 import { isRecord } from '@wadeck-app/queue-core';
+import type { RelayPlugin } from './plugin-api.js';
 /**
  * REST API client for the relay webhook service.
  * Handles authentication, error handling with specific error kinds,
@@ -85,8 +86,8 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
       return response;
     } catch (err) {
       // Distinguish between timeout and network error
-      const errName = field(err, 'name');
-      const errCode = field(err, 'code');
+      const errName = isRecord(err) ? err.name : undefined;
+      const errCode = isRecord(err) ? err.code : undefined;
       const errMsg = (err as Error).message || String(err);
 
       if (errName === 'AbortError' || errCode === 'ABORT_ERR') {
@@ -323,119 +324,26 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
   };
 }
 
-/** A property of an unknown JSON value; undefined unless the value is an object that has it. */
-function field(value: unknown, key: string): unknown {
-  return typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined;
-}
+/** Longest summary shown for a delivery. */
+const MAX_SUMMARY_LENGTH = 110;
 
 /**
- * Summarize a GitHub webhook payload into a human-readable string (max 110 chars).
- * Returns "(no summary)" if the payload shape is unknown.
+ * One-line description of a delivery, written by the plugin of its source (RelayPlugin.summarize).
+ * "(no summary)" when no plugin handles the source, the payload is not an object, or the plugin has nothing to say.
  */
 export function summarizePayload(
+  plugins: readonly RelayPlugin[],
   source: string,
   eventType: string,
   payload: Record<string, unknown> | null | undefined
 ): string {
-  if (!payload || typeof payload !== 'object') {
+  const plugin = plugins.find((candidate) => candidate.source === source);
+  if (!plugin?.summarize || !isRecord(payload)) {
     return '(no summary)';
   }
-
-  const parts: string[] = [];
-
-  // Repository name
-  const repo = field(field(payload, 'repository'), 'full_name');
-  if (typeof repo === 'string') {
-    parts.push(repo);
-  }
-
-  // Actor (sender login)
-  const sender = field(field(payload, 'sender'), 'login');
-  if (typeof sender === 'string') {
-    parts.push(`by ${sender}`);
-  }
-
-  // Action
-  const action = field(payload, 'action');
-  if (typeof action === 'string') {
-    parts.push(`action=${action}`);
-  }
-
-  // Branch/ref (strip refs/heads/ prefix)
-  const ref = field(payload, 'ref');
-  if (typeof ref === 'string') {
-    parts.push(ref.startsWith('refs/heads/') ? ref.slice(11) : ref);
-  }
-
-  // Commit message first line
-  const commitMsg = field(field(payload, 'head_commit'), 'message');
-  if (typeof commitMsg === 'string') {
-    const firstLine = commitMsg.split('\n')[0];
-    parts.push(`"${firstLine}"`);
-  }
-
-  // Commits count
-  const commits = field(payload, 'commits');
-  if (Array.isArray(commits)) {
-    parts.push(`${commits.length} commits`);
-  }
-
-  // Pull request number and title
-  const pr = field(payload, 'pull_request');
-  if (typeof pr === 'object' && pr !== null) {
-    const num = field(pr, 'number');
-    const title = field(pr, 'title');
-    if (typeof num === 'number' && typeof title === 'string') {
-      parts.push(`#${num} ${title}`);
-    }
-  }
-
-  // Issue number and title
-  const issue = field(payload, 'issue');
-  if (typeof issue === 'object' && issue !== null) {
-    const num = field(issue, 'number');
-    const title = field(issue, 'title');
-    if (typeof num === 'number' && typeof title === 'string') {
-      parts.push(`#${num} ${title}`);
-    }
-  }
-
-  // Workflow run name and conclusion
-  const workflow = field(payload, 'workflow_run');
-  if (typeof workflow === 'object' && workflow !== null) {
-    const name = field(workflow, 'name');
-    const conclusion = field(workflow, 'conclusion');
-    if (typeof name === 'string' && typeof conclusion === 'string') {
-      parts.push(`${name} ${conclusion}`);
-    }
-  }
-
-  // Check run name and conclusion
-  const checkRun = field(payload, 'check_run');
-  if (typeof checkRun === 'object' && checkRun !== null) {
-    const name = field(checkRun, 'name');
-    const conclusion = field(checkRun, 'conclusion');
-    if (typeof name === 'string' && typeof conclusion === 'string') {
-      parts.push(`${name} ${conclusion}`);
-    }
-  }
-
-  // Comment body (first 40 chars)
-  const comment = field(field(payload, 'comment'), 'body');
-  if (typeof comment === 'string') {
-    const truncated = comment.length > 40 ? comment.slice(0, 40) + '...' : comment;
-    parts.push(`comment: "${truncated}"`);
-  }
-
-  // Join all parts and truncate to 110 chars
-  if (parts.length === 0) {
+  const summary = plugin.summarize(eventType, payload);
+  if (summary === null || summary === '') {
     return '(no summary)';
   }
-
-  let summary = parts.join(' | ');
-  if (summary.length > 110) {
-    summary = summary.slice(0, 107) + '...';
-  }
-
-  return summary;
+  return summary.length > MAX_SUMMARY_LENGTH ? summary.slice(0, MAX_SUMMARY_LENGTH - 3) + '...' : summary;
 }

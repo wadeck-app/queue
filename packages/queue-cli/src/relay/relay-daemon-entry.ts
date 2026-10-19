@@ -1,11 +1,12 @@
 import { startRelayDaemon, registerBuiltinPlugin } from '@wadeck-app/queue-relay-client';
-import githubPlugin from '@wadeck-app/plugin-github';
+import { BUILTIN_RELAY_PLUGINS } from './builtinPlugins.js';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 
-// Register GitHub plugin as built-in
-registerBuiltinPlugin('@wadeck-app/plugin-github', githubPlugin, ['github']);
+for (const { name, plugin, aliases } of BUILTIN_RELAY_PLUGINS) {
+  registerBuiltinPlugin(name, plugin, aliases);
+}
 
 // Require QUEUE_CONFIG_DIR environment variable
 const configDir = process.env.QUEUE_CONFIG_DIR;

@@ -1,5 +1,6 @@
 // violations-suppress: ts/no-barrel-index package entry point (package.json main/types): its exports are the package's public API, deleting it would expose dist internals to every consumer
 import type { RelayPlugin, RelayEnvelope } from '@wadeck-app/queue-relay-client';
+import { summarizeGithubPayload } from './summarize.js';
 
 /**
  * The entire GitHub-specific surface of this integration. queue-relay-client
@@ -20,6 +21,9 @@ const plugin: RelayPlugin = {
       event: `on.github.${envelope.eventType}`,
       payload: envelope.payload,
     };
+  },
+  summarize(_eventType, payload) {
+    return summarizeGithubPayload(payload);
   },
 };
 

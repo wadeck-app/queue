@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createRelayApiClient, RelayApiError } from './relayApi.js';
+import { createRelayApiClient, RelayApiError, summarizePayload } from './relayApi.js';
+import type { RelayPlugin } from './plugin-api.js';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 
 interface MockFetchOptions {
@@ -405,146 +406,34 @@ describe('relayApi', () => {
       });
     });
   });
+});
 
-  describe('summarizePayload', () => {
-    it('extracts repository.full_name from GitHub push payload', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        repository: { full_name: 'org/repo' },
-        ref: 'refs/heads/main',
-      };
-      const summary = summarizePayload('github', 'push', payload);
-      expect(summary).toContain('org/repo');
-    });
+describe('summarizePayload (generic: the plugin of the source writes the summary)', () => {
+  const plugin = (summary: string | null): RelayPlugin => ({
+    source: 'demo',
+    mapEvent: () => null,
+    summarize: () => summary,
+  });
 
-    it('extracts sender.login from GitHub payload', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        sender: { login: 'alice' },
-        action: 'opened',
-      };
-      const summary = summarizePayload('github', 'pull_request', payload);
-      expect(summary).toContain('alice');
-    });
+  it('returns what the plugin of that source says', () => {
+    expect(summarizePayload([plugin('hello')], 'demo', 'x', { a: 1 })).toBe('hello');
+  });
 
-    it('removes refs/heads/ prefix from ref', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        ref: 'refs/heads/feature/my-feature',
-      };
-      const summary = summarizePayload('github', 'push', payload);
-      expect(summary).toContain('feature/my-feature');
-      expect(summary).not.toContain('refs/heads/');
-    });
+  it('reads "(no summary)" when no plugin handles the source', () => {
+    expect(summarizePayload([plugin('hello')], 'other', 'x', { a: 1 })).toBe('(no summary)');
+    expect(summarizePayload([], 'demo', 'x', { a: 1 })).toBe('(no summary)');
+  });
 
-    it('includes head_commit.message first line', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        head_commit: {
-          message: 'Fix bug in parser\n\nThis is a longer description',
-        },
-      };
-      const summary = summarizePayload('github', 'push', payload);
-      expect(summary).toContain('Fix bug in parser');
-      expect(summary).not.toContain('This is a longer description');
-    });
+  it('reads "(no summary)" when the plugin has no summarize, says nothing, or the payload is not an object', () => {
+    expect(summarizePayload([{ source: 'demo', mapEvent: () => null }], 'demo', 'x', { a: 1 })).toBe('(no summary)');
+    expect(summarizePayload([plugin(null)], 'demo', 'x', { a: 1 })).toBe('(no summary)');
+    expect(summarizePayload([plugin('hello')], 'demo', 'x', null)).toBe('(no summary)');
+    expect(summarizePayload([plugin('hello')], 'demo', 'x', undefined)).toBe('(no summary)');
+  });
 
-    it('includes commits count', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        commits: [{ id: '1' }, { id: '2' }, { id: '3' }],
-      };
-      const summary = summarizePayload('github', 'push', payload);
-      expect(summary).toContain('3');
-    });
-
-    it('includes pull_request number and title', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        pull_request: {
-          number: 42,
-          title: 'Add new feature',
-        },
-      };
-      const summary = summarizePayload('github', 'pull_request', payload);
-      expect(summary).toContain('#42');
-      expect(summary).toContain('Add new feature');
-    });
-
-    it('includes issue number and title', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        issue: {
-          number: 99,
-          title: 'Bug report',
-        },
-      };
-      const summary = summarizePayload('github', 'issues', payload);
-      expect(summary).toContain('#99');
-      expect(summary).toContain('Bug report');
-    });
-
-    it('includes workflow_run name and conclusion', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        workflow_run: {
-          name: 'Tests',
-          conclusion: 'success',
-        },
-      };
-      const summary = summarizePayload('github', 'workflow_run', payload);
-      expect(summary).toContain('Tests');
-      expect(summary).toContain('success');
-    });
-
-    it('includes check_run name and conclusion', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        check_run: {
-          name: 'Linter',
-          conclusion: 'failure',
-        },
-      };
-      const summary = summarizePayload('github', 'check_run', payload);
-      expect(summary).toContain('Linter');
-      expect(summary).toContain('failure');
-    });
-
-    it('truncates comment.body to first 40 chars', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        comment: {
-          body: 'This is a very long comment that goes on and on and on',
-        },
-      };
-      const summary = summarizePayload('github', 'issue_comment', payload);
-      expect(summary.length).toBeLessThanOrEqual(110);
-      expect(summary).toContain('This is a very long comment that goes o');
-    });
-
-    it('returns "(no summary)" for unknown payload shape', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = { foo: 'bar' };
-      const summary = summarizePayload('github', 'unknown_event', payload);
-      expect(summary).toBe('(no summary)');
-    });
-
-    it('returns "(no summary)" for null payload', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const summary = summarizePayload('github', 'push', null);
-      expect(summary).toBe('(no summary)');
-    });
-
-    it('keeps output under 110 characters', async () => {
-      const { summarizePayload } = await import('./relayApi.js');
-      const payload = {
-        repository: { full_name: 'very-long-organization-name/very-long-repository-name' },
-        head_commit: {
-          message: 'Very long commit message that is super descriptive and contains lots of information',
-        },
-      };
-      const summary = summarizePayload('github', 'push', payload);
-      expect(summary.length).toBeLessThanOrEqual(110);
-    });
+  it('caps a long summary at 110 characters, ending with "..."', () => {
+    const summary = summarizePayload([plugin('x'.repeat(300))], 'demo', 'x', { a: 1 });
+    expect(summary).toHaveLength(110);
+    expect(summary.endsWith('...')).toBe(true);
   });
 });
