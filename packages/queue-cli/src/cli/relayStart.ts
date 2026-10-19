@@ -92,6 +92,7 @@ export async function relayStart(deps: RelayStartDeps, configDir: string): Promi
   }
 
   // Spawn daemon and wait (case f, g)
+  // violations-suppress: cli/no-spawn-without-windows-hide deps.spawn is the injected spawnDetachedProcess, which hides the window
   deps.spawn(daemonScript, configDir, { QUEUE_DAEMON_SCRIPT: queueDaemonScript });
   const started = await deps.waitForDaemon(5000);
 

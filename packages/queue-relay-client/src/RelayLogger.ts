@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@wadeck-app/queue-core';
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -16,7 +17,7 @@ function isEnoent(error: unknown): boolean {
 
 // Helper: build error message appropriate to the failure context
 function describe(error: Error, logFilePath: string, isAppendError: boolean): string {
-  const errorMsg = error.message;
+  const errorMsg = getErrorMessage(error);
   const errorCode = 'code' in error ? ` (${(error as NodeJS.ErrnoException).code})` : '';
 
   if (isAppendError) {

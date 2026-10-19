@@ -42,7 +42,7 @@ export function createEnsureDaemonRunning(deps: EnsureDaemonRunningDeps) {
     }
 
     // Create the start promise. Use a microtask to ensure the promise is stored
-    // before any synchronous throws from resolveEntry() or spawn() execute finally.
+    // before any synchronous throws from resolveEntry() or the spawn call execute finally.
     let startPromise: Promise<void>;
 
     // @formatter:off
@@ -54,6 +54,7 @@ export function createEnsureDaemonRunning(deps: EnsureDaemonRunningDeps) {
       try {
         // Resolve entry path lazily (only when actually starting)
         const entryPath = deps.resolveEntry();
+        // violations-suppress: cli/no-spawn-without-windows-hide deps.spawn is the injected spawnDetachedProcess, which hides the window
         deps.spawn(entryPath, { QUEUE_CONFIG_DIR: configDir });
 
         // Poll for daemon to become running

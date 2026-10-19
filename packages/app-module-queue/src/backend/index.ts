@@ -45,7 +45,7 @@ export default function (ctx: ModuleContext): void {
       return reply.code(200).send(page);
     } catch (err) {
       if (err instanceof InvalidQueryError) {
-        return reply.code(400).send({ error: err.message });
+        return reply.code(400).send({ error: getErrorMessage(err) });
       }
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

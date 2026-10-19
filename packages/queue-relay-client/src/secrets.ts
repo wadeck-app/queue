@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@wadeck-app/queue-core';
 import { readFileSync as fsReadFileSync, existsSync as fsExistsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -108,7 +109,7 @@ export function resolveRelayToken(deps: ResolveRelayTokenDeps): ResolveRelayToke
       // If the file exists but is unreadable (e.g., EACCES), throw with details
       const error = err as NodeJS.ErrnoException;
       throw new Error(
-        `[queue-relay-client] Failed to read ${secretsEnvFile}: ${error.code ?? 'unknown error'} (${error.message})`
+        `[queue-relay-client] Failed to read ${secretsEnvFile}: ${error.code ?? 'unknown error'} (${getErrorMessage(err)})`
       );
     }
   }
