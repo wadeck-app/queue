@@ -16,7 +16,7 @@ items:
   - $type: StatTile
     label: Events, last 24 h
     value: $sources.activity.last24Hours
-  # variant and yFormat need dsl-ui >= 2026.10.19-117; an older shell draws the full chart. The explicit colour is for that
+  # variant and yFormat need dsl-ui >= 2026.10.19-117; an older shell draws the full chart (hence 110 px: 80 squashes its axes). The colour is for that
   # older shell (no palette: black bars). The hourly chart (/activity/series lastDay, area) waits for the new shell:
   # the old one prints 1753 as "1.8 KB".
   - $type: Chart
@@ -25,6 +25,6 @@ items:
     xAxisKey: label
     xAxisType: category
     yFormat: number
-    height: 80
+    height: 110
     series:
       - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }

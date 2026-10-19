@@ -22,7 +22,7 @@ items:
     xAxisKey: label
     xAxisType: category
     yFormat: number
-    height: 80
+    height: 110
     series:
       - { key: failedAttempts, name: "Failed attempts per hour", type: bar, yAxisId: left, color: "var(--color-warning)" }
       - { key: givenUp, name: "Given up per hour", type: bar, yAxisId: left, color: "var(--color-danger)" }
