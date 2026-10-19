@@ -23,4 +23,4 @@ items:
     xAxisType: category
     height: 140
     series:
-      - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "#3b82f6" }
+      - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }

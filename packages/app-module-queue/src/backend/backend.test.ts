@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
@@ -613,7 +614,7 @@ describe('backend', () => {
     const reply = fakeReply();
     await routes.get('GET /relay/deliveries')!(fakeReq({ query: {} }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(status);
-    expect(reply.send).toHaveBeenCalledWith({ error: error.message });
+    expect(reply.send).toHaveBeenCalledWith({ error: getErrorMessage(error) });
   });
 
   it('GET /relay/webhooks uses the same status mapping', async () => {

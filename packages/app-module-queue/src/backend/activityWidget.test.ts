@@ -44,9 +44,9 @@ describe('activity-widget.yaml chart', () => {
     expect(chart['xAxisType']).toBe('category');
   });
 
-  it('gives its series a colour: without one the bars render black', () => {
+  it('gives its series the theme colour (a raw colour fails the view rules and breaks dark mode; without one the bars render black)', () => {
     const [series] = chart['series'] as Node[];
     expect(series?.['key']).toBe('events');
-    expect(series?.['color']).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(series?.['color']).toBe('var(--color-primary)');
   });
 });
