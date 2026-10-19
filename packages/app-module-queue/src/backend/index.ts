@@ -10,6 +10,7 @@ import { listDlq, dlqOptions, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
 import { retryEvent } from './retry.js';
 import { getDaemonState } from './daemon.js';
+import { getRelayInfo } from './relay.js';
 import { listSubscribers } from './subscribers.js';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery } from './historyQuery.js';
@@ -114,6 +115,14 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('GET', '/daemon', async (_req, reply) => {
     try {
       return reply.code(200).send(await getDaemonState(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  ctx.registerRoute('GET', '/relay', async (_req, reply) => {
+    try {
+      return reply.code(200).send(await getRelayInfo(configDir));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

@@ -1,0 +1,14 @@
+$sources:
+  relay:
+    url: GET /api/modules/queue/relay
+
+$type: VerticalStack
+gap: gap-2
+items:
+  - $type: StatTile
+    label: Webhook relay
+    value: $sources.relay.state
+  - $type: Badge
+    $if: $sources.relay.lastError
+    label: $sources.relay.lastError
+    variant: warning

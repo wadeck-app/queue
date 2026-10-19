@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 import { RelayConnection } from './RelayConnection.js';
 import { createRelayLogger } from './RelayLogger.js';
+import { relayStateDir } from './relayClient.js';
 import { startIdleWatchdog, pinRelay, type IdleWatchdogOptions } from './onDemand.js';
 
 export const RELAY_DAEMON_PORT = 47911;
@@ -90,13 +91,13 @@ export interface RelayDaemonOptions {
 }
 
 export async function startRelayDaemon(configDir: string, shutdownDeps?: ShutdownDeps, options: RelayDaemonOptions = {}): Promise<DaemonHandle> {
-  const relayStateDir = join(configDir, 'relay-daemon');
+  const stateDir = relayStateDir(configDir);
   // Ensure relay-daemon subdirectory exists before createDaemon tries to create config.lock
-  mkdirSync(relayStateDir, { recursive: true });
+  mkdirSync(stateDir, { recursive: true });
 
   const startedAt = Date.now();
   // Create logger that writes to relay.log within the relay-daemon directory
-  const relayLogger = createRelayLogger(join(relayStateDir, 'relay.log'));
+  const relayLogger = createRelayLogger(join(stateDir, 'relay.log'));
   const connection = new RelayConnection({
     configDir,
     onLog: (line) => {
@@ -118,7 +119,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
 
   let watchdog: { cancel: () => void } | null = null;
   const daemonHandle = await createDaemon<RelayCommands>({
-    configDir: relayStateDir,
+    configDir: stateDir,
     port: RELAY_DAEMON_PORT,
     idleTimeout: null,
     commands: {
@@ -153,12 +154,12 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
 
   // Started on demand by "queue wait": stop when nobody waits any more (a relay started by hand has no marker and is left alone)
   watchdog = startIdleWatchdog({
-    relayDir: relayStateDir,
+    relayDir: stateDir,
     ...options.idleWatchdog,
     log: (line) => relayLogger(line),
     stop: () => {
       // Stopped: no longer an on-demand relay waiting for its waiters, so leave no marker behind
-      pinRelay(relayStateDir);
+      pinRelay(stateDir);
       connection.stop();
       void daemonHandle.stop('idle');
     },

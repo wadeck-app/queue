@@ -12,7 +12,7 @@ export interface LogsResponse {
   present: boolean;
   /** Records of that day older than the ones returned. */
   omitted: number;
-  /** One row per log record, rendered as `queue logs` renders it (a DataTable needs rows, not strings). */
+  /** One row per log record, rendered as `queue logs` renders it, newest first (the dashboard shows the latest without scrolling). */
   lines: Array<{ text: string }>;
 }
 
@@ -33,5 +33,5 @@ export function getLogs(configDir: string, query: QueryParams): LogsResponse {
   }
 
   const tail = readLogTail(configDir, { limit, date });
-  return { date: tail.date, present: tail.present, omitted: tail.omitted, lines: tail.lines.map((text) => ({ text })) };
+  return { date: tail.date, present: tail.present, omitted: tail.omitted, lines: tail.lines.map((text) => ({ text })).reverse() };
 }

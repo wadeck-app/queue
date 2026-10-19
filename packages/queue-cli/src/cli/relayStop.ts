@@ -1,4 +1,5 @@
 import { getErrorMessage } from '@wadeck-app/queue-core';
+import { relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import type { RelayCommands } from '@wadeck-app/queue-relay-client';
 import { join } from 'node:path';
 import type { DaemonClient } from '@wadeck-app/singleton-daemon-kit';
@@ -42,7 +43,7 @@ export async function relayStop(client: DaemonClient<RelayCommands>, configDir: 
     }
     // Error case (b): relay is still running but quit failed
     const errorMsg = getErrorMessage(err);
-    const logPath = join(configDir, 'relay-daemon', 'relay.log');
+    const logPath = join(relayStateDir(configDir), 'relay.log');
     io.stderr.write(`[fail] relay client did not stop: ${errorMsg}\n`);
     io.stderr.write(`       Check ${logPath} for details\n`);
     return 1;

@@ -29,6 +29,15 @@
       }
     },
     {
+      "kind": "widget",
+      "slot": "dashboard",
+      "label": "Queue Relay",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/relay-widget.yaml"
+      }
+    },
+    {
       "kind": "page",
       "slot": "nav",
       "label": "Queue History",

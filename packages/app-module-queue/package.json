@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@wadeck-app/queue-core": "*",
+    "@wadeck-app/queue-relay-client": "*",
     "@wadeck-app/singleton-daemon-kit": "latest"
   },
   "devDependencies": {

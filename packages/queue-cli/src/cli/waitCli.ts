@@ -5,7 +5,7 @@ import { join as pathJoin } from 'node:path';
 import { HistoryReader, getErrorMessage } from '@wadeck-app/queue-core';
 import { warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
-import { createRelayClient } from './RelayClient.js';
+import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { CI_EXIT } from './ciWait.js';
 import { ciWaitCommand, parseGithubRepo, type CiWaitCommandOptions } from './ciWaitCommand.js';
 import { inferExpectedWorkflows, parseWorkflowFile } from './ciInfer.js';
@@ -190,7 +190,7 @@ export type StartRelay = () => Promise<number>;
 function relayOnDemandFor(configDir: string, startRelay: StartRelay): RelayOnDemand {
   const relay = createRelayClient(configDir);
   return new RelayOnDemand({
-    relayDir: pathJoin(configDir, 'relay-daemon'),
+    relayDir: relayStateDir(configDir),
     isRunning: () => relay.isRunning(),
     startRelay,
     io: { stderr: process.stderr },

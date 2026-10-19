@@ -13,7 +13,7 @@ import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import { runSelfCheck } from '@wadeck-app/shared-cli';
 import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
-import { createRelayClient } from './RelayClient.js';
+import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { relayStop } from './relayStop.js';
 import { pinRelay } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
 import { queueWaitCommand } from './waitCli.js';
@@ -578,7 +578,7 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
       process.exit(exitCode);
     }
     // A manual start makes the relay permanent, also when a "queue wait" had started it on demand
-    pinRelay(pathJoin(configDir, 'relay-daemon'));
+    pinRelay(relayStateDir(configDir));
     return;
   }
 
@@ -589,7 +589,7 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
     if (exitCode !== 0) {
       process.exit(exitCode);
     }
-    pinRelay(pathJoin(configDir, 'relay-daemon'));
+    pinRelay(relayStateDir(configDir));
     return;
   }
 

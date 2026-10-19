@@ -1,4 +1,5 @@
 import { getErrorMessage } from '@wadeck-app/queue-core';
+import { relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { join } from 'node:path';
 import type { RelayStopIO } from './relayStop.js';
 import type { DaemonClient } from '@wadeck-app/singleton-daemon-kit';
@@ -103,7 +104,7 @@ export async function relayStart(deps: RelayStartDeps, configDir: string): Promi
   }
 
   // Timeout case (g)
-  const logPath = join(configDir, 'relay-daemon', 'relay.log');
+  const logPath = join(relayStateDir(configDir), 'relay.log');
   deps.io.stderr.write('[fail] relay client failed to start within 5s.\n');
 
   const logLines = deps.readLogTail(logPath, 5);

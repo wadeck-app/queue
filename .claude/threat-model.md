@@ -49,6 +49,12 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 - **Risk accepted:** Within the retention window, caller responsibility not to push secrets as payloads (same as WAL/DLQ).
 - **Dashboard exposure:** The app-core module's `GET /api/modules/queue/history` also returns each payload as `payloadText` (indented JSON, capped at 20,000 characters; it replaces the raw `payload` in the list, the full one is on `GET /history/<eventId>` (app-core >= 2026.10.17-023) and in `queue history --json`), rendered in the Queue History page's expandable rows. Same sensitivity as `queue history --json`, but reachable by anything that can call app-core's HTTP API (localhost); do not expose app-core beyond localhost without authentication.
 
+### Dashboard routes that would change what runs
+
+- **Threat:** An HTTP route of the app-core module that writes `subscribers.yml` (`queue sub add|edit|remove`) lets any web page the user visits, or any local process, register an arbitrary command that runs on the next matching event. A browser can reach `localhost` routes; the daemon's raw RPC port it cannot.
+- **Decision:** The module has no such route and no route that starts or stops a daemon. `GET /subscribers` masks the values of `headers` and `env` (tokens) and keeps their names. The mutating routes are `push`, `replay`, `retry`, `dlq/:id/replay` and `dlq/:id/clear`, which run or drop what is already configured.
+- **Revisit only with:** an authentication / CSRF protection that app-core provides to every module.
+
 ### HTTP subscriber receiving sensitive payload data
 
 - **Threat:** HTTP subscribers receive the full event payload. If the target URL is untrusted or the request is logged by a proxy, payload data is exposed.

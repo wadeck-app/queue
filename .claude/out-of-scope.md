@@ -24,7 +24,7 @@ The queue delivers `payload: unknown` as-is. Payload structure is the subscriber
 
 ## GUI / dashboard
 
-This is a CLI-only tool. No web dashboard is planned for queue. See `orchestrator` for dashboard patterns if needed.
+queue has no dashboard of its own: `packages/app-module-queue` is a module of app-core's dashboard (status, DLQ, subscribers, history, logs, relay, activity). It reads the queue files and may replay, retry, clear a DLQ entry and push; that is all. It never edits `subscribers.yml` and never starts or stops a daemon: those stay `queue sub`, `queue start|stop` and `queue relay start|stop` (see the threat model, "Dashboard exposure").
 
 ## Cross-platform daemon management (launchd, systemd)
 

@@ -27,14 +27,14 @@ afterEach(() => {
 });
 
 describe('getLogs', () => {
-  it('returns the last records of the asked day as rows, rendered like `queue logs`', () => {
+  it('returns the last records of the asked day as rows, newest first, rendered like `queue logs`', () => {
     writeLog('2026-10-18', 3);
     const response = getLogs(configDir, { date: '2026-10-18', limit: '2' });
     expect(response).toEqual({
       date: '2026-10-18',
       present: true,
       omitted: 1,
-      lines: [{ text: '[10:00:01] [info] test: m1' }, { text: '[10:00:02] [info] test: m2' }],
+      lines: [{ text: '[10:00:02] [info] test: m2' }, { text: '[10:00:01] [info] test: m1' }],
     });
   });
 

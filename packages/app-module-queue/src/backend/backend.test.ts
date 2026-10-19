@@ -16,6 +16,7 @@ const {
   mockGetLogs,
   mockRetryEvent,
   mockGetDaemonState,
+  mockGetRelayInfo,
 } = vi.hoisted(() => ({
   mockGetStatus: vi.fn(),
   mockGetActivity: vi.fn(),
@@ -30,6 +31,7 @@ const {
   mockGetLogs: vi.fn(),
   mockRetryEvent: vi.fn(),
   mockGetDaemonState: vi.fn(),
+  mockGetRelayInfo: vi.fn(),
 }));
 
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
@@ -48,6 +50,7 @@ vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
 vi.mock('./retry.js', () => ({ retryEvent: mockRetryEvent }));
 vi.mock('./daemon.js', () => ({ getDaemonState: mockGetDaemonState }));
+vi.mock('./relay.js', () => ({ getRelayInfo: mockGetRelayInfo }));
 
 import backend from './index.js';
 
@@ -102,6 +105,7 @@ describe('backend', () => {
       'GET /logs',
       'POST /retry/:eventId',
       'GET /daemon',
+      'GET /relay',
       'GET /dlq',
       'POST /dlq/:id/replay',
       'POST /dlq/:id/clear',
@@ -536,6 +540,22 @@ describe('backend', () => {
     await routes.get('GET /daemon')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(500);
     expect(reply.send).toHaveBeenCalledWith({ error: 'unexpected' });
+  });
+
+  it('GET /relay answers the relay state, and 500 with the reason when it cannot be read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetRelayInfo.mockResolvedValueOnce({ state: 'stopped', running: false, connected: false, pid: null, uptimeSec: null, lastError: null });
+    const ok = fakeReply();
+    await routes.get('GET /relay')!(fakeReq(), asReply(ok));
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith(expect.objectContaining({ state: 'stopped' }));
+
+    mockGetRelayInfo.mockRejectedValueOnce(new Error('relay answered garbage'));
+    const broken = fakeReply();
+    await routes.get('GET /relay')!(fakeReq(), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'relay answered garbage' });
   });
 
   it('POST /retry/:eventId answers 200 with the daemon answer when the retry was enqueued', async () => {
