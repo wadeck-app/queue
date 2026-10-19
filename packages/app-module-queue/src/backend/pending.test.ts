@@ -30,10 +30,11 @@ describe('listPending', () => {
       { value: 'p%201', label: 'onFoo / onFoo[0] (p 1)' },
       { value: 'f1', label: 'onFoo / onFoo[0] (f1)' },
     ]);
+    expect(result.awaitingRetry).toBe(1);
     expect(JSON.stringify(result)).not.toContain('token-123');
   });
 
   it('is empty without a WAL', () => {
-    expect(listPending(configDir)).toEqual({ entries: [], options: [] });
+    expect(listPending(configDir)).toEqual({ entries: [], awaitingRetry: 0, options: [] });
   });
 });

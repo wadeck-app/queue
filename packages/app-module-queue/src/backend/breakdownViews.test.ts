@@ -30,3 +30,14 @@ describe('subscribers-page.yaml, last 24 hours table', () => {
     expect(columnKeys(tables[1]!)).toEqual(['subscriberId', 'delivered', 'failedAttempts', 'givenUp', 'avgMs', 'maxMs']);
   });
 });
+
+describe('status-widget.yaml', () => {
+  const doc = load('status-widget.yaml');
+  const tiles = doc['items'] as Node[];
+
+  it('shows the events never tried and, apart, the ones that failed an attempt and wait for a retry', () => {
+    expect(doc['$type']).toBe('VerticalStack');
+    expect(tiles.map((tile) => tile['value'])).toEqual(['$sources.status.pendingCount', '$sources.pending.awaitingRetry']);
+    expect((doc['$sources'] as Record<string, Node>)['pending']?.['url']).toBe('GET /api/modules/queue/pending');
+  });
+});

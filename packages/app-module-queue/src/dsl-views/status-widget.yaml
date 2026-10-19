@@ -1,7 +1,16 @@
 $sources:
   status:
     url: GET /api/modules/queue/status
+  pending:
+    url: GET /api/modules/queue/pending
 
-$type: StatTile
-label: Pending events
-value: $sources.status.pendingCount
+$type: VerticalStack
+gap: gap-2
+items:
+  - $type: StatTile
+    label: Pending events
+    value: $sources.status.pendingCount
+  # The counter above only counts events never tried; these failed an attempt and wait for a retry (Queue Pending page)
+  - $type: StatTile
+    label: Failed, awaiting retry
+    value: $sources.pending.awaitingRetry

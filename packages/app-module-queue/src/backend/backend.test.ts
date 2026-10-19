@@ -573,11 +573,11 @@ describe('backend', () => {
   it('GET /pending answers the in-flight events with the retry choices, and 500 with the reason when the WAL cannot be read', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
-    mockListPending.mockReturnValueOnce({ entries: [], options: [] });
+    mockListPending.mockReturnValueOnce({ entries: [], awaitingRetry: 0, options: [] });
     const ok = fakeReply();
     await routes.get('GET /pending')!(fakeReq(), asReply(ok));
     expect(ok.code).toHaveBeenCalledWith(200);
-    expect(ok.send).toHaveBeenCalledWith({ entries: [], options: [] });
+    expect(ok.send).toHaveBeenCalledWith({ entries: [], awaitingRetry: 0, options: [] });
 
     mockListPending.mockImplementationOnce(() => { throw new Error('EACCES: wal.ndjson'); });
     const broken = fakeReply();

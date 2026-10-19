@@ -13,6 +13,8 @@ export interface PendingRow {
 
 export interface PendingList {
   entries: PendingRow[];
+  /** How many of them failed an attempt and wait for a retry (the status counter only counts the ones never tried). */
+  awaitingRetry: number;
   /** The entries as the choices of the retry form. */
   options: Choice[];
 }
@@ -28,5 +30,5 @@ export function listPending(configDir: string): PendingList {
     lastError: entry.lastError ?? null,
     queuedAt: entry.timestamp,
   }));
-  return { entries, options: toChoices(entries.map((entry) => ({ id: entry.id, label: `${entry.event} / ${entry.subscriberId} (${entry.id})` }))) };
+  return { entries, awaitingRetry: entries.filter((entry) => entry.status === 'failed').length, options: toChoices(entries.map((entry) => ({ id: entry.id, label: `${entry.event} / ${entry.subscriberId} (${entry.id})` }))) };
 }
