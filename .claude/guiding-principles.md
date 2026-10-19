@@ -51,7 +51,7 @@ Nothing starts the relay at logon. `queue relay start` runs it until `queue rela
 
 ## A dashboard view is not done until it was seen rendered
 
-Passing route and YAML tests does not show a wrapped label or a clipped tile. Package the module (`BUNDLE_VERSION=x npm run bundle` in `packages/app-module-queue`), serve it with `APP_CORE_PORT=<free port> app-core-cli dev dist-module` (never 4850, that is the real app-core), and look at it with agent-browser in light, dark and a ~380 px viewport. Dashboard columns are about 270 px wide: stack tiles vertically.
+Passing route and YAML tests does not show a wrapped label or a clipped tile. Package the module (`BUNDLE_VERSION=x npm run bundle` in `packages/app-module-queue`), serve it with `APP_CORE_PORT=<free port> app-core-cli dev dist-module` (never 4850, that is the real app-core), and look at it with agent-browser in light, dark and a ~380 px viewport. Dashboard columns are about 270 px wide: stack tiles vertically. Repackaging does not reload a running dev server: `POST /api/modules/register` with `{"id":"queue","source":{"type":"file","path":"<abs>/dist-module/manifest.json"}}` does (forward slashes in the path). Stopping the background task leaves the `app-core-cli dev` node process alive: find it with `netstat -ano` on the port, check its command line, and stop it by PID (it needs the w-guardrails `kill` bypass). A DSL page whose `Form` select has `options` from a source needs `$if` on that option list, or the page crashes while the source loads.
 
 ## From lessons learned
 
