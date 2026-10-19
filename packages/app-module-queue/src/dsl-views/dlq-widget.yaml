@@ -1,4 +1,3 @@
-# See status-widget.yaml for the StatTile confirmation note.
 $sources:
   status:
     url: GET /api/modules/queue/status

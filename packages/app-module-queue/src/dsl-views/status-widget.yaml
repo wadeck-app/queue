@@ -1,6 +1,3 @@
-# StatTile confirmed as a real registered dsl-ui $type (packages/dsl-ui/src/components/layout/StatTile.tsx,
-# @registryTags "stat kpi metric dashboard") -- contract is TS-interface-only (no generated zod schema),
-# confirmed via dsl-owner research 2026-10-11: { label: string, value: string|number, trend?, icon?, loading? }.
 $sources:
   status:
     url: GET /api/modules/queue/status
