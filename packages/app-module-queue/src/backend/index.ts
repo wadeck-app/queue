@@ -10,7 +10,7 @@ import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
-import { listDlq, dlqOptions, replayDlqEntry, clearDlqEntry } from './dlq.js';
+import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
 import { retryEvent } from './retry.js';
 import { getDaemonState } from './daemon.js';
@@ -196,7 +196,7 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('GET', '/dlq', (_req, reply) => {
     try {
       const entries = listDlq(configDir);
-      return reply.code(200).send({ entries, options: dlqOptions(entries) });
+      return reply.code(200).send({ entries });
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

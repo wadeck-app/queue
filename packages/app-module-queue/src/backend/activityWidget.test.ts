@@ -19,7 +19,7 @@ describe('activity-widget.yaml', () => {
   it('is a column of three tiles and the 5-minute chart; `items` is the key the stack reads (a `children` key renders blank)', () => {
     expect(doc['$type']).toBe('VerticalStack');
     expect(doc['children']).toBeUndefined();
-    expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile', 'Chart']);
+    expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile', 'Chart', 'Chart']);
   });
 
   it('shows the last 5 minutes, 60 minutes and 24 hours, in that order', () => {

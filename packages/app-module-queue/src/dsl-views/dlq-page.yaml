@@ -4,7 +4,7 @@ $sources:
   daemon:
     url: GET /api/modules/queue/daemon
 
-# {id} is filled from the form field of the same name; the backend URL-encodes the ids it offers.
+# {id} is the id of the clicked row (the renderer percent-encodes it).
 $actions:
   replayEntry:
     url: POST /api/modules/queue/dlq/{id}/replay
@@ -37,29 +37,7 @@ sections:
       - { key: "attempts", label: "Attempts" }
       - { key: "lastError", label: "Last error" }
       - { key: "id", label: "Id", mono: true }
-  - $type: Form
-    $if: $sources.dlq.options
-    onSubmit: $ctx.replayEntry
-    initialData: { id: "" }
-    fields:
-      - $type: FieldSelect
-        label: Entry to replay (runs the subscriber again)
-        bind: id
-        options: $sources.dlq.options
-        placeholder: Choose an entry
-    actions:
-      - $type: ButtonSave
-        label: Replay
-  - $type: Form
-    $if: $sources.dlq.options
-    onSubmit: $ctx.clearEntry
-    initialData: { id: "" }
-    fields:
-      - $type: FieldSelect
-        label: Entry to remove
-        bind: id
-        options: $sources.dlq.options
-        placeholder: Choose an entry
-    actions:
-      - $type: ButtonSave
-        label: Remove
+      - type: actions
+        items:
+          - { label: Replay, action: replayEntry, variant: primary }
+          - { label: Clear, action: clearEntry, variant: danger-outline }

@@ -1,13 +1,7 @@
 import { listDlqEntries, clearDlqEntries } from '@wadeck-app/queue-core';
 import type { DlqEntry, DlqReplayResponse, DlqClearResponse } from '@wadeck-app/queue-core';
 import { createQueueAppClient } from './client.js';
-import { toChoices, type Choice } from './choices.js';
 import { DaemonUnreachableError } from './errors.js';
-
-/** The entries as choices for the replay and clear forms of the dashboard. */
-export function dlqOptions(entries: readonly DlqEntry[]): Choice[] {
-  return toChoices(entries.map((entry) => ({ id: entry.id, label: `${entry.event} / ${entry.subscriberId} (${entry.id})` })));
-}
 
 /** Lists dispatches that permanently failed (retries exhausted), awaiting human attention. Reads the DLQ file: no daemon needed. */
 export function listDlq(configDir: string): DlqEntry[] {

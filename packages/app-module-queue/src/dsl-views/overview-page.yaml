@@ -46,6 +46,17 @@ sections:
     series:
       - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }
   - $type: PageHeader
+    title: Events pushed, last 24 hours
+    subtitle: Per hour; the last point is the current, partial hour.
+  - $type: Chart
+    data: $sources.series.lastDay
+    xAxisKey: label
+    xAxisType: category
+    yFormat: number
+    height: 240
+    series:
+      - { key: events, name: "Events per hour", type: area, yAxisId: left, color: "var(--color-primary)" }
+  - $type: PageHeader
     $if: $sources.outcomes.hasFailures
     title: Failures, last 24 hours
     subtitle: Per hour. A failed attempt is retried; a dispatch given up sits in the DLQ.

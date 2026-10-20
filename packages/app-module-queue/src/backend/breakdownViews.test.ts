@@ -41,3 +41,39 @@ describe('status-widget.yaml', () => {
     expect((doc['$sources'] as Record<string, Node>)['pending']?.['url']).toBe('GET /api/modules/queue/pending');
   });
 });
+
+describe('hourly chart (the last 24 h, counts per hour)', () => {
+  const widgetCharts = (load('activity-widget.yaml')['items'] as Node[]).filter((item) => item['$type'] === 'Chart');
+  const overviewCharts = (load('overview-page.yaml')['sections'] as Node[]).filter((section) => section['$type'] === 'Chart');
+
+  it.each([
+    ['activity widget', widgetCharts[1]],
+    ['overview page', overviewCharts[1]],
+  ])('%s plots the hourly series as counts, not bytes (1753 would print "1.8 KB")', (_name, chart) => {
+    expect(chart?.['data']).toBe('$sources.series.lastDay');
+    expect(chart?.['yFormat']).toBe('number');
+    expect(chart?.['xAxisType']).toBe('category');
+  });
+});
+
+describe('dlq-page.yaml', () => {
+  const doc = load('dlq-page.yaml');
+  const actions = doc['$actions'] as Record<string, Node>;
+  const table = (doc['sections'] as Node[]).find((section) => section['$type'] === 'DataTable') as Node;
+  const actionColumn = (table['columns'] as Node[]).find((column) => column['type'] === 'actions') as Node;
+
+  it('replays or clears an entry in one click from its row, with the row id in the URL', () => {
+    const items = actionColumn['items'] as Node[];
+    expect(items.map((item) => item['action'])).toEqual(['replayEntry', 'clearEntry']);
+    expect(actions['replayEntry']?.['url']).toBe('POST /api/modules/queue/dlq/{id}/replay');
+    expect(actions['clearEntry']?.['url']).toBe('POST /api/modules/queue/dlq/{id}/clear');
+  });
+
+  it('confirms before dropping an entry and says what happened, on success and on failure', () => {
+    expect(String(actions['clearEntry']?.['confirm'])).toMatch(/cannot be recovered/);
+    for (const action of Object.values(actions)) {
+      expect(action['successMessage']).toBeTruthy();
+      expect(action['errorPrefix']).toBeTruthy();
+    }
+  });
+});
