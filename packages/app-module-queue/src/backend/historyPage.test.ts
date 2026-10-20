@@ -12,6 +12,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 	return value;
 }
 
+// The page has two horizontal stacks: the filter bar on top and the pagination row below; the structure tests are about the latter
+const isPaginationRow = (section: { $type?: unknown; items?: unknown }): boolean =>
+	section.$type === 'HorizontalStack' && Array.isArray(section.items) && section.items.some((item) => asRecord(item).$type === 'Pagination');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -34,6 +38,10 @@ describe('history-page.yaml pagination structure', () => {
 		expect(params).toEqual({
 			page: '$urlParam.page',
 			limit: '$urlParam.size',
+			// the filters of `queue history`: --event, --subscriber, --status
+			event: '$urlParam.event',
+			subscriberId: '$urlParam.subscriber',
+			status: '$urlParam.status',
 		});
 	});
 
@@ -85,7 +93,7 @@ describe('history-page.yaml pagination structure', () => {
 	it('HorizontalStack has items key and no children key', () => {
 		const sections = doc.sections as Section[];
 		const stackSection = sections.find(
-			(s) => s.$type === 'HorizontalStack'
+			isPaginationRow
 		) as Section;
 		expect(stackSection).toBeDefined();
 		expect(stackSection?.items).toBeDefined();
@@ -95,7 +103,7 @@ describe('history-page.yaml pagination structure', () => {
 	it('HorizontalStack uses Tailwind class for gap, align, justify', () => {
 		const sections = doc.sections as Section[];
 		const stackSection = sections.find(
-			(s) => s.$type === 'HorizontalStack'
+			isPaginationRow
 		) as Section;
 		const gapRegex = /^(gap)-/;
 		const alignRegex = /^(items)-/;
@@ -109,7 +117,7 @@ describe('history-page.yaml pagination structure', () => {
 	it('HorizontalStack items contains Pagination with urlParam: page, total: $sources.history.total, size: $sources.history.limit', () => {
 		const sections = doc.sections as Section[];
 		const stackSection = sections.find(
-			(s) => s.$type === 'HorizontalStack'
+			isPaginationRow
 		) as Section;
 		const items = stackSection?.items as Section[];
 		const paginationNode = items.find((item) => item.$type === 'Pagination');
@@ -123,7 +131,7 @@ describe('history-page.yaml pagination structure', () => {
 	it('HorizontalStack items contains PageSizeSelect with urlParam: size, options: [20, 50, 100]', () => {
 		const sections = doc.sections as Section[];
 		const stackSection = sections.find(
-			(s) => s.$type === 'HorizontalStack'
+			isPaginationRow
 		) as Section;
 		const items = stackSection?.items as Section[];
 		const pageSizeNode = items.find((item) => item.$type === 'PageSizeSelect');
@@ -136,7 +144,7 @@ describe('history-page.yaml pagination structure', () => {
 	it('PageSizeSelect options include DEFAULT_HISTORY_LIMIT (20)', () => {
 		const sections = doc.sections as Section[];
 		const stackSection = sections.find(
-			(s) => s.$type === 'HorizontalStack'
+			isPaginationRow
 		) as Section;
 		const items = stackSection?.items as Section[];
 		const pageSizeNode = items.find(
@@ -151,7 +159,7 @@ describe('history-page.yaml pagination structure', () => {
 	it('HorizontalStack items has Pagination before PageSizeSelect', () => {
 		const sections = doc.sections as Section[];
 		const stackSection = sections.find(
-			(s) => s.$type === 'HorizontalStack'
+			isPaginationRow
 		) as Section;
 		const items = stackSection?.items as Section[];
 
@@ -199,5 +207,23 @@ describe('history-page.yaml payload row expansion', () => {
 		// An out-of-range ?page= (e.g. a stale bookmark) returns an empty page while events exist:
 		// "No events recorded yet" would be false there.
 		expect(dataTable.emptyMessage).toBe('No events on this page');
+	});
+});
+
+describe('history-page.yaml filters', () => {
+	const sections = (yaml.load(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../dsl-views/history-page.yaml'), 'utf-8')) as { sections: Array<Record<string, unknown>> }).sections;
+	const bar = sections[0] as { items: Array<Record<string, unknown>> };
+
+	it('offers event, subscriber and outcome inputs bound to the URL params the source reads', () => {
+		expect(bar.items.map((item) => [item.$type, item.urlParam])).toEqual([
+			['SearchBar', 'event'],
+			['SearchBar', 'subscriber'],
+			['CompactSelect', 'status'],
+		]);
+	});
+
+	it('offers exactly the outcomes the route accepts', () => {
+		const select = bar.items.find((item) => item.$type === 'CompactSelect') as { options: Array<{ value: string }> };
+		expect(select.options.map((option) => option.value)).toEqual(['success', 'failed', 'dlq', 'filtered']);
 	});
 });

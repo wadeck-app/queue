@@ -5,9 +5,32 @@ $sources:
     params:
       page: $urlParam.page
       limit: $urlParam.size
+      event: $urlParam.event
+      subscriberId: $urlParam.subscriber
+      status: $urlParam.status
 
 $type: PageContent
 sections:
+  # Same filters as `queue history --event / --subscriber / --status`; they need dsl-ui >= 2026.10.19-117 (urlParam on SearchBar and CompactSelect)
+  - $type: HorizontalStack
+    gap: gap-3
+    align: items-center
+    items:
+      - $type: SearchBar
+        urlParam: event
+        placeholder: Event name
+      - $type: SearchBar
+        urlParam: subscriber
+        placeholder: Subscriber id
+      - $type: CompactSelect
+        urlParam: status
+        ariaLabel: Outcome
+        placeholder: Any outcome
+        options:
+          - { value: success, label: Delivered }
+          - { value: failed, label: Failed attempt }
+          - { value: dlq, label: Given up (DLQ) }
+          - { value: filtered, label: Filtered out }
   - $type: DataTable
     rows: $sources.history.entries
     # `row` is not injected into the expansion: pass it with $ctx.row.
