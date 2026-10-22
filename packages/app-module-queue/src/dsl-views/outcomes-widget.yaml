@@ -2,27 +2,71 @@ $sources:
   outcomes:
     url: GET /api/modules/queue/outcomes
 
-$type: VerticalStack
-gap: gap-2
-items:
-  - $type: StatTile
-    label: Delivered, last 24 h
-    value: $sources.outcomes.last24Hours.delivered
-  - $type: StatTile
-    label: Failed attempts, last 24 h
-    value: $sources.outcomes.last24Hours.failedAttempts
-  - $type: StatTile
-    label: Given up (DLQ), last 24 h
-    value: $sources.outcomes.last24Hours.givenUp
-  # Same shell requirements as activity-widget.yaml: variant and yFormat need dsl-ui >= 2026.10.19-117.
-  - $type: Chart
-    $if: $sources.outcomes.hasFailures
-    variant: sparkline
-    data: $sources.outcomes.series
-    xAxisKey: label
-    xAxisType: category
-    yFormat: number
-    height: 110
-    series:
-      - { key: failedAttempts, name: "Failed attempts per hour", type: bar, yAxisId: left, color: "var(--color-warning)" }
-      - { key: givenUp, name: "Given up per hour", type: bar, yAxisId: left, color: "var(--color-danger)" }
+# A/B test (development shells only, others show `tiles`): remove it once a layout is chosen. It needs dsl-ui with AbTest.
+$type: AbTest
+id: outcomes-layout
+label: Queue outcomes
+initial: tiles
+variants:
+  tiles:
+    label: Tiles
+    hint: Three large tiles, one under the other (the reference).
+    view:
+      $type: VerticalStack
+      gap: gap-2
+      items:
+        - $type: StatTile
+          label: Delivered, last 24 h
+          value: $sources.outcomes.last24Hours.delivered
+        - $type: StatTile
+          label: Failed attempts, last 24 h
+          value: $sources.outcomes.last24Hours.failedAttempts
+        - $type: StatTile
+          label: Given up (DLQ), last 24 h
+          value: $sources.outcomes.last24Hours.givenUp
+        # Same shell requirements as activity-widget.yaml: variant and yFormat need dsl-ui >= 2026.10.19-117.
+        - $type: Chart
+          $if: $sources.outcomes.hasFailures
+          variant: sparkline
+          data: $sources.outcomes.series
+          xAxisKey: label
+          xAxisType: category
+          yFormat: number
+          height: 110
+          series:
+            - { key: failedAttempts, name: "Failed attempts per hour", type: bar, yAxisId: left, color: "var(--color-warning)" }
+            - { key: givenUp, name: "Given up per hour", type: bar, yAxisId: left, color: "var(--color-danger)" }
+  row:
+    label: One row
+    hint: Delivered, failed and given up side by side, the period in a caption.
+    view:
+      $type: VerticalStack
+      gap: gap-2
+      items:
+        - $type: Badge
+          label: Last 24 hours
+          tone: subtle
+          size: sm
+        - $type: HorizontalStack
+          gap: gap-2
+          items:
+            - $type: StatTile
+              label: Delivered
+              value: $sources.outcomes.last24Hours.delivered
+            - $type: StatTile
+              label: Failed
+              value: $sources.outcomes.last24Hours.failedAttempts
+            - $type: StatTile
+              label: Given up
+              value: $sources.outcomes.last24Hours.givenUp
+        - $type: Chart
+          $if: $sources.outcomes.hasFailures
+          variant: sparkline
+          data: $sources.outcomes.series
+          xAxisKey: label
+          xAxisType: category
+          yFormat: number
+          height: 110
+          series:
+            - { key: failedAttempts, name: "Failed attempts per hour", type: bar, yAxisId: left, color: "var(--color-warning)" }
+            - { key: givenUp, name: "Given up per hour", type: bar, yAxisId: left, color: "var(--color-danger)" }

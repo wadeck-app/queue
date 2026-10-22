@@ -3,8 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-
-type Node = Record<string, unknown>;
+import { loadAbWidget, type Node } from './abWidget.js';
 
 const viewsDir = join(dirname(fileURLToPath(import.meta.url)), '../dsl-views');
 const load = (name: string): Node => yaml.load(readFileSync(join(viewsDir, name), 'utf-8')) as Node;
@@ -32,18 +31,18 @@ describe('subscribers-page.yaml, last 24 hours table', () => {
 });
 
 describe('status-widget.yaml', () => {
-  const doc = load('status-widget.yaml');
-  const tiles = doc['items'] as Node[];
+  const { doc, reference } = loadAbWidget('status-widget.yaml');
+  const tiles = reference['items'] as Node[];
 
   it('shows the events never tried and, apart, the ones that failed an attempt and wait for a retry', () => {
-    expect(doc['$type']).toBe('VerticalStack');
+    expect(reference['$type']).toBe('VerticalStack');
     expect(tiles.map((tile) => tile['value'])).toEqual(['$sources.status.pendingCount', '$sources.pending.awaitingRetry']);
     expect((doc['$sources'] as Record<string, Node>)['pending']?.['url']).toBe('GET /api/modules/queue/pending');
   });
 });
 
 describe('hourly chart (the last 24 h, counts per hour)', () => {
-  const widgetCharts = (load('activity-widget.yaml')['items'] as Node[]).filter((item) => item['$type'] === 'Chart');
+  const widgetCharts = (loadAbWidget('activity-widget.yaml').reference['items'] as Node[]).filter((item) => item['$type'] === 'Chart');
   const overviewCharts = (load('overview-page.yaml')['sections'] as Node[]).filter((section) => section['$type'] === 'Chart');
 
   it.each([

@@ -1,13 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import yaml from 'js-yaml';
+import { loadAbWidget, type Node } from './abWidget.js';
 
-type Node = Record<string, unknown>;
-
-const doc = yaml.load(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../dsl-views/activity-widget.yaml'), 'utf-8')) as Node;
-const items = doc['items'] as Node[];
+// The widget is an A/B test of layouts: these tests are about the reference one, the other layouts are in abWidgets.test.ts
+const { doc, reference } = loadAbWidget('activity-widget.yaml');
+const items = reference['items'] as Node[];
 
 describe('activity-widget.yaml', () => {
   it('reads the activity route', () => {
@@ -17,8 +13,8 @@ describe('activity-widget.yaml', () => {
 
   // Dashboard columns are about 270 px wide: three tiles in a row wrap their labels and overflow (seen in agent-browser)
   it('is a column of three tiles and the 5-minute chart; `items` is the key the stack reads (a `children` key renders blank)', () => {
-    expect(doc['$type']).toBe('VerticalStack');
-    expect(doc['children']).toBeUndefined();
+    expect(reference['$type']).toBe('VerticalStack');
+    expect(reference['children']).toBeUndefined();
     expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile', 'Chart', 'Chart']);
   });
 

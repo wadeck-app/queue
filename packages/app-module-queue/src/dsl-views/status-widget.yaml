@@ -4,13 +4,39 @@ $sources:
   pending:
     url: GET /api/modules/queue/pending
 
-$type: VerticalStack
-gap: gap-2
-items:
-  - $type: StatTile
-    label: Pending events
-    value: $sources.status.pendingCount
-  # The counter above only counts events never tried; these failed an attempt and wait for a retry (Queue Pending page)
-  - $type: StatTile
-    label: Failed, awaiting retry
-    value: $sources.pending.awaitingRetry
+# A/B test (development shells only, others show `tiles`): remove it once a layout is chosen. It needs dsl-ui with AbTest.
+$type: AbTest
+id: status-layout
+label: Queue status
+initial: tiles
+variants:
+  tiles:
+    label: Tiles
+    hint: Two large tiles, one under the other (the reference).
+    view:
+      $type: VerticalStack
+      gap: gap-2
+      items:
+        - $type: StatTile
+          label: Pending events
+          value: $sources.status.pendingCount
+        # The counter above only counts events never tried; these failed an attempt and wait for a retry (Queue Pending page)
+        - $type: StatTile
+          label: Failed, awaiting retry
+          value: $sources.pending.awaitingRetry
+  row:
+    label: One row
+    hint: Pending, awaiting retry and DLQ side by side, in one row of small tiles.
+    view:
+      $type: HorizontalStack
+      gap: gap-2
+      items:
+        - $type: StatTile
+          label: Pending
+          value: $sources.status.pendingCount
+        - $type: StatTile
+          label: Retry
+          value: $sources.pending.awaitingRetry
+        - $type: StatTile
+          label: DLQ
+          value: $sources.status.dlqCount

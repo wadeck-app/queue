@@ -2,13 +2,43 @@ $sources:
   relay:
     url: GET /api/modules/queue/relay
 
-$type: VerticalStack
-gap: gap-2
-items:
-  - $type: StatTile
-    label: Webhook relay
-    value: $sources.relay.state
-  - $type: Badge
-    $if: $sources.relay.lastError
-    label: $sources.relay.lastError
-    variant: warning
+# A/B test (development shells only, others show `tile`): remove it once a layout is chosen. It needs dsl-ui with AbTest.
+$type: AbTest
+id: relay-layout
+label: Queue relay
+initial: tile
+variants:
+  tile:
+    label: Tile
+    hint: A tile with the state in large text (the reference).
+    view:
+      $type: VerticalStack
+      gap: gap-2
+      items:
+        - $type: StatTile
+          label: Webhook relay
+          value: $sources.relay.state
+        - $type: Badge
+          $if: $sources.relay.lastError
+          label: $sources.relay.lastError
+          variant: warning
+  badge:
+    label: Badge
+    hint: One coloured badge (green connected, amber lost connection, grey stopped) instead of a tile.
+    view:
+      $type: HorizontalStack
+      gap: gap-2
+      align: items-center
+      items:
+        - $type: Badge
+          label: Webhook relay
+          tone: subtle
+          size: sm
+        - $type: Badge
+          label: $sources.relay.state
+          variant: $sources.relay.tone
+          tone: subtle
+        - $type: Badge
+          $if: $sources.relay.lastError
+          label: $sources.relay.lastError
+          variant: warning

@@ -1,18 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import yaml from 'js-yaml';
+import { loadAbWidget, type Node } from './abWidget.js';
 
-type Node = Record<string, unknown>;
-
-const doc = yaml.load(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../dsl-views/outcomes-widget.yaml'), 'utf-8')) as Node;
-const items = doc['items'] as Node[];
+// The widget is an A/B test of layouts: these tests are about the reference one, the other layouts are in abWidgets.test.ts
+const { doc, reference } = loadAbWidget('outcomes-widget.yaml');
+const items = reference['items'] as Node[];
 
 describe('outcomes-widget.yaml', () => {
   it('reads the outcomes route and stacks its tiles and chart (dashboard columns are ~270 px wide)', () => {
     expect((doc['$sources'] as Record<string, Node>)['outcomes']?.['url']).toBe('GET /api/modules/queue/outcomes');
-    expect(doc['$type']).toBe('VerticalStack');
+    expect(reference['$type']).toBe('VerticalStack');
     expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile', 'Chart']);
   });
 

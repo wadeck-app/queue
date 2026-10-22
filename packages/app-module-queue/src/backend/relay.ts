@@ -4,6 +4,8 @@ export type RelayState = 'connected' | 'not connected' | 'stopped';
 
 export interface RelayInfo {
   state: RelayState;
+  /** The Badge variant of the dashboard for this state: stopped is normal (on demand), only a running relay that lost its connection is a warning. */
+  tone: 'success' | 'warning' | 'default';
   running: boolean;
   connected: boolean;
   /** Only while the relay runs. */
@@ -18,11 +20,12 @@ export async function getRelayInfo(configDir: string): Promise<RelayInfo> {
   const client = createRelayClient(configDir);
   const running = await client.isRunning().catch(() => false);
   if (!running) {
-    return { state: 'stopped', running: false, connected: false, pid: null, uptimeSec: null, lastError: null };
+    return { state: 'stopped', tone: 'default', running: false, connected: false, pid: null, uptimeSec: null, lastError: null };
   }
   const status = await client.send('status', undefined);
   return {
     state: status.connected ? 'connected' : 'not connected',
+    tone: status.connected ? 'success' : 'warning',
     running: true,
     connected: status.connected,
     pid: status.pid,
