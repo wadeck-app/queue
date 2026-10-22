@@ -222,6 +222,16 @@ describe('history-page.yaml filters', () => {
 		]);
 	});
 
+	// A narrower filter on page 3 would otherwise land on an empty page (needs dsl-ui >= 2026.10.22-124)
+	it('sends every filter and the page size back to page 1 when they change', () => {
+		const pageSize = sections
+			.flatMap((section) => (Array.isArray(section.items) ? (section.items as Array<Record<string, unknown>>) : []))
+			.find((item) => item.$type === 'PageSizeSelect');
+		for (const control of [...bar.items, pageSize]) {
+			expect(control?.resetUrlParams, String(control?.urlParam)).toEqual(['page']);
+		}
+	});
+
 	it('offers exactly the outcomes the route accepts', () => {
 		const select = bar.items.find((item) => item.$type === 'CompactSelect') as { options: Array<{ value: string }> };
 		expect(select.options.map((option) => option.value)).toEqual(['success', 'failed', 'dlq', 'filtered']);

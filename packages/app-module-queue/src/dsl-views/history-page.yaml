@@ -11,19 +11,22 @@ $sources:
 
 $type: PageContent
 sections:
-  # Same filters as `queue history --event / --subscriber / --status`; they need dsl-ui >= 2026.10.19-117 (urlParam on SearchBar and CompactSelect)
+  # Same filters as `queue history --event / --subscriber / --status`; they need dsl-ui >= 2026.10.19-117 (urlParam on SearchBar and CompactSelect); resetUrlParams needs dsl-ui >= 2026.10.22-124 (a narrower filter or a new page size goes back to page 1)
   - $type: HorizontalStack
     gap: gap-3
     align: items-center
     items:
       - $type: SearchBar
         urlParam: event
+        resetUrlParams: [page]
         placeholder: Event name
       - $type: SearchBar
         urlParam: subscriber
+        resetUrlParams: [page]
         placeholder: Subscriber id
       - $type: CompactSelect
         urlParam: status
+        resetUrlParams: [page]
         ariaLabel: Outcome
         placeholder: Any outcome
         options:
@@ -62,5 +65,6 @@ sections:
 
       - $type: PageSizeSelect
         urlParam: size
+        resetUrlParams: [page]
         options: [20, 50, 100]
         value: $sources.history.limit
