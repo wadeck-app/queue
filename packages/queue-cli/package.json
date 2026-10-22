@@ -15,7 +15,6 @@
     "clean": "rimraf dist dist-bundle"
   },
   "dependencies": {
-    "@wadeck-app/app-core-sdk": "latest",
     "@wadeck-app/plugin-github": "*",
     "@wadeck-app/queue-core": "*",
     "@wadeck-app/queue-relay-client": "*",
@@ -27,6 +26,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.2.0",
+    "@wadeck-app/app-core-sdk": "^2026.10.22-072-f1ca3cff",
     "@wadeck-app/violations-rules": "latest",
     "esbuild": "^0.27.2",
     "rimraf": "^6.0.1",

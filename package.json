@@ -15,6 +15,7 @@
     "preversion": "npm test"
   },
   "devDependencies": {
+    "@wadeck-app/app-core-sdk": "^2026.10.22-072-f1ca3cff",
     "@wadeck-app/violations-rules": "latest",
     "typescript": "^7.0.0",
     "vitest": "^4.0.14"
