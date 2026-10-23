@@ -36,6 +36,10 @@ The daemon auto-starts on any command that needs it; `queue start` is only neede
 
 `queue wait <event>` and `queue wait ci` block until an event or a commit's CI is done, so an agent does not poll. See [docs/wait.md](docs/wait.md).
 
+## Pushing events from your own program
+
+Use [`@wadeck-app/queue-sdk`](packages/queue-sdk/README.md): it finds and starts the daemon, never throws and reports every failure. The wire contract and its versioning rules are in [docs/push-protocol.md](docs/push-protocol.md).
+
 ## Configuration
 
 Config dir: `~/.config/queue/` (override: `QUEUE_CONFIG_DIR` env)

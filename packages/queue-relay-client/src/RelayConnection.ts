@@ -4,6 +4,7 @@ import { loadRelayConfig, type RelayConfig, type PluginConfig } from './config.j
 import { loadPlugin, type RelayPlugin, type RelayEnvelope } from './plugin-api.js';
 import { ensureDaemonRunning, pushToQueue } from './push.js';
 import { matchesPayload } from './payloadMatch.js';
+import { pushLogLine } from './pushLogLine.js';
 
 interface LoadedPlugin {
   plugin: RelayPlugin;
@@ -609,17 +610,7 @@ export class RelayConnection {
     try {
       await ensureDaemonRunning(this.configDir);
       const result = await pushToQueue(this.configDir, event, mapped.payload);
-      // When aborted, log a failure line with details instead of treating it as success
-      if (result.status === 'aborted') {
-        const reason = result.reason ? result.reason : 'no reason given';
-        this.log(
-          `[relay] Push of "${event}" (delivery ${envelope.deliveryId}) was ABORTED by the queue daemon: ${reason}. ` +
-          `The event was not delivered; check subscribers.yml and the daemon logs in ${this.configDir}/logs.`
-        );
-      } else {
-        // For 'dispatched', 'queued', and any other status, keep the existing success line
-        this.log(`[relay] Pushed "${event}" (delivery ${envelope.deliveryId}) -> ${result.status}.`);
-      }
+      this.log(pushLogLine({ event, deliveryId: envelope.deliveryId, result, configDir: this.configDir }));
     } catch (err) {
       this.log(
         `[relay] Failed to push "${event}" (delivery ${envelope.deliveryId}): ${getErrorMessage(err)}. ` +

@@ -10,6 +10,7 @@ import { PayloadFilter } from '../dispatch/PayloadFilter.js';
 import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
+import { checkClientProtocol } from '@wadeck-app/queue-sdk/protocol';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { countQueue, subscribersFor, removeFromDlq } from '../operations.js';
 import type {
@@ -72,6 +73,11 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     async push(payload?: unknown): Promise<PushResponse> {
       const req = payload as PushRequest;
       options.onActivity?.();
+      // before anything is recorded or counted: a client that speaks a protocol this daemon does not accept gets a loud refusal
+      const protocol = checkClientProtocol(req.protocol);
+      if (!protocol.ok) {
+        return { status: 'rejected', reason: protocol.reason, supported: protocol.supported };
+      }
       activeDispatches++;
 
       try {

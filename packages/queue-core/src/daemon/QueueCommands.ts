@@ -4,8 +4,10 @@ import type { ResolvedSubscriber } from '../types.js';
 // The RPC contract between the queue daemon and its clients (queue-cli, app-module-queue,
 // queue-relay-client). Types only: nothing here depends on how the daemon is hosted.
 
-export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; replayOf?: string; }
-export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted'; result?: unknown; reason?: string; subscriberCount?: number; eventId?: string; }
+// `protocol` is the SemVer push protocol the client speaks (absent = 1.0.0); see @wadeck-app/queue-sdk/protocol
+export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; replayOf?: string; protocol?: string; }
+// `rejected`: the push was not recorded because the client protocol is not accepted; `supported` is the range of accepted client versions
+export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted' | 'rejected'; result?: unknown; reason?: string; subscriberCount?: number; eventId?: string; supported?: string; }
 export interface RetryRequest { eventId: string; }
 export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; }
 export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }

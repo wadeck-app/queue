@@ -1,0 +1,54 @@
+{
+  "name": "@wadeck-app/queue-sdk",
+  "version": "0.1.0",
+  "description": "Push events to the queue daemon: finds it, authenticates, starts it on demand, negotiates the protocol version, never throws",
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    },
+    "./protocol": {
+      "types": "./dist/esm/protocol.d.ts",
+      "import": "./dist/esm/protocol.js",
+      "require": "./dist/cjs/protocol.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "docs",
+    "!dist/**/*.tsbuildinfo",
+    "README.md",
+    "guiding-principles.md",
+    "out-of-scope.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wadeck-app/queue.git",
+    "directory": "packages/queue-sdk"
+  },
+  "publishConfig": {
+    "@wadeck-app:registry": "https://npm.pkg.github.com/",
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.json && node ci/build-cjs.mjs",
+    "test": "vitest run --bail=1",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.27.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^7.0.0",
+    "vitest": "^4.0.14"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

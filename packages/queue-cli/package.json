@@ -24,6 +24,7 @@
     "js-yaml": "^4.1.1"
   },
   "devDependencies": {
+    "@wadeck-app/queue-sdk": "*",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.2.0",
     "@wadeck-app/app-core-sdk": "^2026.10.22-072-f1ca3cff",

@@ -7,11 +7,11 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace=packages/queue-core && npm run build --workspace=packages/queue-relay-client && npm run build --workspace=packages/plugin-github && npm run build --workspace=packages/queue-cli && npm run build --workspace=packages/app-module-queue",
-    "test": "npm run test --workspace=packages/queue-core && npm run test --workspace=packages/queue-relay-client && npm run test --workspace=packages/plugin-github && npm run test --workspace=packages/queue-cli && npm run test --workspace=packages/app-module-queue",
+    "build": "npm run build --workspace=packages/queue-sdk && npm run build --workspace=packages/queue-core && npm run build --workspace=packages/queue-relay-client && npm run build --workspace=packages/plugin-github && npm run build --workspace=packages/queue-cli && npm run build --workspace=packages/app-module-queue",
+    "test": "npm run test --workspace=packages/queue-sdk && npm run test --workspace=packages/queue-core && npm run test --workspace=packages/queue-relay-client && npm run test --workspace=packages/plugin-github && npm run test --workspace=packages/queue-cli && npm run test --workspace=packages/app-module-queue",
     "build-launcher": "npm run build-launcher --workspace=packages/queue-cli",
     "bundle": "npm run bundle --workspace=packages/queue-cli",
-    "clean": "npm run clean --workspace=packages/queue-core && npm run clean --workspace=packages/queue-relay-client && npm run clean --workspace=packages/plugin-github && npm run clean --workspace=packages/queue-cli && npm run clean --workspace=packages/app-module-queue",
+    "clean": "npm run clean --workspace=packages/queue-sdk && npm run clean --workspace=packages/queue-core && npm run clean --workspace=packages/queue-relay-client && npm run clean --workspace=packages/plugin-github && npm run clean --workspace=packages/queue-cli && npm run clean --workspace=packages/app-module-queue",
     "preversion": "npm test"
   },
   "devDependencies": {

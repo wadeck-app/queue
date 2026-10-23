@@ -123,6 +123,13 @@ describe('queue push', () => {
 		expect(stderr).toContain('aborted');
 	});
 
+	it('exits 1 and says nothing was recorded when the daemon rejects the push protocol', async () => {
+		mockSend.mockResolvedValue({ status: 'rejected', reason: 'push protocol 2.0.0 is not accepted', supported: '^1.0.0' });
+		const { stderr, exitCode } = await run(['push', 'myEvent', '{}']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('rejected (nothing was recorded)');
+	});
+
 	it('exits 1 when event and payload are missing', async () => {
 		const { stderr, exitCode } = await run(['push']);
 		expect(exitCode).toBe(1);

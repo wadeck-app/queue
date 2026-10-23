@@ -23,6 +23,7 @@ import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, getQueueConfigDir, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
+import { pushFailure } from './pushOutcome.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
 
@@ -908,8 +909,9 @@ async function main(): Promise<void> {
 
     const response = await client.send('push', { event, payload, timeout, cwd: process.cwd() });
 
-    if (response.status === 'aborted') {
-      process.stderr.write(`[queue] Event aborted: ${response.reason ?? 'unknown reason'}\n`);
+    const failure = pushFailure(response, 'Event');
+    if (failure) {
+      process.stderr.write(failure + '\n');
       process.exit(1);
     }
 
@@ -976,8 +978,9 @@ async function main(): Promise<void> {
     const client = createQueueClient(configDir);
     const response = await client.send('push', { event: entry.event, payload: entry.payload, cwd: replayCwd, replayOf: eventId });
 
-    if (response.status === 'aborted') {
-      process.stderr.write(`[queue] Replay aborted: ${response.reason ?? 'unknown reason'}\n`);
+    const failure = pushFailure(response, 'Replay');
+    if (failure) {
+      process.stderr.write(failure + '\n');
       process.exit(1);
     }
     process.stdout.write(`[ok] replayed '${entry.event}' as eventId ${response.eventId ?? '?'} (replay of ${eventId})\n`);

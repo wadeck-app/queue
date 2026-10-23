@@ -1,0 +1,27 @@
+[
+  {
+    "name": "a client that predates versioning sends no protocol",
+    "request": { "event": "on.contract.legacy", "payload": { "a": 1 } },
+    "response": { "status": "queued", "eventId": "present" }
+  },
+  {
+    "name": "a client speaking 1.0.0",
+    "request": { "event": "on.contract.current", "payload": {}, "protocol": "1.0.0" },
+    "response": { "status": "queued", "eventId": "present" }
+  },
+  {
+    "name": "a client speaking a later MINOR of 1.x (additive changes are compatible)",
+    "request": { "event": "on.contract.minor", "payload": {}, "protocol": "1.9.0" },
+    "response": { "status": "queued", "eventId": "present" }
+  },
+  {
+    "name": "a client speaking a MAJOR the daemon does not accept is rejected and nothing is recorded",
+    "request": { "event": "on.contract.future", "payload": {}, "protocol": "2.0.0" },
+    "response": { "status": "rejected", "supported": "^1.0.0", "eventId": "absent" }
+  },
+  {
+    "name": "a malformed protocol is rejected, not guessed",
+    "request": { "event": "on.contract.malformed", "payload": {}, "protocol": "banana" },
+    "response": { "status": "rejected", "supported": "^1.0.0", "eventId": "absent" }
+  }
+]

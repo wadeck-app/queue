@@ -1,6 +1,6 @@
 import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import type { ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
-import { createQueueService, getErrorMessage } from '@wadeck-app/queue-core';
+import { createQueueService, getErrorMessage, getQueueProtocolInfo } from '@wadeck-app/queue-core';
 import { registerWithAppCore } from './AppCoreRegistration.js';
 
 export const DAEMON_PORT = 47910;
@@ -13,7 +13,7 @@ export interface AppCoreModuleOptions { manifestPath: string; }
  * Hosts the queue as the singleton background daemon: owns the port, the idle shutdown and the
  * app-core registration; the queue logic itself is queue-core's createQueueService.
  */
-export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions }): Promise<void> {
+export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions; port?: number }): Promise<void> {
   let idleCountdown: ReturnType<typeof setTimeout> | null = null;
   let daemonHandle: Awaited<ReturnType<typeof createDaemon>> | null = null;
 
@@ -44,8 +44,11 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
 
   daemonHandle = await createDaemon({
     configDir,
-    port: DAEMON_PORT,
+    // only tests pass a port (0 = any free one): the real daemon always uses the fixed one
+    port: options?.port ?? DAEMON_PORT,
     idleTimeout: null,
+    // GET /version tells the SDK clients which push protocol this daemon speaks and which client versions it accepts
+    versionExtra: () => ({ queueProtocol: getQueueProtocolInfo() }),
     commands: service.commands,
     hooks: {
       onStart: (_port: number) => {

@@ -44,8 +44,34 @@ jobs:
             - name: Run tests
               run: npm test
 
+    # The SDK runs on every developer machine and CI of the integrations: its tests (PATH lookup, queue.cmd, port file, paths) must pass on all three OS
+    sdk-cross-platform:
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest, macos-latest]
+        runs-on: ${{ matrix.os }}
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
+
+            - name: Install dependencies
+              run: npm install --prefer-offline
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build and test queue-sdk
+              run: |
+                  npm run build --workspace=packages/queue-sdk
+                  npm test --workspace=packages/queue-sdk
+
     publish:
-        needs: build-and-test
+        needs: [build-and-test, sdk-cross-platform]
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         steps:
@@ -109,5 +135,14 @@ jobs:
             - name: Publish main package
               working-directory: packages/queue-cli-dist
               run: npm publish --tag ${{ steps.version.outputs.dist_tag }}
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            # Same registry, token and version as the CLI; built by "Build TypeScript" above (dist/esm, dist/cjs)
+            - name: Publish queue-sdk
+              working-directory: packages/queue-sdk
+              run: |
+                  npm pkg set version="${{ steps.version.outputs.version }}"
+                  npm publish --tag ${{ steps.version.outputs.dist_tag }}
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

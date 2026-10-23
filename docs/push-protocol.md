@@ -1,0 +1,103 @@
+# Push protocol
+
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.0.0**.
+
+Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
+
+## Versioning
+
+The protocol has its own SemVer version, independent from every package version. The constants live in `packages/queue-sdk/src/protocol.ts` and are the single source of truth.
+
+| Change | Bump | Compatible with older clients |
+|---|---|---|
+| Remove or rename a field, change a meaning, add a required request field | MAJOR | No |
+| Add an optional request field, a response field, a documented `status` value | MINOR | Yes |
+| Clarify this page, fix wording | PATCH | Yes |
+
+- The daemon states the version it implements (`version`) and the SemVer range of client versions it accepts (`accepts`).
+- A client states the version it speaks in the push body (`protocol`). Absent means `1.0.0`.
+- A new MAJOR keeps the previous MAJOR in `accepts` for at least one release cycle (for example `^1.0.0 || ^2.0.0`). Deprecated MAJORs: none yet.
+- Supported range syntax: `>=`, `>`, `<=`, `<`, `=`, a bare version, `^`, a space for AND, `||` for OR. Prerelease and build metadata are not used.
+
+## Finding the daemon
+
+| Item | Where |
+|---|---|
+| Config directory | `QUEUE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/queue`, else `~/.config/queue` (empty variables ignored) |
+| Port | `<configDir>/config.port`, JSON `{ "sdkVersion", "port", "pid", "startedAt" }`, written while the daemon runs and removed on a clean stop; a crash leaves it behind |
+| Token | `<configDir>/health_token`, plain text, never removed |
+| Address | `127.0.0.1` only |
+
+A daemon stops itself after about a minute without pending work, so a missing or stale `config.port` is normal: start it with `queue start` (idempotent), then retry.
+
+Before sending the token, check that the file is not stale: `GET /version` must answer with the `pid` of `config.port` and a `config_dir` equal to yours. Otherwise another process may own the port.
+
+## GET /version
+
+No authentication.
+
+```json
+{
+  "version": "2026.10.23-181-abcdef01",
+  "pid": 1234,
+  "config_dir": "C:\\Users\\me\\.config\\queue",
+  "sdkVersion": 1,
+  "port": 47910,
+  "queueProtocol": { "version": "1.0.0", "accepts": "^1.0.0" }
+}
+```
+
+`sdkVersion` belongs to the daemon library (port file and authentication handshake), not to this protocol. A `queueProtocol` that is missing means a daemon older than this page: treat it as `{ "version": "1.0.0", "accepts": "^1.0.0" }`.
+
+## POST /push
+
+Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
+
+```json
+{ "protocol": "1.0.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `**` or `>` the rest) |
+| `payload` | yes | Any JSON value |
+| `cwd` | yes | Directory used to find the project's `.queue/subscribers.yml` and the project name; omitting it gives HTTP 500 |
+| `protocol` | no | Protocol version the client speaks; absent = `1.0.0` |
+| `timeout` | no | Milliseconds a `before*` event may take (default 30000) |
+| `replayOf` | no | Id of the event this push replays |
+
+Answer, HTTP 200: `{ "ok": true, "result": <PushResponse> }`.
+
+| `result.status` | Meaning | Other fields |
+|---|---|---|
+| `queued` | Recorded; `on*` subscribers run in the background | `eventId`, `subscriberCount` |
+| `dispatched` | A `before*` event ran synchronously | `eventId`, `result` (the subscribers' answer) |
+| `aborted` | A subscriber refused, or `subscribers.yml` is invalid | `reason`, `eventId` |
+| `rejected` | The client protocol is not accepted; nothing was recorded | `reason`, `supported` (the accepted range) |
+
+A client must treat an unknown `status` as a failure and ignore unknown fields.
+
+| HTTP | Meaning |
+|---|---|
+| 401 | Missing or wrong token; nothing was recorded, safe to retry with a fresh token |
+| 400 / 404 | Malformed request / unknown command |
+| 500 | Daemon error, `{ "error": "..." }` |
+
+A connection reset or a timeout after the request was sent leaves the outcome unknown: the event may be recorded. There is no idempotency key, so do not retry blindly.
+
+## Example (any language)
+
+```
+curl -s -X POST http://127.0.0.1:47910/push \
+  -H "Authorization: Bearer $(cat ~/.config/queue/health_token)" \
+  -H "Content-Type: application/json" \
+  -d '{"protocol":"1.0.0","event":"demo.hello","payload":{},"cwd":"/path/to/project"}'
+```
+
+The port above is the default (47910); the daemon takes the next free one up to 47920, so read `config.port`.
+
+## History
+
+| Version | Change |
+|---|---|
+| 1.0.0 | Initial contract: Bearer token, `event`/`payload`/`cwd`, statuses `queued`, `dispatched`, `aborted`; adds `protocol` and the `rejected` status |
