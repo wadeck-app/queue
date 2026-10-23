@@ -9,6 +9,7 @@
 | `timeoutMs` | `5000` | HTTP timeout of one push |
 | `maxPending` | `100` | Pushes in flight at once; the overflow is dropped and reported |
 | `silent` | `false` | `true` prints nothing by default (`onError` is still called) |
+| `off` | `false` | `true` sends, starts and reports nothing; every call answers `dropped` with a reason saying so, and `status()` says the publisher is switched off. For the tests of your integration or a CI without a queue. Only an explicit `true` switches it off |
 | `onError` | | Receives every failure as `{ kind, message, event, outcome }` |
 | `onWarning` | | Receives the daemon's notices (for example a deprecated protocol), each once |
 
@@ -20,7 +21,7 @@ An invalid option falls back to its default and is reported through `onError`.
 |---|---|---|
 | `publish(event, payload, options?)` | `void` | Fire and forget. Never throws |
 | `publishAndWait(event, payload, options?)` | `Promise<PublishResult>` | Never rejects; failures are in the result |
-| `flush()` | `Promise<void>` | Resolves when every push in flight has settled. Call it before `process.exit()` |
+| `flush()` | `Promise<void>` | Resolves when every push in flight has settled. Call it before `process.exit()`. It takes no timeout argument: each push is bounded by `timeoutMs` (plus up to 5 s when the daemon has to be started), so `flush()` is bounded too. In a synchronous shutdown hook, start it without awaiting it: pushes still in flight at exit are lost |
 | `status()` | `Promise<QueueStatus>` | `{ available, via?, daemonVersion?, protocol?, reason? }`; `via` is `daemon` (running, verified) or `queue-start` (stopped, `queue` found, it will be run on the first event) |
 
 Per-call `options`: `cwd` (overrides the publisher's) and `timeoutMs`.

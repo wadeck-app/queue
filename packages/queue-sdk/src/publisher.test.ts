@@ -567,3 +567,26 @@ describe('status', () => {
     await expect(h.publisher.status()).resolves.toMatchObject({ available: expect.any(Boolean) });
   });
 });
+
+describe('the off switch (tests of an integration, a CI without a queue)', () => {
+  it('sends nothing, starts nothing, reports nothing, and says so in the result', async () => {
+    const h = await setup({ publisher: { off: true } });
+    h.publisher.publish('app.thing', {});
+    const result = await h.publisher.publishAndWait('app.thing', {});
+    await h.publisher.flush();
+    expect(result).toEqual({ status: 'dropped', reason: 'the publisher is switched off (option off: true): nothing was sent' });
+    expect(h.httpCalls).toEqual([]);
+    expect(h.runs).toEqual([]);
+    expect(h.failures).toEqual([]);
+  });
+
+  it('is visible in status()', async () => {
+    const h = await setup({ publisher: { off: true } });
+    await expect(h.publisher.status()).resolves.toEqual({ available: false, reason: 'the publisher is switched off (option off: true)' });
+  });
+
+  it('only an explicit true switches it off', async () => {
+    const h = await setup({ publisher: { off: undefined } });
+    await expect(h.publisher.publishAndWait('app.thing', {})).resolves.toMatchObject({ status: 'queued' });
+  });
+});

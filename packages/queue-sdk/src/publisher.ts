@@ -19,6 +19,8 @@ export interface QueuePublisherOptions {
   maxPending?: number;
   /** True: nothing is printed by default (`onError` is still called). */
   silent?: boolean;
+  /** True: nothing is sent, started or reported; every call answers `dropped` saying so. For the tests of an integration or a CI without a queue. */
+  off?: boolean;
   /** Receives every failure. */
   onError?: (failure: QueueFailure) => void;
   /** Receives the notices of the daemon (e.g. a deprecated protocol), each once. */
@@ -275,7 +277,13 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
 
   const pending = new Set<Promise<PublishResult>>();
 
+  const isOff = options.off === true;
+  const OFF_REASON = 'the publisher is switched off (option off: true)';
+
   function launch(event: string, payload: unknown, call: PublishOptions): Promise<PublishResult> {
+    if (isOff) {
+      return Promise.resolve({ status: 'dropped', reason: `${OFF_REASON}: nothing was sent` });
+    }
     if (pending.size >= maxPending) {
       const message = `maxPending (${maxPending}) pushes are already in flight: the event is dropped (call await flush() between bursts, or raise maxPending)`;
       reporter.failure({ kind: 'overflow', message, event: String(event), outcome: 'dropped' });
@@ -304,6 +312,9 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
       }
     },
     async status(): Promise<QueueStatus> {
+      if (isOff) {
+        return { available: false, reason: OFF_REASON };
+      }
       try {
         const state = await resolveShared();
         if (state.state === 'ready') {
