@@ -70,8 +70,8 @@ sections:
       - { key: "source", label: "Source", nowrap: true }
       - { key: "descriptionExcerpt", label: "Description", truncate: true }
       - { key: "count24h", label: "24 h" }
-      - { key: "lastSeenText", label: "Last seen", mono: true, nowrap: true }
+      - { key: "lastSeenText", label: "Last seen", mono: true, nowrap: true, title: "Last seen {lastSeenAt}" }
       - { key: "status", label: "Status", nowrap: true, badge: { declared: success, undeclared: warning } }
       - type: actions
         items:
-          - { label: Test, action: pushTest, variant: primary, condition: canPushTest }
+          - { label: Push test event, action: pushTest, icon: rocket, variant: primary, condition: canPushTest }

@@ -44,9 +44,10 @@ describe('events-page.yaml: what the table shows and what the expanded row shows
     expect(json).toMatchObject({ $type: 'JsonViewer', row: '$ctx.row', field: 'detailsText' });
   });
 
-  it('keeps the push button to one line', () => {
-    const actions = (columns.find((column) => column['type'] === 'actions') as { items: Array<{ label: string }> }).items;
-    expect(actions[0]?.label.length).toBeLessThanOrEqual(10);
+  // An icon-only button cannot wrap; its label stays the accessible name and the tooltip.
+  it('keeps the push button to one line: icon only', () => {
+    const actions = (columns.find((column) => column['type'] === 'actions') as { items: Array<{ icon?: string }> }).items;
+    expect(actions[0]?.icon).toBe('rocket');
   });
 });
 
@@ -98,6 +99,10 @@ describe('events-page.yaml', () => {
     expect(columns[0]?.['mono']).toBe(true);
   });
 
+  it('shows the full ISO date of the last sighting as the tooltip of the short one', () => {
+    expect(columns.find((column) => column['key'] === 'lastSeenText')?.['title']).toBe('Last seen {lastSeenAt}');
+  });
+
   it('shows the status as a badge for both statuses the route answers', () => {
     const status = columns.find((column) => column['key'] === 'status') as { badge: Record<string, string> };
     expect(Object.keys(status.badge).sort()).toEqual(['declared', 'undeclared']);
@@ -125,7 +130,7 @@ describe('events-page.yaml', () => {
     expect(action['url']).toBe('POST /api/modules/queue/events/{name}/push-test');
     expect(String(action['confirm'])).toMatch(/real subscribers/);
     const actions = columns.find((column) => column['type'] === 'actions') as { items: Node[] };
-    expect(actions.items).toEqual([{ label: 'Test', action: 'pushTest', variant: 'primary', condition: 'canPushTest' }]);
+    expect(actions.items).toEqual([{ label: 'Push test event', action: 'pushTest', icon: 'rocket', variant: 'primary', condition: 'canPushTest' }]);
   });
 
   it('is made of DSL nodes only: no raw HTML', () => {
