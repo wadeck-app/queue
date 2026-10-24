@@ -9,7 +9,7 @@
 | `timeoutMs` | `5000` | HTTP timeout of one push |
 | `maxPending` | `100` | Pushes in flight at once; the overflow is dropped and reported |
 | `silent` | `false` | `true` prints nothing by default (`onError` is still called) |
-| `off` | `false` | **Automated tests only.** `true` sends, starts and reports nothing; every call answers `dropped` with a reason saying so. Never set it in code that runs for real: `off` must not appear outside test files. To try a program in development without a queue, use the variable `QUEUE_SDK_OFF` below |
+| `off` | `false` | **Automated tests only.** `true` sends, starts and reports nothing; every call answers `dropped` with a reason saying so. Never set it in code that runs for real: the shared violations rule `queue-sdk/no-off-outside-tests` (violations CLI >= 2026.10.24-142, active in every project) flags `off` in any file that is not a test. To try a program in development without a queue, use the variable `QUEUE_SDK_OFF` below |
 | `onError` | | Receives every failure as `{ kind, message, event, outcome }` |
 | `onWarning` | | Receives the daemon's notices (for example a deprecated protocol), each once |
 

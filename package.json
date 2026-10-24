@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@wadeck-app/app-core-sdk": "^2026.10.22-072-f1ca3cff",
-    "@wadeck-app/violations-rules": "^2026.10.24-142-7529c804",
+    "@wadeck-app/violations-rules": "latest",
     "typescript": "^7.0.0",
     "vitest": "^4.0.14"
   },

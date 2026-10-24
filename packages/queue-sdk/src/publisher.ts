@@ -20,8 +20,8 @@ export interface QueuePublisherOptions {
   /** True: nothing is printed by default (`onError` is still called). */
   silent?: boolean;
   /**
-   * True: nothing is sent, started or reported; every call answers `dropped` saying so. FOR AUTOMATED TESTS ONLY: it must not appear
-   * outside test files. To try a program in development without a queue, set the environment variable QUEUE_SDK_OFF=1 instead.
+   * True: nothing is sent, started or reported; every call answers `dropped` saying so. FOR AUTOMATED TESTS ONLY: the violations rule
+   * queue-sdk/no-off-outside-tests flags it outside test files. To try a program in development without a queue, set the environment variable QUEUE_SDK_OFF=1 instead.
    */
   off?: boolean;
   /** Receives every failure. */
