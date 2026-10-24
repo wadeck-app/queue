@@ -26,6 +26,7 @@ function makeEnvelope(): EventEnvelope {
 function makeSub(id: string, command = 'echo ok'): ResolvedSubscriber {
   return {
     subscriberId: id,
+    legacyId: id,
     event: 'beforeTicket.create',
     type: 'cli',
     command,

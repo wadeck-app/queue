@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { listSubscribers } from './subscribers.js';
 
@@ -27,7 +27,7 @@ describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () 
     writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo foo\n');
     const result = listSubscribers(configDir, projectDir);
     expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ subscriberId: 'onFoo[0]', event: 'onFoo', type: 'cli', command: 'echo foo' });
+    expect(result[0]).toMatchObject({ subscriberId: `${basename(projectDir)}/onFoo[0]`, legacyId: 'onFoo[0]', event: 'onFoo', type: 'cli', command: 'echo foo' });
   });
 
   it('filters to one event', () => {

@@ -28,6 +28,7 @@ function makeEnvelope(): EventEnvelope {
 function makeSub(id: string): ResolvedSubscriber {
   return {
     subscriberId: id,
+    legacyId: id,
     event: 'onTicket.created',
     type: 'cli',
     command: 'echo ok',

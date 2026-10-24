@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join, resolve, normalize } from 'node:path';
+import { join, resolve, normalize, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConfigLoader } from './ConfigLoader.js';
 
@@ -375,5 +375,75 @@ subscribers:
       url: http://localhost:1234/hook
 `);
     expect(loader.getSubscribers('onTest', projectDir)).toHaveLength(2);
+  });
+});
+
+describe('ConfigLoader - subscriber ids', () => {
+  let projectDir: string;
+  let globalDir: string;
+  let loader: ConfigLoader;
+
+  beforeEach(() => {
+    projectDir = makeTmpDir();
+    globalDir = makeTmpDir();
+    loader = new ConfigLoader(globalDir);
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true });
+  });
+
+  it('a global and a project subscriber on the same event get distinct ids (the daemon keys its WAL entries by id)', () => {
+    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo global\n', 'utf-8');
+    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo project\n');
+    const ids = loader.getSubscribers('onFoo', projectDir).map((s) => s.subscriberId);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('keeps the legacy <event>[<index>] id for the global file and scopes the project ones with the project folder name', () => {
+    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo global\n', 'utf-8');
+    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo project\n');
+    const [global, project] = loader.getSubscribers('onFoo', projectDir);
+    expect(global!.subscriberId).toBe('onFoo[0]');
+    expect(global!.legacyId).toBe('onFoo[0]');
+    expect(project!.subscriberId).toBe(`${basename(projectDir)}/onFoo[0]`);
+    expect(project!.legacyId).toBe('onFoo[0]');
+  });
+
+  it('uses the name as id when there is one: <name> in the global file, <project>/<name> in a project file; legacyId stays the position', () => {
+    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo g\n      name: notify\n', 'utf-8');
+    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo p\n      name: notify\n');
+    const [global, project] = loader.getSubscribers('onFoo', projectDir);
+    expect(global).toMatchObject({ subscriberId: 'notify', name: 'notify', legacyId: 'onFoo[0]' });
+    expect(project).toMatchObject({ subscriberId: `${basename(projectDir)}/notify`, name: 'notify', legacyId: 'onFoo[0]' });
+  });
+
+  it('a name survives a reorder of the list, a position does not', () => {
+    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: a\n    - type: cli\n      command: echo b\n      name: b\n');
+    const before = loader.getSubscribers('onFoo', projectDir).find((s) => s.name === 'b')!.subscriberId;
+    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo b\n      name: b\n    - type: cli\n      command: echo a\n      name: a\n');
+    const after = loader.getSubscribers('onFoo', projectDir).find((s) => s.name === 'b')!.subscriberId;
+    expect(after).toBe(before);
+  });
+
+  it('refuses a duplicate name on the same event of a file, naming the file and the fix', () => {
+    const file = writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: same\n    - type: cli\n      command: echo b\n      name: same\n');
+    let message = '';
+    try {
+      loader.getSubscribers('onFoo', projectDir);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("'same'");
+    expect(message).toContain('onFoo');
+    expect(message).toContain(file);
+    expect(message).toContain('Fix:');
+  });
+
+  it.each(['Notify', 'has space', '-lead', 'a/b', ''])('refuses the invalid name %j with the accepted format', (name) => {
+    writeSubscribersYml(projectDir, `subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: "${name}"\n`);
+    expect(() => loader.getSubscribers('onFoo', projectDir)).toThrow('[a-z0-9][a-z0-9._-]*');
   });
 });

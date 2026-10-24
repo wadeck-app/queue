@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createQueueService } from './QueueService.js';
 import { readCatalog } from '../catalog/EventCatalog.js';
+import { Wal } from '../storage/Wal.js';
 
 let configDir: string;
 let projectDir: string;
@@ -127,5 +128,24 @@ describe('register-events (the event catalog, protocol 1.1.0)', () => {
     const service = createQueueService(configDir);
     await service.commands['register-events'](declaration);
     expect(service.isIdle()).toBe(true);
+  });
+});
+
+describe('retry of an entry written before subscriber names and scopes', () => {
+  it('finds the subscriber again through its legacy position id', async () => {
+    mkdirSync(join(projectDir, '.queue'), { recursive: true });
+    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: node -e ""\n');
+    new Wal(join(configDir, 'wal.ndjson')).append({
+      id: 'evt-legacy',
+      timestamp: new Date().toISOString(),
+      event: 'onFoo',
+      payload: {},
+      meta: { cwd: projectDir },
+      subscriberId: 'onFoo[0]',
+      status: 'failed',
+      attempts: 1,
+    });
+    const service = createQueueService(configDir);
+    expect(await service.commands.retry({ eventId: 'evt-legacy' })).toEqual({ status: 'ok' });
   });
 });

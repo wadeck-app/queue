@@ -8,6 +8,7 @@ import { getErrorMessage } from './errors.js';
 
 const SubscriberConfigSchema = z.object({
   type: z.enum(['cli', 'http']),
+  name: z.string().optional(),
   command: z.string().optional(),
   url: z.string().optional(),
   method: z.string().optional(),
@@ -102,6 +103,7 @@ function loadYml(filePath: string): SubscribersYml | null {
 
 export interface SubscriberConfig {
   type: 'cli' | 'http';
+  name?: string;
   command?: string;
   url?: string;
   method?: string;
@@ -117,6 +119,8 @@ export interface SubscriberConfig {
 interface ResolveContext {
   filePath: string;
   fileDir: string;
+  /** Prefix of the ids of this file's subscribers: empty for the global file, '<project folder>/' for a project file. */
+  scope: string;
   globalCwd?: string;
   globalEnv?: Record<string, string>;
   eventCwd?: string;
@@ -143,8 +147,24 @@ function assertDispatchable(event: string, index: number, raw: SubscriberConfig,
   }
 }
 
+export const SUBSCRIBER_NAME_FORMAT = '[a-z0-9][a-z0-9._-]*';
+const SUBSCRIBER_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+function assertValidName(event: string, index: number, name: string, filePath: string): void {
+  if (!SUBSCRIBER_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `[queue] Invalid name ${JSON.stringify(name)} for subscriber '${event}' index ${index} in ${filePath}: a name must match ${SUBSCRIBER_NAME_FORMAT} and be at most 64 characters.\n` +
+      `Fix: use lowercase letters, digits, '.', '_' or '-', starting with a letter or a digit, e.g. 'name: notify'.`
+    );
+  }
+}
+
 function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: ResolveContext): ResolvedSubscriber {
   assertDispatchable(event, index, raw, ctx.filePath);
+  if (raw.name !== undefined) {
+    assertValidName(event, index, raw.name, ctx.filePath);
+  }
+  const legacyId = `${event}[${index}]`;
 
   // cwd resolution: subscriber > event > global > file default (project root)
   const fileDefaultCwd = defaultCwdForDir(ctx.fileDir);
@@ -164,7 +184,9 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   })();
 
   return {
-    subscriberId: `${event}[${index}]`,
+    subscriberId: `${ctx.scope}${raw.name ?? legacyId}`,
+    legacyId,
+    name: raw.name,
     event,
     type: raw.type,
     command: raw.command,
@@ -178,6 +200,22 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
     cwd: resolvedCwd,
     env: mergedEnv,
   };
+}
+
+function assertUniqueNames(event: string, resolved: ResolvedSubscriber[], filePath: string): void {
+  const seen = new Set<string>();
+  for (const sub of resolved) {
+    if (sub.name === undefined) {
+      continue;
+    }
+    if (seen.has(sub.name)) {
+      throw new Error(
+        `[queue] Duplicate subscriber name '${sub.name}' on event '${event}' in ${filePath}: a name identifies one subscriber of an event within its file.\n` +
+        `Fix: give each subscriber of '${event}' a different 'name'.`
+      );
+    }
+    seen.add(sub.name);
+  }
 }
 
 export class ConfigLoader {
@@ -198,9 +236,11 @@ export class ConfigLoader {
         return;
       }
       const fileDir = dirname(filePath);
-      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'globalCwd' | 'globalEnv'> = {
+      const scope = filePath === globalFile ? '' : `${basename(defaultCwdForDir(fileDir))}/`;
+      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'scope' | 'globalCwd' | 'globalEnv'> = {
         filePath,
         fileDir,
+        scope,
         globalCwd: yml.cwd,
         globalEnv: yml.env,
       };
@@ -219,6 +259,7 @@ export class ConfigLoader {
 
         const ctx: ResolveContext = { ...globalCtx, eventCwd, eventEnv };
         const resolved = subs.map((s, i) => toResolved(event, i, s, ctx));
+        assertUniqueNames(event, resolved, filePath);
         const existing = merged.get(event) ?? [];
         merged.set(event, [...existing, ...resolved]);
       }

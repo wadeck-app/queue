@@ -41,6 +41,20 @@ export interface QueueService {
   eventLogger: EventLogger;
 }
 
+/**
+ * The subscriber a WAL or DLQ entry was written for: the exact id, else (entries written before names and project scopes)
+ * the one subscriber whose position id matches. Two matches are ambiguous (a global and a project subscriber at the
+ * same position): none is picked, the caller reports "no longer exists" rather than running the wrong command.
+ */
+function findSubscriber(subscribers: ResolvedSubscriber[], entrySubscriberId: string): ResolvedSubscriber | undefined {
+  const exact = subscribers.find((s) => s.subscriberId === entrySubscriberId);
+  if (exact !== undefined) {
+    return exact;
+  }
+  const legacy = subscribers.filter((s) => s.legacyId === entrySubscriberId);
+  return legacy.length === 1 ? legacy[0] : undefined;
+}
+
 export function createQueueService(configDir: string, options: QueueServiceOptions = {}): QueueService {
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
@@ -196,7 +210,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
         return { status: 'error' };
       }
-      const sub = subscribers.find(s => s.subscriberId === entry.subscriberId);
+      const sub = findSubscriber(subscribers, entry.subscriberId);
       if (!sub) {
         eventLogger.logDiagnostic({
           source: 'QueueDaemon.retry',
@@ -277,7 +291,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
         return { status: 'ok' };
       }
-      const sub = subscribers.find(s => s.subscriberId === entry.subscriberId);
+      const sub = findSubscriber(subscribers, entry.subscriberId);
       if (!sub) {
         eventLogger.logDiagnostic({
           source: 'QueueDaemon.dlq-replay',

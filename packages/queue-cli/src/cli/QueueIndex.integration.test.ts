@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
-import { spawnOwned, waitFor, removeDirWhenFree, waitForPortFree, withHangGuard } from '../testWaitFor.js';
+import { spawnOwned, waitFor, removeDirWhenFree, withHangGuard } from '../testWaitFor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');
@@ -405,7 +405,7 @@ describe('queue replay (integration)', () => {
     } finally {
       runCli(['stop']);
       // the daemon must be gone before its directories are removed
-      await waitForPortFree(47910);
+      await waitFor(() => !existsSync(join(tempConfigDir, 'config.port')), 'the daemon of this test to remove its port file');
       await removeDirWhenFree(projectA);
       await removeDirWhenFree(projectB);
     }
