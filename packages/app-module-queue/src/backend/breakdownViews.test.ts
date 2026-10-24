@@ -85,6 +85,42 @@ describe('overview-page.yaml', () => {
   });
 });
 
+describe('pending-page.yaml', () => {
+  const doc = load('pending-page.yaml');
+  const actions = doc['$actions'] as Record<string, Node>;
+  const table = (doc['sections'] as Node[]).find((section) => section['$type'] === 'DataTable') as Node;
+  const actionColumn = (table['columns'] as Node[]).find((column) => column['type'] === 'actions') as Node;
+
+  it('retries an event in one click from its row, with the id of the row in the URL (no select to fill)', () => {
+    expect((actionColumn['items'] as Node[]).map((item) => item['action'])).toEqual(['retryPending']);
+    expect(actions['retryPending']?.['url']).toBe('POST /api/modules/queue/retry/{id}');
+    expect((doc['sections'] as Node[]).some((section) => section['$type'] === 'Form')).toBe(false);
+  });
+
+  it('says what happened, on success and on failure', () => {
+    expect(actions['retryPending']?.['successMessage']).toBeTruthy();
+    expect(actions['retryPending']?.['errorPrefix']).toBeTruthy();
+  });
+});
+
+describe('history-page.yaml row action', () => {
+  const doc = load('history-page.yaml');
+  const actions = doc['$actions'] as Record<string, Node>;
+  const table = (doc['sections'] as Node[]).find((section) => section['$type'] === 'DataTable') as Node;
+  const actionColumn = (table['columns'] as Node[]).find((column) => column['type'] === 'actions') as Node;
+
+  it('replays an event from its row, with its event id in the URL', () => {
+    expect((actionColumn['items'] as Node[]).map((item) => item['action'])).toEqual(['replayEvent']);
+    expect(actions['replayEvent']?.['url']).toBe('POST /api/modules/queue/history/{eventId}/replay');
+  });
+
+  it('confirms before running the subscribers again, and says what happened', () => {
+    expect(String(actions['replayEvent']?.['confirm'])).toMatch(/subscribers/i);
+    expect(actions['replayEvent']?.['successMessage']).toBeTruthy();
+    expect(actions['replayEvent']?.['errorPrefix']).toBeTruthy();
+  });
+});
+
 describe('dlq-page.yaml', () => {
   const doc = load('dlq-page.yaml');
   const actions = doc['$actions'] as Record<string, Node>;

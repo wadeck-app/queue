@@ -56,12 +56,14 @@ describe('history-page.yaml pagination structure', () => {
 		expect(dataTableSection?.rows).toBe('$sources.history.entries');
 	});
 
-	it('DataTable has 6 columns in order: ts, event, eventId, project, matchedCount, totalCount', () => {
+	it('DataTable has 6 data columns in order: ts, event, eventId, project, matchedCount, totalCount, then the row actions', () => {
 		const sections = doc.sections as Section[];
 		const dataTableSection = sections.find(
 			(s) => s.$type === 'DataTable'
 		) as Section;
-		const columns = dataTableSection?.columns as Array<Record<string, unknown>>;
+		const allColumns = dataTableSection?.columns as Array<Record<string, unknown>>;
+		expect(allColumns[allColumns.length - 1]?.type).toBe('actions');
+		const columns = allColumns.filter((column) => column.type !== 'actions');
 
 		expect(columns).toHaveLength(6);
 		expect(columns[0].key).toBe('ts');

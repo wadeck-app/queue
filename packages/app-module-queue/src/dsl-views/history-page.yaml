@@ -9,6 +9,15 @@ $sources:
       subscriberId: $urlParam.subscriber
       status: $urlParam.status
 
+# {eventId} is the event id of the clicked row (the renderer percent-encodes it). The replay runs the subscribers again.
+$actions:
+  replayEvent:
+    url: POST /api/modules/queue/history/{eventId}/replay
+    confirm: Replay this event? Its subscribers run again with the recorded payload.
+    successMessage: Replay started
+    errorPrefix: Could not replay
+    reloadSources: true
+
 $type: PageContent
 sections:
   # Same filters as `queue history --event / --subscriber / --status`; they need dsl-ui >= 2026.10.19-117 (urlParam on SearchBar and CompactSelect); resetUrlParams needs dsl-ui >= 2026.10.22-124 (a narrower filter or a new page size goes back to page 1)
@@ -52,6 +61,9 @@ sections:
       - { key: "project", label: "Project" }
       - { key: "matchedCount", label: "Matched" }
       - { key: "totalCount", label: "Total" }
+      - type: actions
+        items:
+          - { label: Replay, action: replayEvent, variant: primary }
 
   - $type: HorizontalStack
     justify: justify-between
