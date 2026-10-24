@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createQueueService } from './QueueService.js';
 import { readCatalog } from '../catalog/EventCatalog.js';
 import { Wal } from '../storage/Wal.js';
+import { waitFor } from '../waitFor.testUtil.js';
 
 let configDir: string;
 let projectDir: string;
@@ -147,5 +148,7 @@ describe('retry of an entry written before subscriber names and scopes', () => {
     });
     const service = createQueueService(configDir);
     expect(await service.commands.retry({ eventId: 'evt-legacy' })).toEqual({ status: 'ok' });
+    // the retry runs the subscriber: its process must be gone before the afterEach removes the directory it runs in
+    await waitFor('the retry to finish', () => service.isIdle());
   });
 });
