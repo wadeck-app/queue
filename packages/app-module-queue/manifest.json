@@ -48,17 +48,18 @@
     },
     {
       "kind": "widget",
-      "slot": "dashboard",
-      "label": "Queue Relay",
+      "slot": "navbar",
+      "label": "Queue relay",
       "view": {
         "type": "path",
-        "value": "./src/dsl-views/relay-widget.yaml"
+        "value": "./src/dsl-views/relay-badge.yaml"
       }
     },
     {
       "kind": "page",
       "slot": "nav",
       "label": "Queue Overview",
+      "path": "/",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/overview-page.yaml"
@@ -68,6 +69,7 @@
       "kind": "page",
       "slot": "nav",
       "label": "Queue History",
+      "path": "/history",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/history-page.yaml"
@@ -77,6 +79,7 @@
       "kind": "page",
       "slot": "nav",
       "label": "Queue Pending",
+      "path": "/pending",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/pending-page.yaml"
@@ -86,6 +89,7 @@
       "kind": "page",
       "slot": "nav",
       "label": "Queue DLQ",
+      "path": "/dlq",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/dlq-page.yaml"
@@ -95,6 +99,7 @@
       "kind": "page",
       "slot": "nav",
       "label": "Queue Subscribers",
+      "path": "/subscribers",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/subscribers-page.yaml"
@@ -104,6 +109,7 @@
       "kind": "page",
       "slot": "nav",
       "label": "Queue Webhooks",
+      "path": "/webhooks",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/webhooks-page.yaml"
@@ -113,6 +119,7 @@
       "kind": "page",
       "slot": "nav",
       "label": "Queue Logs",
+      "path": "/logs",
       "view": {
         "type": "path",
         "value": "./src/dsl-views/logs-page.yaml"

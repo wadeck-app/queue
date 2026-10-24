@@ -18,7 +18,7 @@ describe('getRelayInfo', () => {
   it('says stopped when the relay is not running, and asks nothing more', async () => {
     mockIsRunning.mockResolvedValue(false);
     const info = await getRelayInfo('/cfg');
-    expect(info).toEqual({ state: 'stopped', tone: 'default', running: false, connected: false, pid: null, uptimeSec: null, lastError: null });
+    expect(info).toEqual({ state: 'stopped', label: 'Relay disconnected', tone: 'default', running: false, connected: false, pid: null, uptimeSec: null, lastError: null });
     expect(mockSend).not.toHaveBeenCalled();
   });
 
@@ -31,7 +31,7 @@ describe('getRelayInfo', () => {
     mockIsRunning.mockResolvedValue(true);
     mockSend.mockResolvedValue({ connected: true, pid: 4242, uptimeSec: 90, lastError: null });
     await expect(getRelayInfo('/cfg')).resolves.toEqual({
-      state: 'connected', tone: 'success', running: true, connected: true, pid: 4242, uptimeSec: 90, lastError: null,
+      state: 'connected', label: 'Relay connected', tone: 'success', running: true, connected: true, pid: 4242, uptimeSec: 90, lastError: null,
     });
     expect(mockSend).toHaveBeenCalledWith('status', undefined);
   });
@@ -40,7 +40,7 @@ describe('getRelayInfo', () => {
     mockIsRunning.mockResolvedValue(true);
     mockSend.mockResolvedValue({ connected: false, pid: 7, uptimeSec: 3, lastError: 'ECONNREFUSED 127.0.0.1:1' });
     await expect(getRelayInfo('/cfg')).resolves.toMatchObject({
-      state: 'not connected', tone: 'warning', running: true, connected: false, lastError: 'ECONNREFUSED 127.0.0.1:1',
+      state: 'not connected', label: 'Relay disconnected', tone: 'warning', running: true, connected: false, lastError: 'ECONNREFUSED 127.0.0.1:1',
     });
   });
 });

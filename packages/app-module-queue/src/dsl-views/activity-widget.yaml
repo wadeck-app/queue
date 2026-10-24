@@ -4,122 +4,47 @@ $sources:
   series:
     url: GET /api/modules/queue/activity/series
 
-# A/B test (development shells only, others show `tiles`): remove it once a layout is chosen. It needs dsl-ui with AbTest.
-# variant and yFormat need dsl-ui >= 2026.10.19-117. An older shell draws full charts (hence 110 px: 80 squashes their axes), with
-# black bars when a series has no colour, and prints the hourly 1753 as "1.8 KB".
-$type: AbTest
-id: activity-layout
-label: Queue activity
-initial: tiles
-variants:
-  tiles:
-    label: Tiles
-    hint: Three large tiles then two charts without a caption (the reference).
-    view:
-      $type: VerticalStack
-      gap: gap-2
-      items:
-        - $type: StatTile
-          label: Events, last 5 min
-          value: $sources.activity.last5Min
-        - $type: StatTile
-          label: Events, last 60 min
-          value: $sources.activity.last60Min
-        - $type: StatTile
-          label: Events, last 24 h
-          value: $sources.activity.last24Hours
-        - $type: Chart
-          variant: sparkline
-          data: $sources.series.lastHour
-          xAxisKey: label
-          xAxisType: category
-          yFormat: number
-          height: 110
-          series:
-            - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }
-        - $type: Chart
-          variant: sparkline
-          data: $sources.series.lastDay
-          xAxisKey: label
-          xAxisType: category
-          yFormat: number
-          height: 110
-          series:
-            - { key: events, name: "Events per hour", type: area, yAxisId: left, color: "var(--color-primary)" }
-  captioned:
-    label: Row + captions
-    hint: The three counts in one row, each chart under a caption that says what it plots.
-    view:
-      $type: VerticalStack
-      gap: gap-2
-      items:
-        - $type: HorizontalStack
-          gap: gap-2
-          items:
-            - $type: StatTile
-              label: 5 min
-              value: $sources.activity.last5Min
-            - $type: StatTile
-              label: 1 h
-              value: $sources.activity.last60Min
-            - $type: StatTile
-              label: 24 h
-              value: $sources.activity.last24Hours
-        - $type: Badge
-          label: Per 5 min, last hour
-          tone: subtle
-          size: sm
-        - $type: Chart
-          variant: sparkline
-          data: $sources.series.lastHour
-          xAxisKey: label
-          xAxisType: category
-          yFormat: number
-          height: 80
-          series:
-            - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }
-        - $type: Badge
-          label: Per hour, last 24 h
-          tone: subtle
-          size: sm
-        - $type: Chart
-          variant: sparkline
-          data: $sources.series.lastDay
-          xAxisKey: label
-          xAxisType: category
-          yFormat: number
-          height: 80
-          series:
-            - { key: events, name: "Events per hour", type: area, yAxisId: left, color: "var(--color-primary)" }
-  hourly:
-    label: Row + hourly only
-    hint: The three counts in one row and only the hourly chart, under a caption (the shortest).
-    view:
-      $type: VerticalStack
-      gap: gap-2
-      items:
-        - $type: HorizontalStack
-          gap: gap-2
-          items:
-            - $type: StatTile
-              label: 5 min
-              value: $sources.activity.last5Min
-            - $type: StatTile
-              label: 1 h
-              value: $sources.activity.last60Min
-            - $type: StatTile
-              label: 24 h
-              value: $sources.activity.last24Hours
-        - $type: Badge
-          label: Per hour, last 24 h
-          tone: subtle
-          size: sm
-        - $type: Chart
-          variant: sparkline
-          data: $sources.series.lastDay
-          xAxisKey: label
-          xAxisType: category
-          yFormat: number
-          height: 110
-          series:
-            - { key: events, name: "Events per hour", type: area, yAxisId: left, color: "var(--color-primary)" }
+# Chosen among the A/B variants of 5b6f846: the three counts in one row, each chart under a caption that says what it plots.
+# variant and yFormat need dsl-ui >= 2026.10.19-117. An older shell draws full charts (hence 80 px), with black bars when a series
+# has no colour, and prints the hourly 1753 as "1.8 KB".
+$type: VerticalStack
+gap: gap-2
+items:
+  - $type: HorizontalStack
+    gap: gap-2
+    items:
+      - $type: StatTile
+        label: 5 min
+        value: $sources.activity.last5Min
+      - $type: StatTile
+        label: 1 h
+        value: $sources.activity.last60Min
+      - $type: StatTile
+        label: 24 h
+        value: $sources.activity.last24Hours
+  - $type: Badge
+    label: Per 5 min, last hour
+    tone: subtle
+    size: sm
+  - $type: Chart
+    variant: sparkline
+    data: $sources.series.lastHour
+    xAxisKey: label
+    xAxisType: category
+    yFormat: number
+    height: 80
+    series:
+      - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }
+  - $type: Badge
+    label: Per hour, last 24 h
+    tone: subtle
+    size: sm
+  - $type: Chart
+    variant: sparkline
+    data: $sources.series.lastDay
+    xAxisKey: label
+    xAxisType: category
+    yFormat: number
+    height: 80
+    series:
+      - { key: events, name: "Events per hour", type: area, yAxisId: left, color: "var(--color-primary)" }

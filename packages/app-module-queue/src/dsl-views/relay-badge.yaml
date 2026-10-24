@@ -1,0 +1,13 @@
+$sources:
+  relay:
+    url: GET /api/modules/queue/relay
+    poll: 30s
+
+# The navbar slot, next to the "N jobs" figures of the orchestrator module: the relay is either connected or it is not. The tone is
+# green when connected, amber when the relay runs but lost its connection, grey when it is stopped (it runs on demand). The
+# relay has no such state to hide: the badge never says "connected" unless the relay answered that it is.
+$type: Badge
+label: $sources.relay.label
+variant: $sources.relay.tone
+tone: subtle
+size: sm

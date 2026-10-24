@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import { loadAbWidget, type Node } from './abWidget.js';
+
+type Node = Record<string, unknown>;
 
 const viewsDir = join(dirname(fileURLToPath(import.meta.url)), '../dsl-views');
 const load = (name: string): Node => yaml.load(readFileSync(join(viewsDir, name), 'utf-8')) as Node;
@@ -31,18 +32,20 @@ describe('subscribers-page.yaml, last 24 hours table', () => {
 });
 
 describe('status-widget.yaml', () => {
-  const { doc, reference } = loadAbWidget('status-widget.yaml');
-  const tiles = reference['items'] as Node[];
+  const doc = load('status-widget.yaml');
+  const tiles = doc['items'] as Node[];
 
-  it('shows the events never tried and, apart, the ones that failed an attempt and wait for a retry', () => {
-    expect(reference['$type']).toBe('VerticalStack');
-    expect(tiles.map((tile) => tile['value'])).toEqual(['$sources.status.pendingCount', '$sources.pending.awaitingRetry']);
+  // Dashboard columns are about 270 px wide: more than three tiles in a row wrap their labels
+  it('shows, in one row of three tiles, the events never tried, the ones that failed an attempt and wait for a retry, and the DLQ', () => {
+    expect(doc['$type']).toBe('HorizontalStack');
+    expect(tiles.length).toBeLessThanOrEqual(3);
+    expect(tiles.map((tile) => tile['value'])).toEqual(['$sources.status.pendingCount', '$sources.pending.awaitingRetry', '$sources.status.dlqCount']);
     expect((doc['$sources'] as Record<string, Node>)['pending']?.['url']).toBe('GET /api/modules/queue/pending');
   });
 });
 
 describe('hourly chart (the last 24 h, counts per hour)', () => {
-  const widgetCharts = (loadAbWidget('activity-widget.yaml').reference['items'] as Node[]).filter((item) => item['$type'] === 'Chart');
+  const widgetCharts = (load('activity-widget.yaml')['items'] as Node[]).filter((item) => item['$type'] === 'Chart');
   const overviewCharts = (load('overview-page.yaml')['sections'] as Node[]).filter((section) => section['$type'] === 'Chart');
 
   it.each([

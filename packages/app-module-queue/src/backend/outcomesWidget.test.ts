@@ -1,19 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { loadAbWidget, type Node } from './abWidget.js';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import yaml from 'js-yaml';
 
-// The widget is an A/B test of layouts: these tests are about the reference one, the other layouts are in abWidgets.test.ts
-const { doc, reference } = loadAbWidget('outcomes-widget.yaml');
-const items = reference['items'] as Node[];
+type Node = Record<string, unknown>;
+
+const doc = yaml.load(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../dsl-views/outcomes-widget.yaml'), 'utf-8')) as Node;
+const items = doc['items'] as Node[];
+const row = items.find((item) => item['$type'] === 'HorizontalStack') as Node;
+const tiles = row['items'] as Node[];
 
 describe('outcomes-widget.yaml', () => {
-  it('reads the outcomes route and stacks its tiles and chart (dashboard columns are ~270 px wide)', () => {
+  it('reads the outcomes route and stacks a caption, one row of tiles and the chart (dashboard columns are ~270 px wide)', () => {
     expect((doc['$sources'] as Record<string, Node>)['outcomes']?.['url']).toBe('GET /api/modules/queue/outcomes');
-    expect(reference['$type']).toBe('VerticalStack');
-    expect(items.map((item) => item['$type'])).toEqual(['StatTile', 'StatTile', 'StatTile', 'Chart']);
+    expect(doc['$type']).toBe('VerticalStack');
+    expect(items.map((item) => item['$type'])).toEqual(['Badge', 'HorizontalStack', 'Chart']);
+    expect(items[0]?.['label']).toBe('Last 24 hours');
+  });
+
+  it('puts at most three tiles in the row: more would wrap their labels', () => {
+    expect(tiles.length).toBeLessThanOrEqual(3);
   });
 
   it('shows what the route calls delivered, failedAttempts and givenUp', () => {
-    const tiles = items.filter((item) => item['$type'] === 'StatTile');
     expect(tiles.map((tile) => tile['value'])).toEqual([
       '$sources.outcomes.last24Hours.delivered',
       '$sources.outcomes.last24Hours.failedAttempts',
