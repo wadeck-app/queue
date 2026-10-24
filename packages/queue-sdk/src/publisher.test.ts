@@ -590,3 +590,65 @@ describe('the off switch (tests of an integration, a CI without a queue)', () =>
     await expect(h.publisher.publishAndWait('app.thing', {})).resolves.toMatchObject({ status: 'queued' });
   });
 });
+
+describe('the QUEUE_SDK_OFF environment variable (trying a program in development without a queue)', () => {
+  it('QUEUE_SDK_OFF=1 sends, starts and reports nothing, and says so in the result', async () => {
+    const h = await setup({ deps: { env: { QUEUE_SDK_OFF: '1' } } });
+    h.publisher.publish('app.thing', {});
+    const result = await h.publisher.publishAndWait('app.thing', {});
+    await h.publisher.flush();
+    expect(result).toEqual({ status: 'dropped', reason: 'the publisher is switched off by the environment variable QUEUE_SDK_OFF=1: nothing was sent' });
+    expect(h.httpCalls).toEqual([]);
+    expect(h.runs).toEqual([]);
+    expect(h.failures).toEqual([]);
+  });
+
+  it('announces it once when the publisher is created, so a forgotten variable in production is not silent', async () => {
+    const h = await setup({ deps: { env: { QUEUE_SDK_OFF: '1' } } });
+    await h.publisher.publishAndWait('app.thing', {});
+    expect(h.warnings).toHaveLength(1);
+    expect(h.warnings[0]).toContain('QUEUE_SDK_OFF=1');
+    expect(h.warnings[0]).toMatch(/development|test/i);
+    expect(h.warnings[0]).toMatch(/unset/i);
+  });
+
+  it('prints the announcement when no onWarning callback is given, unless silent', async () => {
+    const lines: string[] = [];
+    const printing = await setup({ publisher: { silent: false, onWarning: undefined }, deps: { env: { QUEUE_SDK_OFF: '1' }, sink: (line) => lines.push(line) } });
+    await printing.publisher.status();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('QUEUE_SDK_OFF=1');
+
+    const quiet: string[] = [];
+    await setup({ publisher: { silent: true, onWarning: undefined }, deps: { env: { QUEUE_SDK_OFF: '1' }, sink: (line) => quiet.push(line) } });
+    expect(quiet).toEqual([]);
+  });
+
+  it('is visible in status()', async () => {
+    const h = await setup({ deps: { env: { QUEUE_SDK_OFF: '1' } } });
+    const status = await h.publisher.status();
+    expect(status.available).toBe(false);
+    expect(status.reason).toContain('QUEUE_SDK_OFF=1');
+  });
+
+  it.each([[{}], [{ QUEUE_SDK_OFF: '0' }], [{ QUEUE_SDK_OFF: '' }]])('%j leaves the publisher active', async (env) => {
+    const h = await setup({ deps: { env } });
+    await expect(h.publisher.publishAndWait('app.thing', {})).resolves.toMatchObject({ status: 'queued' });
+    expect(h.warnings).toEqual([]);
+  });
+
+  it('refuses to guess: any other value is reported as a mistake and the publisher stays ACTIVE (events are not lost by a typo)', async () => {
+    const h = await setup({ deps: { env: { QUEUE_SDK_OFF: 'yes' } } });
+    expect(h.failures).toHaveLength(1);
+    expect(h.failures[0]).toMatchObject({ kind: 'invalid-argument' });
+    expect(h.failures[0]?.message).toContain('QUEUE_SDK_OFF');
+    expect(h.failures[0]?.message).toContain('"yes"');
+    await expect(h.publisher.publishAndWait('app.thing', {})).resolves.toMatchObject({ status: 'queued' });
+  });
+
+  it('the off option and the variable together are still just off', async () => {
+    const h = await setup({ publisher: { off: true }, deps: { env: { QUEUE_SDK_OFF: '1' } } });
+    await expect(h.publisher.publishAndWait('app.thing', {})).resolves.toMatchObject({ status: 'dropped' });
+    expect(h.httpCalls).toEqual([]);
+  });
+});

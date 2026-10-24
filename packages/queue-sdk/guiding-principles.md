@@ -10,6 +10,7 @@ Rules a contributor keeps. If a change breaks one, the rule and the change are d
 - **Never send the token to an unverified process.** `GET /version` must return the pid of `config.port` and the same config directory first. The token never appears in a message or a log.
 - **The payload only travels over HTTP.** The only thing ever put on a command line is the constant `start`; the config directory goes through `QUEUE_CONFIG_DIR` in the environment.
 - **Bounded.** `maxPending` caps the work in flight; the overflow is dropped and reported.
+- **Switching off is for tests and development, never for production code.** The `off` option is for automated tests only (it must not appear outside test files; a shared violations rule is being added to enforce it); a development run uses `QUEUE_SDK_OFF=1`, which announces itself once so a forgotten variable is not silent. Any other value of the variable is a reported mistake and leaves the SDK active.
 
 ## Design
 

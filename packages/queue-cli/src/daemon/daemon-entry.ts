@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { EventLogger, getErrorMessage, getQueueConfigDir } from '@wadeck-app/queue-core';
 import { startDaemon } from './QueueDaemon.js';
 
+// Defined by the bundler (ci/scripts/bundle.ts); a run from the TypeScript build says so instead of pretending to be a release
+declare const __QUEUE_CLI_VERSION__: string;
+const version = typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CLI_VERSION__ : 'unbundled-dev';
+
 const configDir = getQueueConfigDir();
 
 // Bundle layout: app-module/manifest.json sits next to queue-daemon.cjs (see ci/scripts/bundle.ts).
@@ -14,7 +18,7 @@ const bundleManifest = fileURLToPath(new URL('./app-module/manifest.json', impor
 const devManifest = fileURLToPath(new URL('../../../app-module-queue/dist-module/manifest.json', import.meta.url));
 const manifestPath = existsSync(bundleManifest) ? bundleManifest : devManifest;
 
-startDaemon(configDir, { appCoreModule: { manifestPath } }).catch((err: unknown) => {
+startDaemon(configDir, { appCoreModule: { manifestPath }, version }).catch((err: unknown) => {
   const message = `Failed to start: ${getErrorMessage(err)}`;
   // The daemon is spawned with stdio:'ignore', so stderr alone would lose the startup failure
   try {

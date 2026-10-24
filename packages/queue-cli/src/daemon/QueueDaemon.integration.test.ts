@@ -53,6 +53,8 @@ async function waitForFile(path: string, timeoutMs: number): Promise<string> {
   throw new Error(`${path} did not appear within ${timeoutMs} ms`);
 }
 
+const RELEASE = '2026.10.24-test-1';
+
 describe('queue daemon over HTTP', () => {
   let configDir: string;
   let projectDir: string;
@@ -62,7 +64,7 @@ describe('queue daemon over HTTP', () => {
   beforeAll(async () => {
     configDir = mkdtempSync(join(tmpdir(), 'queue-daemon-it-config-'));
     projectDir = mkdtempSync(join(tmpdir(), 'queue-daemon-it-project-'));
-    await startDaemon(configDir, { port: 0 });
+    await startDaemon(configDir, { port: 0, version: RELEASE });
     port = (JSON.parse(await waitForFile(join(configDir, 'config.port'), 5000)) as { port: number }).port;
     token = (await waitForFile(join(configDir, 'health_token'), 5000)).trim();
   });
@@ -79,6 +81,11 @@ describe('queue daemon over HTTP', () => {
     const answer = await call(port, 'GET', '/version');
     expect(answer.status).toBe(200);
     expect(answer.body).toMatchObject({ pid: process.pid, queueProtocol: getQueueProtocolInfo() });
+  });
+
+  it('reports the queue release it was started from, not the daemon library default', async () => {
+    const answer = await call(port, 'GET', '/version');
+    expect(answer.body).toMatchObject({ version: RELEASE });
   });
 
   it('refuses a push without the token', async () => {

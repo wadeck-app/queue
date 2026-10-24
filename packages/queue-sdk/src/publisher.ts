@@ -4,7 +4,7 @@ import { createDaemonResolver, isPidAlive, type DaemonInfo, type Resolution } fr
 import { loopbackRequest, type HttpOutcome, type LoopbackRequest } from './http.js';
 import { resolveConfigDir } from './configDir.js';
 import { PROTOCOL_VERSION } from './protocol.js';
-import { createReporter, describeHttpError, type FailureKind, type QueueFailure } from './report.js';
+import { createReporter, describeHttpError, type FailureKind, type QueueFailure, type Reporter } from './report.js';
 import { defaultStartDeps, startDaemon, type RunOutcome, type StartDeps, type StartResult } from './start.js';
 import { parsePushAnswer, serializePushRequest, toPublishResult, type PublishResult, type PushRequest, type PushResponse } from './wire.js';
 
@@ -19,7 +19,10 @@ export interface QueuePublisherOptions {
   maxPending?: number;
   /** True: nothing is printed by default (`onError` is still called). */
   silent?: boolean;
-  /** True: nothing is sent, started or reported; every call answers `dropped` saying so. For the tests of an integration or a CI without a queue. */
+  /**
+   * True: nothing is sent, started or reported; every call answers `dropped` saying so. FOR AUTOMATED TESTS ONLY: it must not appear
+   * outside test files. To try a program in development without a queue, set the environment variable QUEUE_SDK_OFF=1 instead.
+   */
   off?: boolean;
   /** Receives every failure. */
   onError?: (failure: QueueFailure) => void;
@@ -79,6 +82,27 @@ function isPositiveNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
+
+const OFF_VARIABLE = 'QUEUE_SDK_OFF';
+
+/** QUEUE_SDK_OFF=1 switches the SDK off for a development run. Unset, empty or 0: active. Any other value is a mistake: reported, and the SDK stays ACTIVE so a typo cannot lose events. */
+function readOffVariable(env: NodeJS.ProcessEnv, reporter: Reporter): boolean {
+  const value = env[OFF_VARIABLE];
+  if (value === undefined || value === '' || value === '0') {
+    return false;
+  }
+  if (value === '1') {
+    reporter.notice(`the environment variable ${OFF_VARIABLE}=1 is set: no event is sent. It is a switch for development and tests; unset it wherever events must reach the queue.`);
+    return true;
+  }
+  reporter.failure({
+    kind: 'invalid-argument',
+    event: '(createQueuePublisher)',
+    outcome: 'dropped',
+    message: `the environment variable ${OFF_VARIABLE} must be "1" (switch the SDK off) or "0" or unset, got ${JSON.stringify(value)}: ignored, events are sent`,
+  });
+  return false;
+}
 
 type Ensured = { ok: true; daemon: DaemonInfo; token: string } | { ok: false; kind: FailureKind; message: string };
 
@@ -277,8 +301,9 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
 
   const pending = new Set<Promise<PublishResult>>();
 
-  const isOff = options.off === true;
-  const OFF_REASON = 'the publisher is switched off (option off: true)';
+  const envOff = readOffVariable(deps.env ?? process.env, reporter);
+  const isOff = options.off === true || envOff;
+  const OFF_REASON = options.off === true ? 'the publisher is switched off (option off: true)' : 'the publisher is switched off by the environment variable QUEUE_SDK_OFF=1';
 
   function launch(event: string, payload: unknown, call: PublishOptions): Promise<PublishResult> {
     if (isOff) {

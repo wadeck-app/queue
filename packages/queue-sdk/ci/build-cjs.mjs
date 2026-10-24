@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-for (const entry of ['index', 'protocol']) {
+for (const entry of ['index', 'protocol', 'testing']) {
   await build({
     entryPoints: [join(packageDir, 'src', `${entry}.ts`)],
     outfile: join(packageDir, 'dist', 'cjs', `${entry}.cjs`),

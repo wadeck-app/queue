@@ -44,6 +44,8 @@ export interface Reporter {
   success(): void;
   /** Daemon notices of a push answer, each delivered once. */
   warnings(warnings: string[]): void;
+  /** A notice about the SDK's own configuration, delivered once: to `onWarning`, else printed (unless silent). */
+  notice(text: string): void;
 }
 
 
@@ -73,6 +75,21 @@ export function createReporter(options: ReporterOptions): Reporter {
     },
     success(): void {
       printed = new Set<string>();
+    },
+    notice(text: string): void {
+      if (seenWarnings.has(text)) {
+        return;
+      }
+      seenWarnings.add(text);
+      if (options.onWarning !== undefined) {
+        try {
+          options.onWarning(text);
+        } catch (error) {
+          print(`[queue-sdk] the onWarning callback threw: ${getErrorMessage(error)}`);
+        }
+      } else {
+        print(`[queue-sdk] ${text}`);
+      }
     },
     warnings(warnings: string[]): void {
       for (const warning of warnings) {

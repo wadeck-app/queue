@@ -106,6 +106,34 @@ describe('createReporter', () => {
   });
 });
 
+describe('createReporter notice (about the SDK own configuration)', () => {
+  it('goes once to onWarning', () => {
+    const onWarning = vi.fn();
+    const reporter = createReporter({ onWarning, sink: () => undefined });
+    reporter.notice('X is set');
+    reporter.notice('X is set');
+    expect(onWarning).toHaveBeenCalledTimes(1);
+    expect(onWarning).toHaveBeenCalledWith('X is set');
+  });
+
+  it('is printed with the SDK prefix when there is no onWarning, unless silent', () => {
+    const sink = vi.fn();
+    createReporter({ sink }).notice('X is set');
+    expect(sink).toHaveBeenCalledWith('[queue-sdk] X is set');
+
+    const quiet = vi.fn();
+    createReporter({ silent: true, sink: quiet }).notice('X is set');
+    expect(quiet).not.toHaveBeenCalled();
+  });
+
+  it('survives an onWarning that throws', () => {
+    const sink = vi.fn();
+    const reporter = createReporter({ onWarning: () => { throw new Error('boom'); }, sink });
+    expect(() => reporter.notice('X is set')).not.toThrow();
+    expect(sink).toHaveBeenCalledWith(expect.stringContaining('the onWarning callback threw: boom'));
+  });
+});
+
 describe('excerpt', () => {
   it('truncates long text', () => {
     const out = excerpt('x'.repeat(1000), []);

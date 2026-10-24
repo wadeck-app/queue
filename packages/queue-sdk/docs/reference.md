@@ -9,7 +9,7 @@
 | `timeoutMs` | `5000` | HTTP timeout of one push |
 | `maxPending` | `100` | Pushes in flight at once; the overflow is dropped and reported |
 | `silent` | `false` | `true` prints nothing by default (`onError` is still called) |
-| `off` | `false` | `true` sends, starts and reports nothing; every call answers `dropped` with a reason saying so, and `status()` says the publisher is switched off. For the tests of your integration or a CI without a queue. Only an explicit `true` switches it off |
+| `off` | `false` | **Automated tests only.** `true` sends, starts and reports nothing; every call answers `dropped` with a reason saying so. Never set it in code that runs for real: `off` must not appear outside test files. To try a program in development without a queue, use the variable `QUEUE_SDK_OFF` below |
 | `onError` | | Receives every failure as `{ kind, message, event, outcome }` |
 | `onWarning` | | Receives the daemon's notices (for example a deprecated protocol), each once |
 
@@ -36,6 +36,29 @@ Per-call `options`: `cwd` (overrides the publisher's) and `timeoutMs`.
 | `unknown` | The connection broke or timed out after the request was sent: the event may be recorded. Never retried, to avoid duplicates |
 
 Events whose name starts with `before` are synchronous: the call lasts until the subscribers answer. The daemon allows 30 s by default; with `timeoutMs` set, that value is sent to the daemon as the request timeout and the SDK waits 5 s more. Without it the SDK waits 35 s.
+
+## Testing your integration
+
+Three ways, none touches the real daemon:
+
+- **Automated tests, the real SDK path:** `@wadeck-app/queue-sdk/testing` starts a throwaway daemon on a free port in a temporary config dir (version check, token, push, answers).
+- **Automated tests, no SDK at all:** `createQueuePublisher({ off: true })` sends nothing. Test files only (a lint rule enforces it).
+- **Trying the program in development:** run it with the environment variable `QUEUE_SDK_OFF=1`. Nothing is sent or started, calls answer `dropped` saying why, and a warning is announced once when the publisher is created (to `onWarning`, else printed unless `silent`), so a variable forgotten in production is not silent. Unset, empty or `0` keep the SDK active; any other value is reported as a mistake through `onError` and the SDK stays active, so a typo cannot lose events.
+
+```ts
+import { createQueuePublisher } from '@wadeck-app/queue-sdk';
+import { startFakeQueueDaemon } from '@wadeck-app/queue-sdk/testing';
+
+const daemon = await startFakeQueueDaemon();
+const queue = createQueuePublisher({ configDir: daemon.configDir, silent: true });
+await queue.publishAndWait('myapp.thing', { n: 1 });
+daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: '...', protocol: '1.0.0' }]
+daemon.respondNext({ status: 'aborted', reason: 'refused' });   // the next push gets this result
+daemon.resetNext();         // the next push breaks the connection: the SDK answers `unknown`
+await daemon.close();       // also removes the temporary config dir
+```
+
+It speaks the protocol of this SDK release and records pushes in order; it has no subscribers and runs nothing.
 
 ## Other exports
 

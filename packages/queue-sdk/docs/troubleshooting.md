@@ -19,6 +19,10 @@ Every failure reaches `onError` as `{ kind, message, event, outcome }` and, unle
 | `invalid-argument` | Empty event name, or a bad `timeoutMs` | Fix the call |
 | `overflow` | More than `maxPending` pushes in flight | `await queue.flush()` between bursts, or raise `maxPending` |
 
+## Nothing is sent and every result is `dropped` "switched off"
+
+The publisher was created with `off: true`, or the environment variable `QUEUE_SDK_OFF=1` is set (the SDK announced it once when it was created). Unset the variable, or remove the option, wherever events must reach the queue.
+
 ## Events reach the queue but nothing runs
 
 The push succeeded (`queued`) with `subscriberCount` 0: no subscriber matches the event name for this `cwd`. Names match by pattern (`*` one segment, `**` or `>` the rest). Check `queue sub list <event>` run from the same directory, and `queue history` for the "no subscribers configured" line.

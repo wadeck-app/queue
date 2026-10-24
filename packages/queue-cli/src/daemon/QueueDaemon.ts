@@ -13,7 +13,7 @@ export interface AppCoreModuleOptions { manifestPath: string; }
  * Hosts the queue as the singleton background daemon: owns the port, the idle shutdown and the
  * app-core registration; the queue logic itself is queue-core's createQueueService.
  */
-export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions; port?: number }): Promise<void> {
+export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions; port?: number; version?: string }): Promise<void> {
   let idleCountdown: ReturnType<typeof setTimeout> | null = null;
   let daemonHandle: Awaited<ReturnType<typeof createDaemon>> | null = null;
 
@@ -47,6 +47,8 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
     // only tests pass a port (0 = any free one): the real daemon always uses the fixed one
     port: options?.port ?? DAEMON_PORT,
     idleTimeout: null,
+    // GET /version reports the queue release, not the daemon library's own default
+    ...(options?.version !== undefined && { appVersion: options.version }),
     // GET /version tells the SDK clients which push protocol this daemon speaks and which client versions it accepts
     versionExtra: () => ({ queueProtocol: getQueueProtocolInfo() }),
     commands: service.commands,

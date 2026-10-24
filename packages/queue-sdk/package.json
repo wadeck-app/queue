@@ -16,6 +16,11 @@
       "types": "./dist/esm/protocol.d.ts",
       "import": "./dist/esm/protocol.js",
       "require": "./dist/cjs/protocol.cjs"
+    },
+    "./testing": {
+      "types": "./dist/esm/testing.d.ts",
+      "import": "./dist/esm/testing.js",
+      "require": "./dist/cjs/testing.cjs"
     }
   },
   "files": [

@@ -44,5 +44,6 @@ Nothing throws. Every failure goes to your `onError` callback and, unless `silen
 
 - [Reference](docs/reference.md): options, methods, results, how the daemon is reached, versioning.
 - [Troubleshooting](docs/troubleshooting.md): every failure kind, its cause and the fix.
+- Tests and development without a queue: `@wadeck-app/queue-sdk/testing` (throwaway daemon), `off: true` (test files only), `QUEUE_SDK_OFF=1` (development runs); see the reference.
 - [Push protocol](https://github.com/wadeck-app/queue/blob/main/docs/push-protocol.md): the wire contract, for clients in other languages.
 - Contributors: [guiding-principles.md](guiding-principles.md) and [out-of-scope.md](out-of-scope.md).
