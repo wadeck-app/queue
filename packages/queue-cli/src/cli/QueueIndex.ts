@@ -26,6 +26,7 @@ import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
+import { parseSubFlags, buildSubscriberEntry } from './subscriberEntry.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
 
@@ -99,6 +100,7 @@ Options:
   --when <expr>            Filter: payload.field=value or JSONPath $.field
   --header "key:value"     HTTP only; repeatable for multiple headers
   --method <verb>          HTTP only (default: POST)
+  --name <name>            Who this subscriber is, e.g. notify (lowercase letters, digits, . _ -); it stays the same when the list is reordered. Kept by edit
   --index <N>              0-based subscriber index (required for remove/edit)
 
 Aliases: queue subscribers
@@ -739,97 +741,6 @@ function writeSubsYmlOrExit(filePath: string, data: { subscribers: Record<string
   }
 }
 
-function parseSubFlags(args: string[]): { config: Partial<SubscriberConfig>; errors: string[] } {
-  const errors: string[] = [];
-  const config: Partial<SubscriberConfig> = {};
-
-  const getArg = (flag: string): string | undefined => {
-    const idx = args.indexOf(flag);
-    if (idx === -1) {
-      return undefined;
-    }
-    const next = args[idx + 1];
-    if (!next || next.startsWith('--')) {
-      return undefined;
-    }
-    return next;
-  };
-
-  const typeVal = getArg('--type');
-  if (typeVal === 'cli' || typeVal === 'http') {
-    config.type = typeVal;
-  }
-  else if (typeVal) {
-    errors.push(`--type must be cli or http, got: ${typeVal}`);
-  }
-
-  const commandVal = getArg('--command');
-  if (commandVal) {
-    config.command = commandVal;
-  }
-
-  const urlVal = getArg('--url');
-  if (urlVal) {
-    config.url = urlVal;
-  }
-
-  const methodVal = getArg('--method');
-  if (methodVal) {
-    config.method = methodVal;
-  }
-
-  const headers: Record<string, string> = {};
-  for (let i = 0; i < args.length - 1; i++) {
-    if (args[i] === '--header') {
-      const val = args[i + 1];
-      if (val && !val.startsWith('--')) {
-        const colonIdx = val.indexOf(':');
-        if (colonIdx === -1) {
-          errors.push(`Invalid --header format: "${val}" (expected "key:value")`);
-        } else {
-          headers[val.slice(0, colonIdx).trim()] = val.slice(colonIdx + 1).trim();
-        }
-      }
-    }
-  }
-  if (Object.keys(headers).length > 0) {
-    config.headers = headers;
-  }
-
-  const timeoutVal = getArg('--timeout');
-  if (timeoutVal) {
-    if (!/^\d+(ms|s|m|h)$/.test(timeoutVal)) {
-      errors.push(`Invalid timeout: ${timeoutVal} (use e.g. 30s, 5m, 1h)`);
-    } else {
-      config.timeout = timeoutVal;
-    }
-  }
-
-  const retriesVal = getArg('--retries');
-  if (retriesVal !== undefined) {
-    const n = parseInt(retriesVal, 10);
-    if (isNaN(n) || n < 0) {
-      errors.push(`--retries must be a non-negative integer, got: ${retriesVal}`);
-    }
-    else config.retries = n;
-  }
-
-  const backoffVal = getArg('--backoff');
-  if (backoffVal === 'exponential' || backoffVal === 'linear') {
-    config.backoff = backoffVal;
-  }
-  else if (backoffVal) {
-    errors.push(`--backoff must be exponential or linear, got: ${backoffVal}`);
-  }
-
-  const whenVal = getArg('--when');
-  if (whenVal) {
-    config.when = whenVal;
-  }
-
-  return { config, errors };
-}
-
 function isConfigDirWritable(dir: string): boolean {
   try {
     mkdirSync(dir, { recursive: true });
@@ -1315,7 +1226,7 @@ async function main(): Promise<void> {
         }
         for (let i = 0; i < subs.length; i++) {
           const s = subs[i]!;
-          entries.push({ subscriberId: `${evtPattern}[${i}]`, event: evtPattern, type: s.type, command: s.command, url: s.url });
+          entries.push({ subscriberId: s.name ?? `${evtPattern}[${i}]`, event: evtPattern, type: s.type, command: s.command, url: s.url });
         }
       }
       if (process.stdout.isTTY && !jsonFlag) {
@@ -1369,31 +1280,7 @@ async function main(): Promise<void> {
       }
       const data = readSubsYmlOrExit(filePath);
       const existing = data.subscribers[event] ?? [];
-      const newEntry: SubscriberConfig = { type: config.type };
-      if (config.command) {
-        newEntry.command = config.command;
-      }
-      if (config.url) {
-        newEntry.url = config.url;
-      }
-      if (config.method) {
-        newEntry.method = config.method;
-      }
-      if (config.headers && Object.keys(config.headers).length > 0) {
-        newEntry.headers = config.headers;
-      }
-      if (config.timeout) {
-        newEntry.timeout = config.timeout;
-      }
-      if (config.retries !== undefined) {
-        newEntry.retries = config.retries;
-      }
-      if (config.backoff) {
-        newEntry.backoff = config.backoff;
-      }
-      if (config.when) {
-        newEntry.when = config.when;
-      }
+      const newEntry = buildSubscriberEntry(config);
       data.subscribers[event] = [...existing, newEntry];
       writeSubsYmlOrExit(filePath, data);
       process.stdout.write(`[ok] Added subscriber to '${event}' (index ${existing.length}) in ${filePath}\n`);
@@ -1472,31 +1359,7 @@ async function main(): Promise<void> {
         process.stderr.write(`[fail] --url is required for type: http\n`);
         process.exit(1);
       }
-      const newEntry: SubscriberConfig = { type: config.type };
-      if (config.command) {
-        newEntry.command = config.command;
-      }
-      if (config.url) {
-        newEntry.url = config.url;
-      }
-      if (config.method) {
-        newEntry.method = config.method;
-      }
-      if (config.headers && Object.keys(config.headers).length > 0) {
-        newEntry.headers = config.headers;
-      }
-      if (config.timeout) {
-        newEntry.timeout = config.timeout;
-      }
-      if (config.retries !== undefined) {
-        newEntry.retries = config.retries;
-      }
-      if (config.backoff) {
-        newEntry.backoff = config.backoff;
-      }
-      if (config.when) {
-        newEntry.when = config.when;
-      }
+      const newEntry = buildSubscriberEntry(config, subs[index]);
       data.subscribers[event] = subs.map((s, i) => (i === index ? newEntry : s));
       writeSubsYmlOrExit(filePath, data);
       process.stdout.write(`[ok] Updated subscriber at index ${index} for '${event}' in ${filePath}\n`);

@@ -150,8 +150,12 @@ function assertDispatchable(event: string, index: number, raw: SubscriberConfig,
 export const SUBSCRIBER_NAME_FORMAT = '[a-z0-9][a-z0-9._-]*';
 const SUBSCRIBER_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
+export function isValidSubscriberName(name: string): boolean {
+  return SUBSCRIBER_NAME_PATTERN.test(name);
+}
+
 function assertValidName(event: string, index: number, name: string, filePath: string): void {
-  if (!SUBSCRIBER_NAME_PATTERN.test(name)) {
+  if (!isValidSubscriberName(name)) {
     throw new Error(
       `[queue] Invalid name ${JSON.stringify(name)} for subscriber '${event}' index ${index} in ${filePath}: a name must match ${SUBSCRIBER_NAME_FORMAT} and be at most 64 characters.\n` +
       `Fix: use lowercase letters, digits, '.', '_' or '-', starting with a letter or a digit, e.g. 'name: notify'.`

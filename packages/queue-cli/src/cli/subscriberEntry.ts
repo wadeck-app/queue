@@ -1,0 +1,148 @@
+import { SUBSCRIBER_NAME_FORMAT, isValidSubscriberName } from '@wadeck-app/queue-core';
+import type { SubscriberConfig } from '@wadeck-app/queue-core';
+
+export function parseSubFlags(args: string[]): { config: Partial<SubscriberConfig>; errors: string[] } {
+  const errors: string[] = [];
+  const config: Partial<SubscriberConfig> = {};
+
+  const getArg = (flag: string): string | undefined => {
+    const idx = args.indexOf(flag);
+    if (idx === -1) {
+      return undefined;
+    }
+    const next = args[idx + 1];
+    if (!next || next.startsWith('--')) {
+      return undefined;
+    }
+    return next;
+  };
+
+  const nameIdx = args.indexOf('--name');
+  if (nameIdx !== -1) {
+    const nameVal = args[nameIdx + 1];
+    if (!nameVal || nameVal.startsWith('--')) {
+      errors.push('--name needs a value, e.g. --name notify');
+    } else if (!isValidSubscriberName(nameVal)) {
+      errors.push(`--name ${JSON.stringify(nameVal)} is not valid: use ${SUBSCRIBER_NAME_FORMAT} (lowercase letters, digits, '.', '_', '-'; at most 64 characters)`);
+    } else {
+      config.name = nameVal;
+    }
+  }
+
+  const typeVal = getArg('--type');
+  if (typeVal === 'cli' || typeVal === 'http') {
+    config.type = typeVal;
+  }
+  else if (typeVal) {
+    errors.push(`--type must be cli or http, got: ${typeVal}`);
+  }
+
+  const commandVal = getArg('--command');
+  if (commandVal) {
+    config.command = commandVal;
+  }
+
+  const urlVal = getArg('--url');
+  if (urlVal) {
+    config.url = urlVal;
+  }
+
+  const methodVal = getArg('--method');
+  if (methodVal) {
+    config.method = methodVal;
+  }
+
+  const headers: Record<string, string> = {};
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '--header') {
+      const val = args[i + 1];
+      if (val && !val.startsWith('--')) {
+        const colonIdx = val.indexOf(':');
+        if (colonIdx === -1) {
+          errors.push(`Invalid --header format: "${val}" (expected "key:value")`);
+        } else {
+          headers[val.slice(0, colonIdx).trim()] = val.slice(colonIdx + 1).trim();
+        }
+      }
+    }
+  }
+  if (Object.keys(headers).length > 0) {
+    config.headers = headers;
+  }
+
+  const timeoutVal = getArg('--timeout');
+  if (timeoutVal) {
+    if (!/^\d+(ms|s|m|h)$/.test(timeoutVal)) {
+      errors.push(`Invalid timeout: ${timeoutVal} (use e.g. 30s, 5m, 1h)`);
+    } else {
+      config.timeout = timeoutVal;
+    }
+  }
+
+  const retriesVal = getArg('--retries');
+  if (retriesVal !== undefined) {
+    const n = parseInt(retriesVal, 10);
+    if (isNaN(n) || n < 0) {
+      errors.push(`--retries must be a non-negative integer, got: ${retriesVal}`);
+    }
+    else config.retries = n;
+  }
+
+  const backoffVal = getArg('--backoff');
+  if (backoffVal === 'exponential' || backoffVal === 'linear') {
+    config.backoff = backoffVal;
+  }
+  else if (backoffVal) {
+    errors.push(`--backoff must be exponential or linear, got: ${backoffVal}`);
+  }
+
+  const whenVal = getArg('--when');
+  if (whenVal) {
+    config.when = whenVal;
+  }
+
+  return { config, errors };
+}
+
+/**
+ * The entry written to subscribers.yml for a set of flags. On edit, `previous` is the entry it replaces: what the flags
+ * cannot express (name unless --name is given, cwd, env) is kept instead of being dropped silently.
+ */
+export function buildSubscriberEntry(config: Partial<SubscriberConfig>, previous?: SubscriberConfig): SubscriberConfig {
+  const entry: SubscriberConfig = { type: config.type ?? 'cli' };
+  const name = config.name ?? previous?.name;
+  if (name) {
+    entry.name = name;
+  }
+  if (config.command) {
+    entry.command = config.command;
+  }
+  if (config.url) {
+    entry.url = config.url;
+  }
+  if (config.method) {
+    entry.method = config.method;
+  }
+  if (config.headers && Object.keys(config.headers).length > 0) {
+    entry.headers = config.headers;
+  }
+  if (config.timeout) {
+    entry.timeout = config.timeout;
+  }
+  if (config.retries !== undefined) {
+    entry.retries = config.retries;
+  }
+  if (config.backoff) {
+    entry.backoff = config.backoff;
+  }
+  if (config.when) {
+    entry.when = config.when;
+  }
+  if (previous?.cwd) {
+    entry.cwd = previous.cwd;
+  }
+  if (previous?.env) {
+    entry.env = previous.env;
+  }
+  return entry;
+}
