@@ -8,7 +8,8 @@
       "view": {
         "type": "path",
         "value": "./src/dsl-views/status-widget.yaml"
-      }
+      },
+      "width": 3
     },
     {
       "kind": "widget",
@@ -17,7 +18,8 @@
       "view": {
         "type": "path",
         "value": "./src/dsl-views/activity-widget.yaml"
-      }
+      },
+      "width": 3
     },
     {
       "kind": "widget",
@@ -26,7 +28,8 @@
       "view": {
         "type": "path",
         "value": "./src/dsl-views/outcomes-widget.yaml"
-      }
+      },
+      "width": 3
     },
     {
       "kind": "widget",
@@ -35,7 +38,8 @@
       "view": {
         "type": "path",
         "value": "./src/dsl-views/top-events-widget.yaml"
-      }
+      },
+      "width": 3
     },
     {
       "kind": "widget",
