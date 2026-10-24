@@ -16,12 +16,15 @@ items:
       - $type: StatTile
         label: 5 min
         value: $sources.activity.last5Min
+        href: "/modules/queue/?range=1h"
       - $type: StatTile
         label: 1 h
         value: $sources.activity.last60Min
+        href: "/modules/queue/?range=1h"
       - $type: StatTile
         label: 24 h
         value: $sources.activity.last24Hours
+        href: "/modules/queue/?range=24h"
   - $type: Badge
     label: Per 5 min, last hour
     tone: subtle

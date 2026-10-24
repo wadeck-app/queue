@@ -92,14 +92,31 @@ describe('pending-page.yaml', () => {
   const actionColumn = (table['columns'] as Node[]).find((column) => column['type'] === 'actions') as Node;
 
   it('retries an event in one click from its row, with the id of the row in the URL (no select to fill)', () => {
-    expect((actionColumn['items'] as Node[]).map((item) => item['action'])).toEqual(['retryPending']);
     expect(actions['retryPending']?.['url']).toBe('POST /api/modules/queue/retry/{id}');
-    expect((doc['sections'] as Node[]).some((section) => section['$type'] === 'Form')).toBe(false);
   });
 
   it('says what happened, on success and on failure', () => {
-    expect(actions['retryPending']?.['successMessage']).toBeTruthy();
-    expect(actions['retryPending']?.['errorPrefix']).toBeTruthy();
+    for (const action of Object.values(actions)) {
+      expect(action['successMessage']).toBeTruthy();
+      expect(action['errorPrefix']).toBeTruthy();
+    }
+  });
+
+  it('offers to give up all the stuck events at once, only when there are some, after a confirmation that says what happens to them', () => {
+    expect(actions['giveUpStuck']?.['url']).toBe('POST /api/modules/queue/pending/give-up-stuck');
+    expect(String(actions['giveUpStuck']?.['confirm'])).toMatch(/dead-letter queue/i);
+    const sections = doc['sections'] as Node[];
+    const warning = sections.find((section) => section['$if'] === '$sources.pending.stuckCount' && section['$type'] === 'Badge');
+    expect(warning?.['label']).toBe('$sources.pending.stuckText');
+    const form = sections.find((section) => section['$type'] === 'Form') as Node;
+    expect(form['$if']).toBe('$sources.pending.stuckCount');
+    expect(form['onSubmit']).toBe('$ctx.giveUpStuck');
+  });
+
+  it('gives up an event that nobody retries any more from its row: it moves to the DLQ, after a confirmation that says so', () => {
+    expect((actionColumn['items'] as Node[]).map((item) => item['action'])).toEqual(['retryPending', 'giveUpPending']);
+    expect(actions['giveUpPending']?.['url']).toBe('POST /api/modules/queue/pending/{id}/give-up');
+    expect(String(actions['giveUpPending']?.['confirm'])).toMatch(/dead-letter queue/i);
   });
 });
 

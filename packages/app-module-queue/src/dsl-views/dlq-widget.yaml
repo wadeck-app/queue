@@ -1,7 +1,0 @@
-$sources:
-  status:
-    url: GET /api/modules/queue/status
-
-$type: StatTile
-label: Failed events (DLQ)
-value: $sources.status.dlqCount

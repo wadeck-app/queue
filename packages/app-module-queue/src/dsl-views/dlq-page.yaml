@@ -32,7 +32,7 @@ sections:
     emptyMessage: No failed event
     columns:
       - { key: "movedAt", label: "Failed at", format: "datetime" }
-      - { key: "event", label: "Event" }
+      - { key: "event", label: "Event", href: "/modules/queue/history?event={event}" }
       - { key: "subscriberId", label: "Subscriber" }
       - { key: "attempts", label: "Attempts" }
       - { key: "lastError", label: "Last error" }

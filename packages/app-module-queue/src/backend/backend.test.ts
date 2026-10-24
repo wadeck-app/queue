@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, PendingNotFoundError, NotInFlightError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
@@ -18,6 +18,8 @@ const {
   mockListDlq,
   mockReplayDlqEntry,
   mockClearDlqEntry,
+  mockGiveUpPending,
+  mockGiveUpStuck,
   mockListSubscribers,
   mockPushEvent,
   mockGetLogs,
@@ -42,6 +44,8 @@ const {
   mockListDlq: vi.fn(),
   mockReplayDlqEntry: vi.fn(),
   mockClearDlqEntry: vi.fn(),
+  mockGiveUpPending: vi.fn(),
+  mockGiveUpStuck: vi.fn(),
   mockListSubscribers: vi.fn(),
   mockPushEvent: vi.fn(),
   mockGetLogs: vi.fn(),
@@ -59,7 +63,7 @@ vi.mock('./activity.js', () => ({ getActivity: mockGetActivity, getActivitySerie
 vi.mock('./outcomes.js', () => ({ getOutcomes: mockGetOutcomes }));
 vi.mock('./breakdown.js', () => ({ getBreakdown: mockGetBreakdown }));
 vi.mock('./overviewRange.js', () => ({ getOverviewRange: mockGetOverviewRange }));
-vi.mock('./pending.js', () => ({ listPending: mockListPending }));
+vi.mock('./pending.js', () => ({ listPending: mockListPending, giveUpPending: mockGiveUpPending, giveUpStuck: mockGiveUpStuck }));
 vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: mockGetHistoryEntry }));
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlqEntry, clearDlqEntry: mockClearDlqEntry }));
@@ -130,6 +134,8 @@ describe('backend', () => {
       'GET /events',
       'POST /events/:name/push-test',
       'POST /retry/:eventId',
+      'POST /pending/give-up-stuck',
+      'POST /pending/:id/give-up',
       'GET /daemon',
       'GET /relay',
       'GET /relay/webhooks',
@@ -588,6 +594,49 @@ describe('backend', () => {
     await routes.get('GET /overview')!(fakeReq(), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
     expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: history' });
+  });
+
+  it('POST /pending/give-up-stuck moves every stuck event to the DLQ and answers how many, 500 with the reason when it cannot', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGiveUpStuck.mockReturnValueOnce({ moved: 56 });
+    const ok = fakeReply();
+    await routes.get('POST /pending/give-up-stuck')!(fakeReq(), asReply(ok));
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith({ moved: 56 });
+
+    mockGiveUpStuck.mockImplementationOnce(() => { throw new Error('Lock held by another process'); });
+    const broken = fakeReply();
+    await routes.get('POST /pending/give-up-stuck')!(fakeReq(), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'Lock held by another process' });
+  });
+
+  it('POST /pending/:id/give-up moves the entry to the DLQ: 200, 404 for an unknown id, 409 for an entry no longer in flight, 500 otherwise', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGiveUpPending.mockReturnValueOnce({ status: 'moved' });
+    const ok = fakeReply();
+    await routes.get('POST /pending/:id/give-up')!(fakeReq({ params: { id: 'f1' } }), asReply(ok));
+    expect(mockGiveUpPending).toHaveBeenCalledWith(expect.any(String), 'f1');
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith({ status: 'moved' });
+
+    mockGiveUpPending.mockImplementationOnce(() => { throw new PendingNotFoundError('No pending event with id x'); });
+    const missing = fakeReply();
+    await routes.get('POST /pending/:id/give-up')!(fakeReq({ params: { id: 'x' } }), asReply(missing));
+    expect(missing.code).toHaveBeenCalledWith(404);
+    expect(missing.send).toHaveBeenCalledWith({ error: 'No pending event with id x' });
+
+    mockGiveUpPending.mockImplementationOnce(() => { throw new NotInFlightError('already delivered'); });
+    const done = fakeReply();
+    await routes.get('POST /pending/:id/give-up')!(fakeReq({ params: { id: 'a1' } }), asReply(done));
+    expect(done.code).toHaveBeenCalledWith(409);
+
+    mockGiveUpPending.mockImplementationOnce(() => { throw new Error('Lock held by another process'); });
+    const broken = fakeReply();
+    await routes.get('POST /pending/:id/give-up')!(fakeReq({ params: { id: 'f1' } }), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
   });
 
   it('GET /breakdown answers the top events and subscribers, and 500 with the reason when the history cannot be read', async () => {

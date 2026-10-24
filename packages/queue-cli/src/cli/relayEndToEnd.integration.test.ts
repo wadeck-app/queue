@@ -227,10 +227,14 @@ plugins:
           queueDaemonPid = queueStatus.pid ?? null;
         }
 
-        // Step 4: Wait for the relay to have handled BOTH events: the non-matching one is logged, and it was sent after the matching one
+        // Step 4: Wait for the relay to report BOTH deliveries as fully processed (it logs one "processed" line per delivery, after the push
+        // settled). Once both lines are there, a duplicate of the first event could not still be in flight: nothing is left to wait for.
         const relayLogPath = join(tempConfigDir, 'relay-daemon', 'relay.log');
-        await waitFor(() => existsSync(relayLogPath) && readFileSync(relayLogPath, 'utf-8').includes('d-other'),
-          `the relay log to mention the non-matching delivery d-other (${relayLogPath})`);
+        const processedLine = (deliveryId: string, outcome: string): string => `Delivery ${deliveryId} processed (${outcome})`;
+        await waitFor(() => existsSync(relayLogPath) && readFileSync(relayLogPath, 'utf-8').includes(processedLine('d-match', 'pushed')),
+          `the relay log to say "${processedLine('d-match', 'pushed')}" (${relayLogPath})`);
+        await waitFor(() => existsSync(relayLogPath) && readFileSync(relayLogPath, 'utf-8').includes(processedLine('d-other', 'no-subscription')),
+          `the relay log to say "${processedLine('d-other', 'no-subscription')}" (${relayLogPath})`);
 
         // The matching event must reach the history: wait for it
         const matchingEntry = await waitFor(() => readHistory().entries.find((e) => e.event === 'on.github.push'),

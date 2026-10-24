@@ -25,6 +25,31 @@ function allTypes(node: unknown): string[] {
   return [];
 }
 
+describe('events-page.yaml: what the table shows and what the expanded row shows', () => {
+  const keys = columns.map((column) => column['key']);
+
+  it('shows the description as an excerpt that cannot wrap, and the last seen time in the readable form of the backend', () => {
+    const description = columns.find((column) => column['key'] === 'descriptionExcerpt');
+    expect(description).toMatchObject({ label: 'Description', truncate: true });
+    expect(keys).toContain('lastSeenText');
+    expect(keys).not.toContain('description');
+    expect(keys).not.toContain('lastSeenAt');
+  });
+
+  it('expands to the description rendered as Markdown, then the JSON of the rest', () => {
+    const expansion = table['expansion'] as Node;
+    expect(expansion['$type']).toBe('VerticalStack');
+    const [markdown, json] = expansion['items'] as Node[];
+    expect(markdown).toMatchObject({ $type: 'Markdown', text: '$ctx.row.description' });
+    expect(json).toMatchObject({ $type: 'JsonViewer', row: '$ctx.row', field: 'detailsText' });
+  });
+
+  it('keeps the push button to one line', () => {
+    const actions = (columns.find((column) => column['type'] === 'actions') as { items: Array<{ label: string }> }).items;
+    expect(actions[0]?.label.length).toBeLessThanOrEqual(10);
+  });
+});
+
 describe('events-page.yaml', () => {
   it('is the "Queue Events" page of the nav slot at /events', () => {
     expect(manifest.extensionPoints.find((point) => point['label'] === 'Queue Events')).toEqual({
@@ -68,10 +93,9 @@ describe('events-page.yaml', () => {
     expect(badge['variant']).toBe('warning');
   });
 
-  it('has the columns name, source, description, 24 h, last seen, status, then the row actions', () => {
-    expect(columns.map((column) => column['key'] ?? column['type'])).toEqual(['name', 'source', 'description', 'count24h', 'lastSeenAt', 'status', 'actions']);
+  it('has the columns name, source, description excerpt, 24 h, last seen, status, then the row actions', () => {
+    expect(columns.map((column) => column['key'] ?? column['type'])).toEqual(['name', 'source', 'descriptionExcerpt', 'count24h', 'lastSeenText', 'status', 'actions']);
     expect(columns[0]?.['mono']).toBe(true);
-    expect(columns.find((column) => column['key'] === 'lastSeenAt')?.['format']).toBe('datetime');
   });
 
   it('shows the status as a badge for both statuses the route answers', () => {
@@ -80,7 +104,7 @@ describe('events-page.yaml', () => {
   });
 
   it('puts the details in an expanded row, like the payload of the History page', () => {
-    const expansion = table['expansion'] as Node;
+    const expansion = (table['expansion'] as { items: Node[] }).items[1] as Node;
     expect(expansion['$type']).toBe('JsonViewer');
     // JsonViewer gets no row otherwise and renders an empty block
     expect(expansion['row']).toBe('$ctx.row');
@@ -101,11 +125,11 @@ describe('events-page.yaml', () => {
     expect(action['url']).toBe('POST /api/modules/queue/events/{name}/push-test');
     expect(String(action['confirm'])).toMatch(/real subscribers/);
     const actions = columns.find((column) => column['type'] === 'actions') as { items: Node[] };
-    expect(actions.items).toEqual([{ label: 'Push test event', action: 'pushTest', variant: 'primary', condition: 'canPushTest' }]);
+    expect(actions.items).toEqual([{ label: 'Test', action: 'pushTest', variant: 'primary', condition: 'canPushTest' }]);
   });
 
   it('is made of DSL nodes only: no raw HTML', () => {
-    expect(new Set(allTypes(doc))).toEqual(new Set(['PageContent', 'PageHeader', 'HorizontalStack', 'SearchBar', 'CompactSelect', 'Badge', 'DataTable', 'JsonViewer']));
+    expect(new Set(allTypes(doc))).toEqual(new Set(['PageContent', 'PageHeader', 'HorizontalStack', 'SearchBar', 'CompactSelect', 'Badge', 'DataTable', 'VerticalStack', 'Markdown', 'JsonViewer']));
     // comments may mention a tag, the nodes may not carry one
     const withoutComments = text.split('\n').filter((line) => !line.trim().startsWith('#')).join('\n');
     expect(withoutComments).not.toMatch(/<\/?[a-z][a-z0-9]*[ >/]/i);

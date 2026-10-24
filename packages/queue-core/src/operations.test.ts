@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Wal } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
-import { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, listQueueSubscribers } from './operations.js';
+import { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries } from './operations.js';
 
 let configDir: string;
 let projectDir: string;
@@ -109,5 +109,90 @@ describe('listInFlightEntries', () => {
 
   it('is empty without a WAL file', () => {
     expect(listInFlightEntries(configDir)).toEqual([]);
+  });
+});
+
+describe('abandonInFlightEntry (give up an event that will never be retried, without losing it)', () => {
+  const dlqPath = (): string => join(configDir, 'dlq.ndjson');
+
+  it('moves a failed entry to the DLQ with its payload, subscriber and attempts, and says it was given up by hand', () => {
+    new Wal(join(configDir, 'wal.ndjson')).append({ ...walEntry('f1', 'failed'), payload: { a: 1 }, attempts: 2, lastError: 'exited with code 3' });
+    expect(abandonInFlightEntry(configDir, 'f1', new Date('2026-10-24T12:00:00.000Z'))).toEqual({ status: 'moved' });
+    const [moved] = new DlqStore(dlqPath()).readAll();
+    expect(moved).toMatchObject({ id: 'f1', event: 'onFoo', payload: { a: 1 }, subscriberId: 's', attempts: 2, movedAt: '2026-10-24T12:00:00.000Z' });
+    expect(moved?.lastError).toBe('exited with code 3 (given up by hand)');
+  });
+
+  it('moves a pending entry that was never tried, with a reason that says so', () => {
+    new Wal(join(configDir, 'wal.ndjson')).append(walEntry('p1', 'pending'));
+    expect(abandonInFlightEntry(configDir, 'p1')).toEqual({ status: 'moved' });
+    expect(new DlqStore(dlqPath()).readAll()[0]?.lastError).toBe('given up by hand before any attempt');
+  });
+
+  it('the entry is no longer in flight, it is in the DLQ where it can be replayed or cleared', () => {
+    new Wal(join(configDir, 'wal.ndjson')).append(walEntry('f1', 'failed'));
+    abandonInFlightEntry(configDir, 'f1');
+    expect(listInFlightEntries(configDir)).toEqual([]);
+    expect(listDlqEntries(configDir).map((entry) => entry.id)).toEqual(['f1']);
+    expect(readQueueCounts(configDir)).toEqual({ pendingCount: 0, dlqCount: 1 });
+  });
+
+  it('leaves the other entries alone', () => {
+    const wal = new Wal(join(configDir, 'wal.ndjson'));
+    wal.append(walEntry('f1', 'failed'));
+    wal.append(walEntry('f2', 'failed'));
+    abandonInFlightEntry(configDir, 'f1');
+    expect(listInFlightEntries(configDir).map((entry) => entry.id)).toEqual(['f2']);
+  });
+
+  it('answers not-found for an id the WAL does not know, and changes nothing', () => {
+    expect(abandonInFlightEntry(configDir, 'nope')).toEqual({ status: 'not-found' });
+    expect(listDlqEntries(configDir)).toEqual([]);
+  });
+
+  it.each(['acked', 'dlq'] as const)('answers not-in-flight for an entry that is already %s, and does not duplicate it in the DLQ', (status) => {
+    new Wal(join(configDir, 'wal.ndjson')).append(walEntry('x', status));
+    expect(abandonInFlightEntry(configDir, 'x')).toEqual({ status: 'not-in-flight' });
+    expect(listDlqEntries(configDir)).toEqual([]);
+  });
+
+  it('does not move the same entry twice', () => {
+    new Wal(join(configDir, 'wal.ndjson')).append(walEntry('f1', 'failed'));
+    abandonInFlightEntry(configDir, 'f1');
+    expect(abandonInFlightEntry(configDir, 'f1')).toEqual({ status: 'not-in-flight' });
+    expect(listDlqEntries(configDir)).toHaveLength(1);
+  });
+});
+
+describe('abandonStuckEntries (the in-flight events that waited so long nobody will retry them)', () => {
+  const NOW = new Date('2026-10-24T12:00:00.000Z');
+  const old = (id: string, status: 'pending' | 'failed', hoursAgo: number) => ({ ...walEntry(id, status), timestamp: new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString() });
+
+  it('moves every pending or failed entry older than the limit (2 hours by default) to the DLQ, and only those', () => {
+    const wal = new Wal(join(configDir, 'wal.ndjson'));
+    wal.append(old('stuck-failed', 'failed', 30));
+    wal.append(old('stuck-pending', 'pending', 5));
+    wal.append(old('recent-failed', 'failed', 0.5));
+    wal.append({ ...old('delivered', 'failed', 40), status: 'acked' });
+    expect(abandonStuckEntries(configDir, { now: NOW })).toEqual({ moved: 2 });
+    expect(listInFlightEntries(configDir).map((entry) => entry.id)).toEqual(['recent-failed']);
+    expect(listDlqEntries(configDir).map((entry) => entry.id).sort()).toEqual(['stuck-failed', 'stuck-pending']);
+  });
+
+  it('takes the limit it is given', () => {
+    new Wal(join(configDir, 'wal.ndjson')).append(old('f', 'failed', 3));
+    expect(abandonStuckEntries(configDir, { now: NOW, olderThanMs: 4 * 3_600_000 })).toEqual({ moved: 0 });
+    expect(abandonStuckEntries(configDir, { now: NOW, olderThanMs: 1 * 3_600_000 })).toEqual({ moved: 1 });
+  });
+
+  it('counts them without moving anything when asked to', () => {
+    new Wal(join(configDir, 'wal.ndjson')).append(old('f', 'failed', 30));
+    expect(countStuckEntries(configDir, { now: NOW })).toBe(1);
+    expect(listInFlightEntries(configDir)).toHaveLength(1);
+  });
+
+  it('is zero for a queue with nothing in flight', () => {
+    expect(abandonStuckEntries(configDir, { now: NOW })).toEqual({ moved: 0 });
+    expect(countStuckEntries(configDir, { now: NOW })).toBe(0);
   });
 });

@@ -9,5 +9,6 @@ $sources:
 $type: Badge
 label: $sources.relay.label
 variant: $sources.relay.tone
+href: "/modules/queue/webhooks"
 tone: subtle
 size: sm

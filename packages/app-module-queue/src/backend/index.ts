@@ -8,12 +8,13 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, PendingNotFoundError, NotInFlightError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
 import { getEvents, pushTestEvent } from './events.js';
 import { retryEvent } from './retry.js';
+import { giveUpPending, giveUpStuck } from './pending.js';
 import { getDaemonState } from './daemon.js';
 import { getRelayInfo } from './relay.js';
 import { listWebhooks, listDeliveries } from './relayWebhooks.js';
@@ -184,6 +185,26 @@ export default function (ctx: ModuleContext): void {
       return reply.code(response.status === 'ok' ? 200 : 500).send(response);
     } catch (err) {
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // Moves every event that waited so long that nobody retries it any more to the dead-letter queue (nothing is deleted; no daemon needed)
+  ctx.registerRoute('POST', '/pending/give-up-stuck', (_req, reply) => {
+    try {
+      return reply.code(200).send(giveUpStuck(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // Moves an event nobody retries any more to the dead-letter queue (nothing is deleted; no daemon needed)
+  ctx.registerRoute('POST', '/pending/:id/give-up', (req, reply) => {
+    const { id } = req.params;
+    try {
+      return reply.code(200).send(giveUpPending(configDir, id));
+    } catch (err) {
+      const status = err instanceof PendingNotFoundError ? 404 : err instanceof NotInFlightError ? 409 : 500;
+      return reply.code(status).send({ error: getErrorMessage(err) });
     }
   });
 

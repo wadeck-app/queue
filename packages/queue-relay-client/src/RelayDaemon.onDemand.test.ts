@@ -75,10 +75,18 @@ describe('on-demand relay (started by "queue wait") stops itself when nobody wai
   });
 
   it('a relay that was not started on demand ignores the waiters entirely', async () => {
-    daemonHandle = await startRelayDaemon(configDir, shutdownDeps, { idleWatchdog: { graceMs: 100, intervalMs: 30 } });
-    // Without an on-demand marker the watchdog ticks leave no observable trace, so there is no positive barrier for "it ignored the
-    // waiters"; a slow machine only makes this check weaker, never failing (seam: an onTick callback in IdleWatchdogOptions).
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    let ticks = 0;
+    daemonHandle = await startRelayDaemon(configDir, shutdownDeps, {
+      idleWatchdog: {
+        graceMs: 100,
+        intervalMs: 30,
+        onTick: () => {
+          ticks++;
+        },
+      },
+    });
+    // 8 ticks of 30 ms span more than the 100 ms grace period: an idle on-demand relay would have stopped itself by now
+    await waitFor(() => ticks >= 8, 'eight ticks of the idle watchdog');
     expect(await relayClient().isRunning()).toBe(true);
   });
 });

@@ -56,7 +56,7 @@ sections:
     emptyMessage: No events on this page
     columns:
       - { key: "ts", label: "Time", format: "datetime" }
-      - { key: "event", label: "Event" }
+      - { key: "event", label: "Event", href: "/modules/queue/events?q={event}" }
       - { key: "eventId", label: "Event ID", mono: true }
       - { key: "project", label: "Project" }
       - { key: "matchedCount", label: "Matched" }

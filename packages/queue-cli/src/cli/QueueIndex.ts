@@ -120,8 +120,8 @@ Concepts:
 Usage:
   queue push <event> <json> [--timeout <duration>]
   queue retry --event <id>
-  queue replay <eventId>    Resubmit a past event's payload (from 'queue history') as a new event,
-                             tagged replayOf <eventId>. For manual testing, not delivery guarantees.
+  queue replay <eventId> [--cwd <directory>]   Resubmit a past event's payload (from 'queue history') as a new event,
+                             tagged replayOf <eventId>, run in the directory recorded with it (--cwd names another). For manual testing, not delivery guarantees.
   queue wait <event> [--when <expr>] [--since <d>] [--timeout <d>] [--json] [--strict]   Block until a matching queue event is recorded (see 'queue wait --help')
   queue events list [--source <s>] [--prefix <p>] [--match <pattern>] [--declared-only] [--terminal] [--json]   Event catalog: names, payloads, last seen
   queue events show <name> [--json]   Schema, example, payload paths for 'queue wait --when' and a ready command
@@ -955,7 +955,7 @@ async function main(): Promise<void> {
   if (command === 'replay') {
     const eventId = rest[0];
     if (!eventId) {
-      process.stderr.write('Usage: queue replay <eventId>\n');
+      process.stderr.write('Usage: queue replay <eventId> [--cwd <directory>]\n');
       process.exit(1);
     }
 
@@ -972,12 +972,15 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    // Import replayCwd for resolving the working directory to use
+    // The directory decides which subscribers fire: the recorded one, or the one named with --cwd, never a guess
     const { resolveReplayCwd } = await import('./replayCwd.js');
-    const { cwd: replayCwd, warning } = resolveReplayCwd(entry, process.cwd());
-    if (warning) {
-      process.stderr.write(warning + '\n');
+    const cwdFlag = rest.indexOf('--cwd');
+    const resolved = resolveReplayCwd(entry, cwdFlag === -1 ? undefined : rest[cwdFlag + 1]);
+    if (!resolved.ok) {
+      process.stderr.write(resolved.message + '\n');
+      process.exit(1);
     }
+    const replayCwd = resolved.cwd;
 
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);

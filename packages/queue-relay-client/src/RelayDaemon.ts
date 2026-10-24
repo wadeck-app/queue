@@ -3,7 +3,7 @@ import type { DaemonHandle, ShutdownReason } from '@wadeck-app/singleton-daemon-
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { RelayConnection } from './RelayConnection.js';
+import { RelayConnection, type RelayConnectionOptions } from './RelayConnection.js';
 import { createRelayLogger } from './RelayLogger.js';
 import { relayStateDir } from './relayClient.js';
 import { startIdleWatchdog, pinRelay, type IdleWatchdogOptions } from './onDemand.js';
@@ -87,7 +87,9 @@ export interface ShutdownDeps {
  */
 export interface RelayDaemonOptions {
   /** Timing of the on-demand watchdog (see onDemand.ts); the defaults are the production ones. */
-  idleWatchdog?: Pick<IdleWatchdogOptions, 'graceMs' | 'intervalMs'>;
+  idleWatchdog?: Pick<IdleWatchdogOptions, 'graceMs' | 'intervalMs' | 'onTick'>;
+  // Exists for timing-free test assertions (see RelayConnectionOptions): hooks of the connection loop. Production never sets it.
+  connection?: Pick<RelayConnectionOptions, 'sleep' | 'onLoopEnd'>;
 }
 
 export async function startRelayDaemon(configDir: string, shutdownDeps?: ShutdownDeps, options: RelayDaemonOptions = {}): Promise<DaemonHandle> {
@@ -99,6 +101,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
   // Create logger that writes to relay.log within the relay-daemon directory
   const relayLogger = createRelayLogger(join(stateDir, 'relay.log'));
   const connection = new RelayConnection({
+    ...options.connection,
     configDir,
     onLog: (line) => {
       // Echo to both file and console for foreground runs

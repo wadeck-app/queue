@@ -4,7 +4,7 @@ $sources:
   pending:
     url: GET /api/modules/queue/pending
 
-# One row of three small tiles (a dashboard cell is about 270 px wide: more than three would wrap their labels). Chosen among
+# Each tile leads to the page where its events can be dealt with (drill-down). One row of three small tiles (a dashboard cell is about 270 px wide: more than three would wrap their labels). Chosen among
 # the A/B variants of 5b6f846. "Retry" counts the events that failed an attempt and wait for a retry (Queue Pending page); the
 # pending counter alone hides them.
 $type: HorizontalStack
@@ -13,9 +13,12 @@ items:
   - $type: StatTile
     label: Pending
     value: $sources.status.pendingCount
+    href: "/modules/queue/pending"
   - $type: StatTile
     label: Retry
     value: $sources.pending.awaitingRetry
+    href: "/modules/queue/pending"
   - $type: StatTile
     label: DLQ
     value: $sources.status.dlqCount
+    href: "/modules/queue/dlq"

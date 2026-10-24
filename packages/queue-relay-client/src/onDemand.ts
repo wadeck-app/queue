@@ -81,6 +81,9 @@ export interface IdleWatchdogOptions {
   now?: () => number;
   stop: () => void;
   log: (line: string) => void;
+  // Exists for timing-free test assertions: called at the end of every check, whatever its outcome, so a test can count the
+  // checks that ran instead of waiting a duration. Production never sets it.
+  onTick?: () => void;
 }
 
 /**
@@ -93,7 +96,7 @@ export function startIdleWatchdog(options: IdleWatchdogOptions): { cancel: () =>
   const now = options.now ?? Date.now;
   let idleSince: number | null = null;
 
-  const timer = setInterval(() => {
+  const check = (): void => {
     if (!isOnDemand(options.relayDir) || liveWaiterCount(options.relayDir, isAlive) > 0) {
       idleSince = null;
       return;
@@ -104,6 +107,10 @@ export function startIdleWatchdog(options: IdleWatchdogOptions): { cancel: () =>
       options.log(`[relay] no one is waiting for a relay event since ${Math.round(graceMs / 1000)}s, stopping (it was started on demand by "queue wait").`);
       options.stop();
     }
+  };
+  const timer = setInterval(() => {
+    check();
+    options.onTick?.();
   }, options.intervalMs ?? DEFAULT_CHECK_INTERVAL_MS);
   // The watchdog alone must not keep a process alive
   timer.unref();

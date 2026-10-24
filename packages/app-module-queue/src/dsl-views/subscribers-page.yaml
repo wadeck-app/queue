@@ -15,7 +15,7 @@ sections:
     rows: $sources.subscribers.subscribers
     emptyMessage: No subscriber configured
     columns:
-      - { key: "event", label: "Event" }
+      - { key: "event", label: "Event", href: "/modules/queue/events?q={event}" }
       - { key: "subscriberId", label: "Id", mono: true }
       - { key: "type", label: "Type" }
       - { key: "command", label: "Command", mono: true }

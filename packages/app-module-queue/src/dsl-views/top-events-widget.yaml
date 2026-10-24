@@ -6,5 +6,5 @@ $type: DataTable
 rows: $sources.breakdown.topEvents
 emptyMessage: No event in the last 24 h
 columns:
-  - { key: "event", label: "Top events, last 24 h" }
+  - { key: "event", label: "Top events, last 24 h", href: "/modules/queue/history?event={event}" }
   - { key: "count", label: "Pushed" }

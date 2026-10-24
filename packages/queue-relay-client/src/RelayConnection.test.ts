@@ -49,6 +49,59 @@ const NEVER_MS = 3_600_000;
 const LIVENESS_STEP_MS = 30;
 const PINGS_TO_PROVE = 6;
 
+/**
+ * Injected sleep for timing-free assertions: counts the passes of the connection loop and returns on the next macrotask
+ * (at once when aborted), so "the code had N chances to do X and did not" needs no wall-clock wait.
+ */
+function makeCountingSleep(): { state: { calls: number }; sleep: (ms: number, signal?: AbortSignal) => Promise<void> } {
+  const state = { calls: 0 };
+  const sleep = (_ms: number, signal?: AbortSignal): Promise<void> =>
+    new Promise<void>((resolve) => {
+      state.calls++;
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      const immediate = setImmediate(resolve);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearImmediate(immediate);
+          resolve();
+        },
+        { once: true }
+      );
+    });
+  return { state, sleep };
+}
+
+/**
+ * Injected heartbeat timers for timing-free assertions: real timers, but the test can see which ones are still pending
+ * (neither fired nor cleared), so "stop() cancelled the heartbeat" is a fact to read, not a silence to wait for.
+ */
+function makeTrackedHeartbeatTimers(): {
+  pending: Set<NodeJS.Timeout>;
+  set: (fn: () => void, ms: number) => NodeJS.Timeout;
+  clear: (timer: NodeJS.Timeout) => void;
+} {
+  const pending = new Set<NodeJS.Timeout>();
+  return {
+    pending,
+    set: (fn, ms) => {
+      const timer = setTimeout(() => {
+        pending.delete(timer);
+        fn();
+      }, ms);
+      pending.add(timer);
+      return timer;
+    },
+    clear: (timer) => {
+      pending.delete(timer);
+      clearTimeout(timer);
+    },
+  };
+}
+
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-relay-connection-test-${crypto.randomUUID()}`);
   mkdirSync(dir, { recursive: true });
@@ -351,6 +404,7 @@ describe('RelayConnection', () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         let connectionCount = 0;
+        const counting = makeCountingSleep();
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -389,6 +443,7 @@ plugins:
         const connection = new RelayConnection({
           configDir: tmpDir,
           retryDelayMs: 10,
+          sleep: counting.sleep,
           onLog: (line) => logs.push(line),
         });
 
@@ -397,9 +452,9 @@ plugins:
           // Wait for initial connection and rejection
           await waitFor(() => logs.some((line) => line.includes('refused the token')), 'the "refused the token" log line');
 
-          // Negative check without a positive barrier (needs a production seam, see the final report): give extra time to ensure no
-          // second connection is attempted. A slow machine only makes it weaker, never failing.
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          // The loop passes (each one would reconnect if the refusal were ignored) prove no second connection is attempted
+          const passesAtRefusal = counting.state.calls;
+          await waitFor(() => counting.state.calls >= passesAtRefusal + 5, 'five more passes of the connection loop after the refusal');
 
           connection.stop();
           await startPromise;
@@ -433,6 +488,7 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         let connectionCount = 0;
+        const counting = makeCountingSleep();
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -470,14 +526,16 @@ plugins:
         const connection = new RelayConnection({
           configDir: tmpDir,
           retryDelayMs: 10,
+          sleep: counting.sleep,
           onLog: (line) => logs.push(line),
         });
 
         try {
           const startPromise = connection.start();
           await waitFor(() => logs.some((line) => line.includes('refused the token')), 'the "refused the token" log line');
-          // Negative check without a positive barrier (see the final report): a slow machine only makes it weaker, never failing
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          // The loop passes (each one would reconnect if the refusal were ignored) prove no second connection is attempted
+          const passesAtRefusal = counting.state.calls;
+          await waitFor(() => counting.state.calls >= passesAtRefusal + 5, 'five more passes of the connection loop after the refusal');
 
           connection.stop();
           await startPromise;
@@ -497,6 +555,7 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         let connectionCount = 0;
+        const counting = makeCountingSleep();
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -540,6 +599,7 @@ plugins:
         const connection = new RelayConnection({
           configDir: tmpDir,
           retryDelayMs: 10,
+          sleep: counting.sleep,
           onLog: (line) => logs.push(line),
         });
 
@@ -561,8 +621,9 @@ plugins:
     subscriptions:
       - eventType: [test]
 `);
-          // Negative check without a positive barrier (see the final report): a slow machine only makes it weaker, never failing
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          // Passes of the loop that start after the rewrite re-read the same token: they prove it does not reconnect
+          const passesAtRewrite = counting.state.calls;
+          await waitFor(() => counting.state.calls >= passesAtRewrite + 5, 'five passes of the connection loop after the rewrite');
           expect(connectionCount).toBe(countAfterRefusal);
 
           // Rewrite with DIFFERENT token - should reconnect
@@ -2510,6 +2571,7 @@ plugins:
         const logs: string[] = [];
         let serverPings = 0;
         let serverClosed = false;
+        const heartbeatTimers = makeTrackedHeartbeatTimers();
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -2553,6 +2615,7 @@ plugins:
           configDir: tmpDir,
           retryDelayMs: 10,
           heartbeat: { intervalMs: 50, timeoutMs: 50 },
+          heartbeatTimers,
           onLog: (line) => logs.push(line),
         });
 
@@ -2561,17 +2624,18 @@ plugins:
           // Wait for connection to establish and for the heartbeat to be running (at least one ping)
           await waitFor(() => connection.isConnected(), 'the connection to authenticate');
           await waitFor(() => serverPings >= 1, 'the first heartbeat ping');
+          // The heartbeat is running: exactly one tick is scheduled
+          expect(heartbeatTimers.pending.size).toBe(1);
 
           connection.stop();
           await startPromise;
 
+          // stop() cancelled the pending tick: nothing can ping any more, whatever the time that passes
+          expect(heartbeatTimers.pending.size).toBe(0);
+
           // The server saw the close: TCP keeps order, so every ping sent before the stop has been counted by now
           await waitFor(() => serverClosed, 'the server to see the connection close');
           const pingsAtClose = serverPings;
-
-          // Negative check without a positive barrier (see the final report): wait through more than one heartbeat interval (50 ms);
-          // a slow machine only makes it weaker, never failing
-          await new Promise((resolve) => setTimeout(resolve, 200));
 
           // No ping after the stop
           expect(serverPings).toBe(pingsAtClose);
@@ -2586,6 +2650,7 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         let connectionCount = 0;
+        const counting = makeCountingSleep();
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -2625,6 +2690,7 @@ plugins:
           configDir: tmpDir,
           retryDelayMs: 10,
           heartbeat: { intervalMs: 50, timeoutMs: 50 },
+          sleep: counting.sleep,
           onLog: (line) => logs.push(line),
         });
 
@@ -2633,9 +2699,9 @@ plugins:
           // Wait for token refusal
           await waitFor(() => logs.some((l) => l.includes('refused the token')), 'the "refused the token" log line');
 
-          // Negative check without a positive barrier (see the final report): give extra time to confirm no further reconnect is
-          // attempted. A slow machine only makes it weaker, never failing.
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          // The loop passes (each one would reconnect if the refusal were ignored) prove no further reconnect is attempted
+          const passesAtRefusal = counting.state.calls;
+          await waitFor(() => counting.state.calls >= passesAtRefusal + 5, 'five more passes of the connection loop after the refusal');
 
           connection.stop();
           await startPromise;
@@ -3207,5 +3273,131 @@ plugins:
         }
       });
     });
+  });
+
+  // The "processed" line closes every delivery, whatever its outcome, and is logged once the handling (the push included) is over:
+  // it exists so that tests wait for the end of a delivery instead of a duration.
+  describe('delivery processed line', () => {
+    interface DeliveryCase {
+      name: string;
+      outcome: string;
+      pluginSource: string;
+      mapsEvent: boolean;
+      subscribedEventTypes: string;
+      push: 'resolve' | 'abort' | 'reject' | 'none';
+    }
+
+    const cases: DeliveryCase[] = [
+      { name: 'pushed', outcome: 'pushed', pluginSource: 'github', mapsEvent: true, subscribedEventTypes: 'push', push: 'resolve' },
+      { name: 'push failed (daemon unreachable)', outcome: 'failed', pluginSource: 'github', mapsEvent: true, subscribedEventTypes: 'push', push: 'reject' },
+      { name: 'push aborted by the daemon', outcome: 'failed', pluginSource: 'github', mapsEvent: true, subscribedEventTypes: 'push', push: 'abort' },
+      { name: 'plugin dropped the delivery', outcome: 'dropped', pluginSource: 'github', mapsEvent: false, subscribedEventTypes: 'push', push: 'none' },
+      { name: 'no subscription matches', outcome: 'no-subscription', pluginSource: 'github', mapsEvent: true, subscribedEventTypes: 'issues', push: 'none' },
+      { name: 'no plugin for the source', outcome: 'no-plugin', pluginSource: 'other', mapsEvent: true, subscribedEventTypes: 'push', push: 'none' },
+    ];
+
+    for (const c of cases) {
+      it(`${c.name} -> exactly one "processed (${c.outcome})" line, after the push settled`, async () => {
+        tmpDir = makeTmpDir();
+        const logs: string[] = [];
+        let releasePush: () => void = () => {};
+        let pushStarted = false;
+        const deliveryId = 'del-processed-001';
+
+        vi.clearAllMocks();
+        mockPushModule.pushToQueue.mockImplementation(() => {
+          pushStarted = true;
+          // The push stays pending until the test releases it: the "processed" line must not appear before
+          return new Promise((resolve, reject) => {
+            releasePush = () => {
+              if (c.push === 'reject') {
+                reject(new Error('Queue daemon connection failed'));
+              } else if (c.push === 'abort') {
+                resolve({ status: 'aborted', reason: 'subscribers.yml syntax error' });
+              } else {
+                resolve({ status: 'ok' });
+              }
+            };
+          });
+        });
+
+        const wss = new WebSocketServer({ port: 0 });
+        const port = portOf(wss);
+
+        const pluginPath = join(tmpDir, 'plugin.js');
+        writeFileSync(
+          pluginPath,
+          `export default {
+  source: '${c.pluginSource}',
+  mapEvent: (e) => ${c.mapsEvent ? '({ event: \`on.github.\${e.eventType}\`, payload: e.payload })' : 'null'}
+};`
+        );
+        writeFileSync(
+          join(tmpDir, 'relay.yml'),
+          `relayUrl: ws://127.0.0.1:${port}
+token: test-token
+plugins:
+  - module: ${pluginPath}
+    subscriptions:
+      - eventType: [${c.subscribedEventTypes}]
+`
+        );
+
+        wss.on('connection', (ws) => {
+          ws.on('message', (data) => {
+            const msg = parseMessage(data);
+            if (msg.type === 'auth') {
+              ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
+            } else if (msg.type === 'subscribe') {
+              ws.send(
+                JSON.stringify({
+                  type: 'event',
+                  envelope: {
+                    source: 'github',
+                    webhookConfigId: 'w',
+                    eventType: 'push',
+                    deliveryId,
+                    payload: { ref: 'refs/heads/main' },
+                    receivedAt: new Date().toISOString(),
+                  },
+                })
+              );
+            }
+          });
+        });
+
+        const connection = new RelayConnection({ configDir: tmpDir, retryDelayMs: 50, onLog: (line) => logs.push(line) });
+        const processedLines = (): string[] => logs.filter((l) => l.includes('processed ('));
+
+        try {
+          const startPromise = connection.start();
+          if (c.push === 'none') {
+            await waitFor(() => processedLines().length > 0, 'the "processed" line of a delivery that is never pushed');
+          } else {
+            await waitFor(() => pushStarted, 'the push to start');
+            // The push is still pending: the delivery is not processed yet
+            expect(processedLines()).toHaveLength(0);
+            releasePush();
+            await waitFor(() => processedLines().length > 0, 'the "processed" line once the push settled');
+          }
+
+          expect(processedLines()).toEqual([`[relay] Delivery ${deliveryId} processed (${c.outcome})`]);
+          if (c.push !== 'none') {
+            // Logged after the line describing the push result
+            const resultIndex = logs.findIndex((l) => l.includes(deliveryId) && !l.includes('processed ('));
+            expect(resultIndex).toBeGreaterThanOrEqual(0);
+            expect(resultIndex).toBeLessThan(logs.findIndex((l) => l.includes('processed (')));
+          }
+          if (c.push === 'none') {
+            expect(pushStarted).toBe(false);
+          }
+
+          connection.stop();
+          await startPromise;
+        } finally {
+          wss.close();
+        }
+      });
+    }
   });
 });

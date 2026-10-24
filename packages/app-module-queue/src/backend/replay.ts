@@ -24,12 +24,12 @@ export async function replayEvent(configDir: string, eventId: string): Promise<P
   // Check cwd: if not recorded, error with instruction; if recorded but missing, error with instruction
   if (!entry.cwd) {
     throw new ReplayError(
-      `History entry ${eventId} has no recorded working directory (it predates cwd recording), so the original project cannot be determined. Replay it from the project directory instead: cd <project> && queue replay ${eventId}`
+      `History entry ${eventId} has no recorded working directory (it predates cwd recording), so the original project cannot be determined. Replay it from a terminal and name the project directory: queue replay ${eventId} --cwd <project>`
     );
   }
   if (!existsSync(entry.cwd)) {
     throw new ReplayError(
-      `The working directory recorded for event ${eventId} no longer exists: ${entry.cwd}. Replay it from a project directory with: queue replay ${eventId}`
+      `The working directory recorded for event ${eventId} no longer exists: ${entry.cwd}. Replay it from a terminal and name the project directory: queue replay ${eventId} --cwd <project>`
     );
   }
 

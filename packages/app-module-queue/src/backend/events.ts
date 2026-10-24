@@ -9,7 +9,11 @@ export interface EventRow extends CatalogEntry {
   status: EventStatus;
   /** True when the row can be pushed as a test: declared, with an example payload. */
   canPushTest: boolean;
-  /** Description, source, flags, schema, example, filterable paths and a wait command, pretty-printed: what the expanded row shows. */
+  /** The first sentence of the description, plain text: what fits a table cell (the whole description is `description`, Markdown). */
+  descriptionExcerpt: string;
+  /** When it was last pushed, ISO to the minute and UTC ("2026-10-24T11:55Z"), "-" when not seen within the observed window. */
+  lastSeenText: string;
+  /** Source, last seen, flags, schema, example, filterable paths and a wait command, pretty-printed: what the expanded row shows under the description. */
   detailsText: string;
 }
 
@@ -53,11 +57,30 @@ function parseStatus(query: QueryParams): EventStatus | undefined {
   return value;
 }
 
+const EXCERPT_LENGTH = 110;
+
+/** The one line of a description that fits a table cell: its first sentence, as plain text, cut at 110 characters. */
+export function excerptOf(description: string | undefined): string {
+  const firstLine = (description ?? '').split('\n').map((line) => line.trim()).find((line) => line !== '') ?? '';
+  const plain = firstLine
+    .replace(/^(#+|>|[-*])\s+/, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]*)`/g, '$1');
+  const end = /[.!?](\s|$)/.exec(plain);
+  const sentence = end === null ? plain : plain.slice(0, end.index + 1);
+  return sentence.length > EXCERPT_LENGTH ? `${sentence.slice(0, EXCERPT_LENGTH - 3).trimEnd()}...` : sentence;
+}
+
+function lastSeenTextOf(lastSeenAt: string | null): string {
+  return lastSeenAt === null ? '-' : `${new Date(lastSeenAt).toISOString().slice(0, 16)}Z`;
+}
+
 function detailsTextOf(entry: CatalogEntry, detail: EventDetail | undefined): string {
   return JSON.stringify(
     {
-      description: entry.description,
       source: entry.source,
+      lastSeenAt: entry.lastSeenAt,
       terminal: entry.terminal,
       outcome: entry.outcome,
       correlationKey: entry.correlationKey,
@@ -104,6 +127,8 @@ export function getEvents(configDir: string, query: QueryParams, nowMs: number =
     rows.push({
       ...entry,
       status: rowStatus,
+      descriptionExcerpt: excerptOf(entry.description),
+      lastSeenText: lastSeenTextOf(entry.lastSeenAt),
       canPushTest: entry.declared && detail?.example !== undefined,
       detailsText: detailsTextOf(entry, detail),
     });

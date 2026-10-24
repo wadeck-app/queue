@@ -13,15 +13,6 @@
     {
       "kind": "widget",
       "slot": "dashboard",
-      "label": "Queue DLQ",
-      "view": {
-        "type": "path",
-        "value": "./src/dsl-views/dlq-widget.yaml"
-      }
-    },
-    {
-      "kind": "widget",
-      "slot": "dashboard",
       "label": "Queue Activity",
       "view": {
         "type": "path",

@@ -52,19 +52,26 @@ sections:
   # `row` is not injected into the expansion: pass it with $ctx.row.
   - $type: DataTable
     rows: $sources.events.events
+    # The whole description first, as Markdown (the cell only holds its first sentence), then the rest as JSON.
     expansion:
-      $type: JsonViewer
-      row: $ctx.row
-      field: detailsText
-      maxHeight: 24rem
+      $type: VerticalStack
+      gap: gap-3
+      items:
+        - $type: Markdown
+          $if: $ctx.row.description
+          text: $ctx.row.description
+        - $type: JsonViewer
+          row: $ctx.row
+          field: detailsText
+          maxHeight: 24rem
     emptyMessage: No event matches; a program declares its events with queue.registerEvents (@wadeck-app/queue-sdk) or with `queue events register`.
     columns:
-      - { key: "name", label: "Name", mono: true, nowrap: true }
+      - { key: "name", label: "Name", mono: true, nowrap: true, href: "/modules/queue/history?event={name}" }
       - { key: "source", label: "Source", nowrap: true }
-      - { key: "description", label: "Description" }
+      - { key: "descriptionExcerpt", label: "Description", truncate: true }
       - { key: "count24h", label: "24 h" }
-      - { key: "lastSeenAt", label: "Last seen", format: "datetime" }
+      - { key: "lastSeenText", label: "Last seen", mono: true, nowrap: true }
       - { key: "status", label: "Status", nowrap: true, badge: { declared: success, undeclared: warning } }
       - type: actions
         items:
-          - { label: Push test event, action: pushTest, variant: primary, condition: canPushTest }
+          - { label: Test, action: pushTest, variant: primary, condition: canPushTest }

@@ -48,7 +48,7 @@ sections:
     columns:
       - { key: "time", label: "Time", mono: true }
       - { key: "outcome", label: "Result", badge: { ok: success, miss: warning, fail: danger, dlq: danger, info: default } }
-      - { key: "event", label: "Event" }
+      - { key: "event", label: "Event", href: "/modules/queue/history?event={event}" }
   - $type: HorizontalStack
     justify: justify-end
     items:

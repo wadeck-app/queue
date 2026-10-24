@@ -17,12 +17,15 @@ items:
       - $type: StatTile
         label: Delivered
         value: $sources.outcomes.last24Hours.delivered
+        href: "/modules/queue/history?status=success"
       - $type: StatTile
         label: Failed
         value: $sources.outcomes.last24Hours.failedAttempts
+        href: "/modules/queue/history?status=failed"
       - $type: StatTile
         label: Given up
         value: $sources.outcomes.last24Hours.givenUp
+        href: "/modules/queue/dlq"
   - $type: Chart
     $if: $sources.outcomes.hasFailures
     variant: sparkline

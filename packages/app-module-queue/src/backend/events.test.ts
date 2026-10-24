@@ -7,7 +7,7 @@ import { writeSourceDeclaration } from '@wadeck-app/queue-core';
 const mockPushEvent = vi.hoisted(() => vi.fn());
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 
-import { getEvents, pushTestEvent } from './events.js';
+import { getEvents, pushTestEvent, excerptOf } from './events.js';
 import { InvalidQueryError, TestPayloadNotFoundError } from './errors.js';
 
 const MINUTE = 60_000;
@@ -61,6 +61,21 @@ describe('getEvents', () => {
     expect(started).toMatchObject({ count24h: 1, lastSeenAt: new Date(NOW - 5 * MINUTE).toISOString() });
   });
 
+  it('gives the last seen time as ISO to the minute, UTC, and a dash for an event not seen in the last 7 days', () => {
+    fixture();
+    declare('task', [{ name: 'onTaskDeleted', description: 'Never seen.' }]);
+    const rows = getEvents(configDir, {}, NOW).events;
+    expect(rows.find((row) => row.name === 'job.started')?.lastSeenText).toBe('2026-10-24T11:55Z');
+    expect(rows.find((row) => row.name === 'onTaskDeleted')?.lastSeenText).toBe('-');
+  });
+
+  it('gives a one-line excerpt of the description for the table, and keeps the whole description for the expanded row', () => {
+    declare('flow', [{ name: 'flow.a', description: 'A step began. Fires again on each retry.\n\nDoes NOT fire for a skipped step.' }]);
+    const [row] = getEvents(configDir, {}, NOW).events;
+    expect(row?.descriptionExcerpt).toBe('A step began.');
+    expect(row?.description).toBe('A step began. Fires again on each retry.\n\nDoes NOT fire for a skipped step.');
+  });
+
   it('marks each row declared or undeclared', () => {
     fixture();
     const rows = getEvents(configDir, {}, NOW).events;
@@ -72,13 +87,13 @@ describe('getEvents', () => {
     ]);
   });
 
-  it('carries the detail of the expanded row as pretty JSON: description, source, terminal, outcome, correlationKey, schema, example, filterable, waitExample', () => {
+  it('carries the detail of the expanded row as pretty JSON, without the description (the page shows it above, as Markdown): source, last seen, terminal, outcome, correlationKey, schema, example, filterable, waitExample', () => {
     declare('orchestrator', [{ name: 'job.completed', description: 'Ended.', terminal: true, outcome: 'success', correlationKey: 'payload.jobId', schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] }, example: { jobId: 'nightly' } }]);
     const [row] = getEvents(configDir, {}, NOW).events;
     expect(row?.detailsText).toContain('\n');
     expect(JSON.parse(row!.detailsText)).toEqual({
-      description: 'Ended.',
       source: 'orchestrator',
+      lastSeenAt: null,
       terminal: true,
       outcome: 'success',
       correlationKey: ['payload.jobId'],
@@ -208,5 +223,39 @@ describe('pushTestEvent', () => {
     fixture();
     await expect(pushTestEvent(configDir, 'mystery.event')).rejects.toThrowError(TestPayloadNotFoundError);
     expect(mockPushEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('excerptOf (the one line of a description that fits a table cell)', () => {
+  it('is the first sentence', () => {
+    expect(excerptOf('A job run began. It fires once per run.')).toBe('A job run began.');
+  });
+
+  it('is the first line when the first line has no sentence end', () => {
+    expect(excerptOf('A job run began\nand more')).toBe('A job run began');
+  });
+
+  it('keeps a whole short description as it is', () => {
+    expect(excerptOf('Short.')).toBe('Short.');
+  });
+
+  it('cuts a long sentence at 110 characters with three dots', () => {
+    const excerpt = excerptOf('word '.repeat(60).trim());
+    expect(excerpt.length).toBeLessThanOrEqual(111);
+    expect(excerpt.endsWith('...')).toBe(true);
+  });
+
+  it('does not cut at a dot inside a name or a number: event names and versions have dots', () => {
+    expect(excerptOf('Fires for on.github.push events of version 1.2. Then more.')).toBe('Fires for on.github.push events of version 1.2.');
+  });
+
+  it('drops the Markdown marks that mean nothing in a plain cell', () => {
+    expect(excerptOf('**Bold** and `code` and a [link](https://x.y). More.')).toBe('Bold and code and a link.');
+    expect(excerptOf('# Title\nbody')).toBe('Title');
+  });
+
+  it('is empty for an empty or missing description', () => {
+    expect(excerptOf('')).toBe('');
+    expect(excerptOf(undefined)).toBe('');
   });
 });

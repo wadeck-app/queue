@@ -11,6 +11,20 @@ $actions:
     successMessage: Retry enqueued
     errorPrefix: Could not retry
     reloadSources: true
+  # Every event that waited so long that nobody retries it any more (see STUCK_AFTER_MS in queue-core) moves to the dead-letter queue.
+  giveUpStuck:
+    url: POST /api/modules/queue/pending/give-up-stuck
+    confirm: Give up every stuck event? They move to the dead-letter queue and are no longer retried; you can replay or clear them there.
+    successMessage: Stuck events moved to the dead-letter queue
+    errorPrefix: Could not give up the stuck events
+    reloadSources: true
+  # For an event nobody retries any more (its retry job was never scheduled or was lost): it moves to the dead-letter queue, nothing is deleted.
+  giveUpPending:
+    url: POST /api/modules/queue/pending/{id}/give-up
+    confirm: Give up this event? It moves to the dead-letter queue and is no longer retried; you can replay or clear it there.
+    successMessage: Moved to the dead-letter queue
+    errorPrefix: Could not give up
+    reloadSources: true
 
 $type: PageContent
 sections:
@@ -21,12 +35,24 @@ sections:
     $if: $sources.daemon.hint
     label: $sources.daemon.hint
     variant: warning
+  - $type: Badge
+    $if: $sources.pending.stuckCount
+    label: $sources.pending.stuckText
+    variant: warning
+  - $type: Form
+    $if: $sources.pending.stuckCount
+    onSubmit: $ctx.giveUpStuck
+    initialData: {}
+    fields: []
+    actions:
+      - $type: ButtonSave
+        label: Give up all the stuck events
   - $type: DataTable
     rows: $sources.pending.entries
     emptyMessage: Nothing is waiting
     columns:
       - { key: "queuedAt", label: "Queued at", format: "datetime" }
-      - { key: "event", label: "Event" }
+      - { key: "event", label: "Event", href: "/modules/queue/history?event={event}" }
       - { key: "subscriberId", label: "Subscriber" }
       - { key: "status", label: "Status" }
       - { key: "attempts", label: "Attempts" }
@@ -35,3 +61,4 @@ sections:
       - type: actions
         items:
           - { label: Retry now, action: retryPending, variant: primary }
+          - { label: Give up, action: giveUpPending, variant: danger-outline }

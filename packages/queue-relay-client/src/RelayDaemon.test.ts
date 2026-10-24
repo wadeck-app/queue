@@ -341,7 +341,14 @@ plugins:
   });
 
   it('stop("command") closes the relay connection and prevents reconnect', async () => {
-    daemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit);
+    let connectionLoopEnded = false;
+    daemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit, {
+      connection: {
+        onLoopEnd: () => {
+          connectionLoopEnded = true;
+        },
+      },
+    });
 
     // Wait for the daemon to connect and authenticate
     await waitFor(() => authMessagesReceived > 0, 'the daemon to connect and send its auth message');
@@ -360,14 +367,12 @@ plugins:
     // Verify the socket was closed
     expect(closedConnections).toBeGreaterThan(0);
 
-    // Negative check, no positive barrier exists without a production seam (proposed: an observable "reconnect scheduled" state).
-    // A slow machine only makes it weaker, never failing: wait through a reconnect attempt (1s delay) and check no new connections
-    const beforeWait = clientConnections.length;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    const afterWait = clientConnections.length;
+    // The connection loop has ended: it checked the stop flag and left instead of scheduling a reconnect
+    const beforeLoopEnd = clientConnections.length;
+    await waitFor(() => connectionLoopEnded, 'the connection loop to end after stop');
 
-    // Should not have created a new connection (or if it did, it should close immediately)
-    expect(afterWait).toBeLessThanOrEqual(beforeWait + 1);
+    // No new connection was made on the way out
+    expect(clientConnections.length).toBe(beforeLoopEnd);
   });
 
   it('safety timeout is armed and can force exit', async () => {

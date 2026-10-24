@@ -31,15 +31,19 @@ sections:
       - $type: StatTile
         label: Events pushed
         value: $sources.overview.totals.events
+        href: "/modules/queue/history"
       - $type: StatTile
         label: Delivered
         value: $sources.overview.totals.delivered
+        href: "/modules/queue/history?status=success"
       - $type: StatTile
         label: Failed attempts
         value: $sources.overview.totals.failedAttempts
+        href: "/modules/queue/history?status=failed"
       - $type: StatTile
         label: Given up (DLQ)
         value: $sources.overview.totals.givenUp
+        href: "/modules/queue/dlq"
   - $type: PageHeader
     title: Events pushed
     subtitle: Per slice of the period; the last bar is the current, partial one.
@@ -71,7 +75,7 @@ sections:
     rows: $sources.overview.topEvents
     emptyMessage: No event in this period
     columns:
-      - { key: "event", label: "Event" }
+      - { key: "event", label: "Event", href: "/modules/queue/history?event={event}" }
       - { key: "count", label: "Pushed" }
   - $type: PageHeader
     title: Subscribers
@@ -80,7 +84,7 @@ sections:
     rows: $sources.overview.subscribers
     emptyMessage: No dispatch in this period
     columns:
-      - { key: "subscriberId", label: "Subscriber", mono: true }
+      - { key: "subscriberId", label: "Subscriber", mono: true, href: "/modules/queue/history?subscriber={subscriberId}" }
       - { key: "delivered", label: "Delivered" }
       - { key: "failedAttempts", label: "Failed attempts" }
       - { key: "givenUp", label: "Given up (DLQ)" }

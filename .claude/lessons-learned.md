@@ -1,8 +1,38 @@
 # Lessons learned
 
-<!-- Last updated: 2026-10-17T18:08:36.327Z -->
+<!-- Last updated: 2026-10-24T13:59:18.001Z -->
 
 ## Recurring feedback
+
+<!-- session 4ff1a10a 2026-10-24 -->
+- Async/await refactoring pattern: Multiple agents independently rewrote `rmSync()` → `await removeDir()` across several integration test files (QueueIndex.integration.test.ts, relayRead.integration.test.ts, QueueDaemon.integration.test.ts, QueueSdk.integration.test.ts) using sed. This suggests a broad requirement that should have been upfront or applied uniformly in one pass.
+- Cross-team dependency sequencing: dsl-ui version block identified, plan for subscriber-names created and shared, visual testing via agent-browser after each feature bundle.
+
+<!-- session ca620a5a 2026-10-24 -->
+- Parallel agents launched for similar deflaking work across independent packages (queue-cli, queue-relay-client, queue-core, etc.) — verify no file-write races or conflicting modifications before parallelizing mass refactoring.
+- Sleep-based test polling (280-290s waits between vitest runs) fragile and machine-dependent — indicates timing assumptions baked into test harness that will fail under load.
+- Test-first workflow with immediate bundling and agent-browser UI verification for each feature (giveup, events, subscriber names) worked well, but required careful version coordination of external module dependencies that weren't guaranteed to be available when needed.
+
+<!-- session 29f6efb2 2026-10-24 -->
+- Multiple `queue wait ci` waits across commits (5a180bb, f3fe529, 32e8383, 52664db, 58dde7d) and repeated bundle/register cycles suggest tight feedback loops; CI cycle time or local test coverage may be worth auditing if this pattern repeats.
+- Large test suites take 240+ seconds; agents use `sleep + tail` polling instead of streaming output, burning context on silent waits
+- Iterative feature work uses bundle versioning (0.0.9-giveup, 0.0.9-events2, 0.0.9-md) to test changes before final commit.
+
+<!-- session 93cf3ce8 2026-10-18 -->
+- CLAUDE.md routes list (status/activity/history/replay/dlq/subscribers/push) drifted from actual implementation. Docs need sync enforcement or auto-generation.
+
+<!-- session 0b8f766f 2026-10-18 -->
+- CI wait polling uses `sleep 100/60; echo waited` + manual result checking instead of structured polling. No direct access to CI status between sleep cycles — suggests uncertain about optimal wait intervals.
+
+<!-- session 1f6af8e0 2026-10-18 -->
+- Consistent use of Read before Edit and proper `git mv` for renames; methodical file protocol; proactive delegation via SendMessage to team members instead of blocking on interdependencies
+- When debugging test failures in monorepo: capture full output to /tmp/ first, then grep/isolate by workspace, rather than running workspace tests cold
+
+<!-- session de7e2366 2026-10-18 -->
+- Long CI waits (12–25 min) with polling sleeps; consider documenting expected CI times per commit type in guiding-principles.md to set expectations upfront.
+
+<!-- session 6b2405c4 2026-10-18 -->
+- Mid-task scope narrowing redirects indicate agent should checkpoint/approve approach before diverging, not after
 
 <!-- session 19baf9ca 2026-10-17 -->
 - `sleep 100` used for CI waits (09:56:08, 09:59:41, 17:28:30) instead of the documented `queue wait ci` approach referenced in CLAUDE.md; adds unnecessary delays to session.
@@ -149,6 +179,66 @@
 - Manual E2E test cycle needed after each deployment: daemon lifecycle (start/stop), event push/delivery, DLQ checks, and dispatch log verification.
 
 ## Agent errors
+
+<!-- session 4ff1a10a 2026-10-24 -->
+- Multiple agents (ac5f, acbf, aa20, ae09) spawned in parallel for wall-clock-fragility deflaking across 4+ packages at 09:46:02+ without explicit verification before reporting completion—no evidence results were reviewed for correctness.
+- Violations rule `queue-sdk/no-off-outside-tests` created but not auto-applied by global CLI; required manual sample-file testing at 08:08:06-08:08:35 to verify, revealing integration/adoption gap.
+- Multiple agents independently discovered timing/flakiness issues in tests and applied logical clocks (`logicalClock.ts`) as a fix pattern, suggesting the issue wasn't diagnosed upfront before running parallel agents on timing-sensitive code.
+- Three parallel agents (a7d4, ad8e, a561) were delegated to build independent pieces of the event-catalog feature (SDK, CLI, Dashboard). While the pattern is efficient, the agents made invasive changes across shared files (fakeDaemon.ts, multiple test files) without explicit coordination — conflicting edits were possible.
+- write-doc skill invoked before ToolSearch loaded its schema (10:20:54 warning "NOT YET KNOWN"). Agents should validate skill availability or use ToolSearch("select:write-doc") before calling.
+- Multiple agents (a561, a7d4, ad8e, ac5f, ae09, acbf) editing interdependent files simultaneously required manual SendMessage coordination to prevent race conditions. The coordination was explicit but fragile.
+
+<!-- session ca620a5a 2026-10-24 -->
+- Hardcoded version strings ('1.0.0' → '1.1.0') updated in multiple test files instead of using PROTOCOL_VERSION constant — suggests agents don't enforce DRY or know about existing constants.
+- Multiple temporary fixture .mjs files created in /tmp (ed3.mjs through ed8.mjs) without visible cleanup — test infrastructure complexity is leaking resource management responsibility.
+- Skill invocation (write-doc at 10:20:54) attempted without first using ToolSearch to load its schema — skill name was "NOT YET KNOWN"
+- Frequent creation of temporary .mjs transformation scripts in /tmp/qfixture (add-links.mjs, abandon-op.mjs, stuck-op.mjs, events-ui-tests.mjs, etc.) to generate test and implementation code across multiple files, rather than using systematic file edits. Pattern works but suggests agents were treating complex cross-file refactoring as scripting problems instead of coordinated edits.
+
+<!-- session 29f6efb2 2026-10-24 -->
+- Agents spawned for parallel deflaking (queue-cli, queue-relay-client, core/sdk/plugin) at 09:45-09:46 created shared test helpers (waitFor.ts) within each delegation scope rather than upfront — should have provided common test utilities before spawning so agents could focus on applying them.
+- Multiple agents write temp fixture files with no cleanup strategy; later manual intervention needed (queue-replay-cwd-* directory cleanup with Windows attrib issues)
+- File coordination between parallel agents on waitFor.ts is reactive (SendMessage after conflicts) not pre-planned; ae09 and aa20 both modifying the same file without explicit division
+- None detected in command syntax or assumptions.
+
+<!-- session 93cf3ce8 2026-10-18 -->
+- Invoked deferred MCP tools without using ToolSearch to load schemas first (mcp__github-wadeck-app__actions_list, mcp__github-wadeck-app__get_job_logs)
+- Repeated user clarifications on dependency structure and module scope at 13:14, 14:14, 14:47 — insufficient pre-implementation requirements analysis; same ambiguity prompted user three times rather than resolving once
+- manifest.json was missing `"id": "queue"` field, causing app-core module registration to fail.
+- Multiple test file import fixes required (fileURLToPath, index.ts exports, RelayDaemon.ts exports) — initial scaffolding was incomplete.
+- Manual 110-second sleep used instead of documented `queue wait ci <sha> --cli-foreground` command from CLAUDE.md (line about waiting for CI after push)
+- Manual polling loop (`for i in $(seq 1 30)`) for relay status instead of proper waiting mechanism, despite `queue wait ci` pattern being documented
+
+<!-- session 0b8f766f 2026-10-18 -->
+- Assistant asked clarification questions mid-refactoring (13:14:14, 14:14:46, 14:47:49 in French: queue-cli deps, business logic scope, module capabilities) rather than up front. Large architectural refactoring (file moves, package restructuring) proceeded without confirming design decisions first — clarifications came during implementation.
+- Directory structure assumptions: files were initially in `src/`, then discovered they needed to be in `src/backend/` and `src/dsl-views/` per app-core requirements, requiring a bulk move and path rewrites.
+
+<!-- session 1f6af8e0 2026-10-18 -->
+- MCP tools called without loading schemas first via ToolSearch (fragment shows mcp__github-wadeck-app__actions_list, etc. marked "*** NOT YET KNOWN ***")
+- Multiple AskUserQuestion entries in French ("Quel chemin...", "Le module doit...") contradict stated English-default requirement
+- manifest reorganization and module setup took multiple iterations; assistant was discovering structure requirements during implementation rather than validating upfront
+- Permission bypass flow via `request-bypass.js` requires explicit approval; agent correctly used this but path is non-obvious for future sessions
+
+<!-- session de7e2366 2026-10-18 -->
+- Large refactoring executed without upfront strategy — 30+ sequential small edits (file moves, imports, test writes) across multiple packages without explaining the end state first; required mid-stream user clarifications (AskUserQuestion at 13:14, 14:14, 14:47) and coordination emails to other teams.
+- Underestimated migration scope mid-task: moving app-module-queue to app-core-cli layout required not just src/ restructuring but parallel updates to manifest.json ("id" field requirement, not initially caught), tsconfig.json, .gitignore, package.json, and bundle script rewrites. Discovered incrementally through app-core validation failures.
+- Used temporary .mjs shell scripts to transform complex file structures (manifest rewriting, import path swaps, bundle edits) instead of direct file operations, suggesting the transformation patterns are not well-understood or are too multi-line for simple Edit tool usage.
+
+<!-- session e3a1928e 2026-10-18 -->
+- At 12:43:59, agent entered sleep loop (100s + 60s waits) instead of using `queue wait ci` notification; polling wastes cache and token context. Should use the `poll-ci` skill exclusively after pushes.
+- At 13:09:39, discovered mid-implementation that `configDir` logic should move from app-module-queue to queue-core but continued implementing instead of pausing to confirm scope with user first.
+- At 14:14:18 and 14:47:25, `AskUserQuestion` calls marked "NOT YET KNOWN" — user question mechanism failed silently; agent inferred decisions instead of confirming.
+
+<!-- session ebf8428c 2026-10-18 -->
+- 40-minute investigation of daemon/update/registration mechanics (11:56-12:51) before recognizing CLI vs daemon boundary — reverse-engineered from shared-updater and app-core dist/ instead of asking
+
+<!-- session 9d143482 2026-10-18 -->
+- File created in wrong location—both `.claude/lessons-learned.md` and `.claude/kb/lessons-learned.md` committed, but CLAUDE.md specifies lessons should be at `.claude/kb/lessons-learned.md`; suggests kb skill or file creation logic sent it to wrong directory initially
+
+<!-- session 4047e640 2026-10-18 -->
+- When invoking deferred tools (write-doc, code-review, poll-ci, etc.), agent must preemptively fetch schemas via ToolSearch before calling them directly — calling without fetching will fail with InputValidationError
+
+<!-- session 6b2405c4 2026-10-18 -->
+- R9 agent diverged on backoff/subscription logic; user redirect with "finish from the red state, narrow scope" mid-task — complex async patterns need explicit upfront constraints before implementation
 
 <!-- session 19baf9ca 2026-10-17 -->
 - Deferred MCP tools (mcp__github-wadeck-app__actions_list, mcp__github-wadeck-app__actions_get, etc.) were invoked directly without first calling ToolSearch to fetch their schemas; resulted in "NOT YET KNOWN" warnings at 09:21:53, 09:24:01, 10:41:56, and elsewhere.
@@ -485,6 +575,55 @@
 
 ## Documentation gaps
 
+<!-- session 4ff1a10a 2026-10-24 -->
+- Test timeout/fragility patterns (setTimeout, Date.now, hardcoded delays) not documented; guiding-principles.md updated reactively (09:45:44) but no proactive guide for teams on which patterns to avoid.
+- SDK testing helpers (makeTempDir, removeDir, closedPort, waitFor) duplicated across packages; no centralized API or pattern guide—each package reinvents with inconsistent signatures.
+- File rename (waitFor.ts → testWaitFor.ts) required scattered sed-based import updates, suggesting the module's role/location wasn't obvious from context. No clear guidance on test helper file naming or structure.
+- Protocol version bumps from 1.0.0 → 1.1.0 require cascading updates across docs/push-protocol.md, README.md, packages/queue-sdk/README.md, and guiding-principles.md. No central pattern documented; updates are manual and error-prone.
+- Node script pattern (multi-file coordinated edits in temp files) and BUNDLE_VERSION markers used extensively but not documented in project CLAUDE.md. DSL component discovery requires cross-workspace grepping (no centralized reference).
+
+<!-- session ca620a5a 2026-10-24 -->
+- The waitFor/condition-based-wait pattern for replacing setTimeout-based test flakiness should be documented for future test improvements; this chunk shows systematic replacement but no explicit record of the pattern.
+- ciWait*/ciGit*/ciInfer* files marked "to be replaced by unit tests" with no docs on replacement strategy or migration path — ambiguity caused a "do not touch" message mid-refactor.
+- Protocol version bumps (1.0.0 → 1.1.0) require scattered manual updates across README/docs/contracts/type defs/tests — no automation or lint rule prevents incomplete bumps; process should be runbook'd
+- Multiple SendMessage calls requesting upstream features before implementation could be completed: dsl-ui Markdown component, DataTable tooltips, icon support on YAML row actions, then dsl-ui version constraint (>= -172). Features were needed mid-implementation, blocking progress until other projects delivered.
+
+<!-- session 29f6efb2 2026-10-24 -->
+- The deflaking pattern (condition-based waits instead of wall-clock timeouts) required updating guiding-principles.md mid-work; agents needed to discover and codify this pattern by reading existing test code rather than having it documented beforehand.
+- DSL renderer (CompactSelect, badge conditions) documentation scattered across dsl-view project; agent a561 had to search external workspace instead of finding it locally
+- Initial task delegations to sub-agents used vague terminology ("5 negative N-ms checks", "injected signals") without file paths or line numbers, requiring sub-agents to search the codebase to understand scope; follow-up messages clarified requirements
+- Cross-workspace coordination requires multiple SendMessage calls to different owners (dsl-owner, app-core-owner, etc.); orchestration pattern suggests missing unified dependency/blocker documentation.
+
+<!-- session 93cf3ce8 2026-10-18 -->
+- Module directory structure (src/backend, src/dsl-views) had to be inferred from app-core's module-authoring.md; queue project's CLAUDE.md doesn't explain this constraint.
+- Violations rules misconfigured or too strict — multiple retries adding suppressions. Rules aren't documented or don't match the project's code shape.
+- `request-bypass.js` script usage (called with `--category git-commit`) is undocumented; unclear if this is a standard tool or a workaround the agent invented
+
+<!-- session 0b8f766f 2026-10-18 -->
+- write-doc skill invoked at 14:20:07 but not yet loaded ("*** NOT YET KNOWN ***") — halted documentation update mid-refactoring.
+- App-core module manifest structure was unclear: the `"id"` field in manifest.json is required but not obvious until rejected by CI/violations rules; the dual-location sync requirement (source vs installed `dist-module/app-module/`) was discovered through trial.
+- Module file organization (backend vs dsl-views split, which files go where) required trial-and-error directory restructuring; should be documented in module-authoring.md.
+- Relay on-demand behavior (starts when needed, stops when idle) vs auto-start expectations on boot: not clearly documented; required investigation into logs and lifecycle to understand actual behavior.
+
+<!-- session 1f6af8e0 2026-10-18 -->
+- app-core module directory structure (src/backend and src/dsl-views split) required reading external docs and trial-and-error; no upfront validation that source layout matches expectations
+- manifest.json "id" field requirement for app-core modules caused registration failure; should fail earlier or be documented more prominently
+- app-core bundling/packaging contract (BUNDLE_VERSION env var, dist-module output structure, import_meta handling) had to be reverse-engineered from integration tests
+
+<!-- session de7e2366 2026-10-18 -->
+- Searching for cross-repo patterns (without-daemon, registerWithAppCore, restartDaemon) took multiple grep rounds — architectural decisions like "queue-core is pure logic, registration moves to queue-cli" and "app-core SDK registration happens at update-time" should be documented in `.claude/product-vision.md`.
+- app-core module authoring checklist not explicit: "id" field in manifest.json was required by app-core 2026.10.18+ but not caught until app-core rejected the module; src/backend + src/dsl-views layout was inferred from app-core-sdk docs, not stated as mandatory in project docs.
+- Violations rules for generated artifacts (dist-types/, api-backend/, dsl-frontend/) not pre-configured; had to manually add exclusions to .violations/config.ts and barrel-index suppression comments after violations check failures.
+
+<!-- session e3a1928e 2026-10-18 -->
+- Extended grepping for `without-daemon`, `with-daemon`, `RestartDaemonConfig` (12:38–12:45) suggests unclear integration patterns between CLI updater, daemon lifecycle, and app-core SDK registration.
+- App-core-sdk usage requires reverse-engineering from `node_modules/@wadeck-app/app-core-sdk/dist` (12:50:37); usage patterns should be documented in the SDK, not discovered through debugging.
+
+<!-- session ebf8428c 2026-10-18 -->
+- Queue-core/queue-cli/app-module-queue package boundaries and responsibility split not upfront — led to 30-minute refactor (12:40-12:51) moving AppCoreRegistration, then user clarification at 13:14
+- Which queue operations (push/replay/dlq/reads) accessible from module vs CLI vs daemon — required user question at 14:47
+- Configuration directory ownership: initially lived in app-module-queue, moved to queue-core at 13:09 without clear spec
+
 <!-- session 19baf9ca 2026-10-17 -->
 - poll-ci skill was poorly documented, leading to late-session SKILL.md creation/update (17:46:07–17:46:18) to clarify usage and integrate it with CLAUDE.md guidance.
 
@@ -682,6 +821,64 @@
 - New violations rules require a corresponding test file (`src/rules/[category]/[rule].test.ts`), or self-check fails with no clear error message pointing to the root cause.
 
 ## Known constraints
+
+<!-- session 4ff1a10a 2026-10-24 -->
+- Version management scattered: BUNDLE_VERSION env var, package.json, embedded in daemon code—no single source of truth discovered; investigation at 08:03:23-08:04:54 showed confusion across multiple grep attempts.
+- Browser-based dashboard testing via manual agent-browser screenshots (choice1-3, logs1-4, ov1, hist1-2 at 09:15+); no structured UI test framework; visual regression is manual.
+- Windows temp directory cleanup for `queue-replay-cwd-*` dirs requires intervention (cmd //c attrib), blocking normal rm/rmdir. This recurring pain point deserves a documented workaround or cleanup script.
+- Timing-dependent tests are expensive to eliminate: the RelayConnection.test.ts refactoring (13:18–13:26) replaced five sleep checks with injected signals via six helper scripts (.mjs files) and required manual SendMessage orchestration. Injecting test barriers is the pattern, but it scales poorly.
+- Integration tests (relayEndToEnd.integration.test.ts, QueueSdk.integration.test.ts) depend on external services (relay daemon, queue daemon) running and properly configured. Load testing during test runs (node load.mjs 300000 concurrent) adds latency sensitivity and flakiness risk.
+- dsl-ui Markdown node requires version >= -172; DataTable cell tooltips documented as future work. Blocking dependencies communicated proactively via SendMessage to stakeholders.
+
+<!-- session ca620a5a 2026-10-24 -->
+- Some packages (queue-relay-client) lack vitest.config.ts; agents added it when setting up test deflaking infrastructure.
+- Test utilities (waitFor.ts) created per-package in testing/ subdirectories rather than shared, suggesting each package handles its own test infrastructure setup.
+- Windows temp directory cleanup fails (queue-replay-cwd-* dirs stuck; required manual `attrib /D` commands) — POSIX rm patterns don't fully work under MSYS2; needs explicit Windows cleanup logic.
+- Heavy use of sed -i commands for code patching without explicit success verification or retry logic — creates risk of silent failures; agents work around bash complexity limits by creating temporary .mjs patch files instead of inline shell
+- Queue project has tight coupling to @wadeck-app/dsl-ui and app-core versions. Feature implementation was gated by cross-project capability availability (Markdown renderer, cell tooltips, row action icons), requiring explicit requests and version upgrades from other teams.
+
+<!-- session 29f6efb2 2026-10-24 -->
+- Tests are heavily machine-speed-dependent; session implements complex logical-clock + synchronization system as workaround rather than fixing root timing issues
+- Agents created temporary .mjs scripts for complex orchestration of multi-file test modifications (RelayConnection seams, catalog setup) rather than sequential Edit calls—worth documenting whether this pattern indicates legitimate need for batch orchestration or opportunity for simpler approaches
+- Heavy reliance on cross-workspace packages (dsl-ui >= required version, component APIs) creates coordination bottlenecks — work blocked waiting for upstream dsl-ui version before proceeding with Markdown/tooltip features.
+- Guardrails blocking git-commit operations; bypass bypass requests required (seen in final guardrails log).
+- Complex file edits performed via scripted .mjs files in temp directories rather than direct file operations — suggests programmatic transformation pattern for multi-file coordination.
+
+<!-- session 93cf3ce8 2026-10-18 -->
+- Inconsistent CI waiting: mixed `sleep` loops with `queue wait ci`; should standardize on poll-ci skill to avoid wasting cache between rounds
+- Relay daemon doesn't auto-start after system reboot; no autostart mechanism configured.
+
+<!-- session 0b8f766f 2026-10-18 -->
+- User asks design questions in French (CLAUDE.md: English-only output) — potential for miscommunication when architectural decisions (package deps, module scope, WAL contracts) are discussed in mixed language.
+- Manifest versions must stay synchronized across source and bundled output locations; changes in one require verification/update in the other, or routes/code disappear from the live module.
+- Violations rules can reject new module manifest formats; published rules may flag valid local changes as violations until the rule version is bumped.
+
+<!-- session 1f6af8e0 2026-10-18 -->
+- Large structural refactoring (file moves, package deps, config extraction) spanned ~35 min; required multiple test cycles and careful sequencing of git operations with CI waits between commits
+- Published violations rules can reject new code patterns retroactively; shared-cli's rule about "source manifest" started failing when module manifest was reorganized — required coordination with external owner
+- On-demand relay lifecycle required coordination between RelayDaemon, waitCli, and onDemand modules; initial design was incomplete and needed refactoring mid-stream
+- FileLock concurrency tests run in a loop (12 iterations) on transient failures—Windows-level error handling (EPERM/EBUSY/EACCES) retry behavior is implicit
+- Relay daemon stops itself when on-demand marker is removed; this behavior must stay documented in guiding-principles.md to avoid confusion
+
+<!-- session de7e2366 2026-10-18 -->
+- Package dependency tree has specific rules ("queue-cli must not depend on app-core-sdk"; "app-module-queue depends on queue-core but not queue-cli") — these should be captured as explicit dependency audit rules or violations checks, not discovered via user clarification mid-implementation.
+- app-core-cli check → bundle → real server test cycle is required for validation, not obvious from docs; multiple round-trips to verify correct packaging, especially import_meta handling in the bundled .cjs.
+
+<!-- session e3a1928e 2026-10-18 -->
+- Multiple WAL storage iterations (14:16–14:18) fixing newline inconsistencies; existing code lacked clear formatting conventions — agent had to debug rather than follow patterns.
+- Daemon state is complex and timing-sensitive (config dirs, health files, socket state); registration changes are observable but not well-documented in logs or daemon output.
+
+<!-- session ebf8428c 2026-10-18 -->
+- Daemon registration with app-core requires understanding 5+ interdependent surfaces: app-core SDK, shared-updater strategies, registry/routes/loader in app-core, QueueDaemon lifecycle, and cli update entry point
+
+<!-- session 9d143482 2026-10-18 -->
+- bash.exe.stackdump files generated during bash operations on Windows; requires explicit `rm` + `.gitignore` update (already documented in user CLAUDE.md, but cleanup pattern is manual not automatic)
+
+<!-- session 4047e640 2026-10-18 -->
+- Windows bash generates `*.stackdump` files that should be in .gitignore to prevent them from polluting the repo; this appears recurring per recent commit message
+
+<!-- session 6b2405c4 2026-10-18 -->
+- Windows bash.exe.stackdump crash files need .gitignore entries (project reference: windows-hidden-process.md)
 
 <!-- session 19baf9ca 2026-10-17 -->
 - Browser automation (agent-browser) sessions can leave orphaned processes requiring manual taskkill cleanup (10:41:26); should detect stale sessions at startup or add explicit close/cleanup hooks.

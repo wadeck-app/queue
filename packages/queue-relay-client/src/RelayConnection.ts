@@ -26,6 +26,24 @@ export interface RelayConnectionOptions {
   retryDelayMs?: number;
   reconnect?: Partial<ReconnectOptions>;
   heartbeat?: { intervalMs: number; timeoutMs: number };
+  // Exists for timing-free test assertions: replaces the sleep of the connection loop (retry and backoff waits) so a test can
+  // count the loop passes instead of waiting a duration. Production never sets it.
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  // Exists for timing-free test assertions: replaces the timer functions of the heartbeat so a test can see whether a tick is
+  // still scheduled (for example after stop()). Production never sets it.
+  heartbeatTimers?: HeartbeatTimers;
+  // Exists for timing-free test assertions: called once when the connection loop has ended (stop() was honoured), so a test can
+  // wait for that fact instead of a duration before asserting that nothing reconnected. Production never sets it.
+  onLoopEnd?: () => void;
+}
+
+// How a delivery ended: pushed to the queue daemon, failed (push error, aborted or rejected), dropped by its plugin, matched no
+// subscription of relay.yml, or no plugin is loaded for its source
+type DeliveryOutcome = 'pushed' | 'failed' | 'dropped' | 'no-subscription' | 'no-plugin';
+
+export interface HeartbeatTimers {
+  set: (fn: () => void, ms: number) => NodeJS.Timeout;
+  clear: (timer: NodeJS.Timeout) => void;
 }
 
 export interface ConnectionDiagnostics {
@@ -75,6 +93,9 @@ export class RelayConnection {
   private readonly retryDelayMs: number;
   private readonly reconnect: ReconnectOptions;
   private readonly heartbeat: { intervalMs: number; timeoutMs: number };
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  private readonly heartbeatTimers: HeartbeatTimers;
+  private readonly onLoopEnd: (() => void) | undefined;
   private ws: WebSocket | null = null;
   private connected = false;
   private stopped = false;
@@ -105,6 +126,9 @@ export class RelayConnection {
     this.configDir = options.configDir;
     this.log = options.onLog ?? (() => {});
     this.retryDelayMs = options.retryDelayMs ?? NO_CONFIG_RETRY_DELAY_MS;
+    this.sleep = options.sleep ?? sleep;
+    this.onLoopEnd = options.onLoopEnd;
+    this.heartbeatTimers = options.heartbeatTimers ?? { set: (fn, ms) => setTimeout(fn, ms), clear: (timer) => clearTimeout(timer) };
     this.reconnect = {
       minMs: options.reconnect?.minMs ?? MIN_RECONNECT_DELAY_MS,
       maxMs: options.reconnect?.maxMs ?? MAX_RECONNECT_DELAY_MS,
@@ -133,7 +157,11 @@ export class RelayConnection {
 
   async start(): Promise<void> {
     this.stopped = false;
-    await this.connectLoop();
+    try {
+      await this.connectLoop();
+    } finally {
+      this.onLoopEnd?.();
+    }
   }
 
   stop(): void {
@@ -143,7 +171,7 @@ export class RelayConnection {
     this.sleepAbortController?.abort();
     // Clear heartbeat timer on stop
     if (this.heartbeatTimer) {
-      clearTimeout(this.heartbeatTimer);
+      this.heartbeatTimers.clear(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
   }
@@ -167,7 +195,7 @@ export class RelayConnection {
         this.lastError = errorMsg;
         this.lastErrorAt = new Date().toISOString();
         this.sleepAbortController = new AbortController();
-        await sleep(this.retryDelayMs, this.sleepAbortController.signal);
+        await this.sleep(this.retryDelayMs, this.sleepAbortController.signal);
         // Check stopped flag after sleep before retrying config load
         if (this.stopped) {
           break;
@@ -183,7 +211,7 @@ export class RelayConnection {
         );
         this.connected = false;
         this.sleepAbortController = new AbortController();
-        await sleep(this.retryDelayMs, this.sleepAbortController.signal);
+        await this.sleep(this.retryDelayMs, this.sleepAbortController.signal);
         // Check stopped flag after sleep before retrying
         if (this.stopped) {
           break;
@@ -206,7 +234,7 @@ export class RelayConnection {
         this.lastError = errorMsg;
         this.lastErrorAt = new Date().toISOString();
         this.sleepAbortController = new AbortController();
-        await sleep(this.retryDelayMs, this.sleepAbortController.signal);
+        await this.sleep(this.retryDelayMs, this.sleepAbortController.signal);
         // Check stopped flag after sleep before retrying
         if (this.stopped) {
           break;
@@ -227,7 +255,7 @@ export class RelayConnection {
         ) {
           // Token hasn't changed; stay in retry loop without reconnecting
           this.sleepAbortController = new AbortController();
-          await sleep(this.retryDelayMs, this.sleepAbortController.signal);
+          await this.sleep(this.retryDelayMs, this.sleepAbortController.signal);
           if (this.stopped) {
             break;
           }
@@ -271,7 +299,7 @@ export class RelayConnection {
       }
 
       this.sleepAbortController = new AbortController();
-      await sleep(backoffMs, this.sleepAbortController.signal);
+      await this.sleep(backoffMs, this.sleepAbortController.signal);
       // Check stopped flag after sleep before retrying
       if (this.stopped) {
         break;
@@ -325,10 +353,10 @@ export class RelayConnection {
           // Send ping to check liveness
           ws.ping();
           // Schedule next tick
-          this.heartbeatTimer = setTimeout(tick, this.heartbeat.intervalMs);
+          this.heartbeatTimer = this.heartbeatTimers.set(tick, this.heartbeat.intervalMs);
         };
 
-        this.heartbeatTimer = setTimeout(tick, this.heartbeat.intervalMs);
+        this.heartbeatTimer = this.heartbeatTimers.set(tick, this.heartbeat.intervalMs);
         // Make timer non-blocking (don't keep process alive)
         if (this.heartbeatTimer.unref) {
           this.heartbeatTimer.unref();
@@ -370,7 +398,7 @@ export class RelayConnection {
         this.connected = false;
         // Clear heartbeat timer when connection closes
         if (this.heartbeatTimer) {
-          clearTimeout(this.heartbeatTimer);
+          this.heartbeatTimers.clear(this.heartbeatTimer);
           this.heartbeatTimer = null;
         }
         // Record the close code for diagnostics (only when the websocket really opened)
@@ -574,17 +602,28 @@ export class RelayConnection {
     }
   }
 
+  // The last line of every delivery, logged once its handling is over (the push included), whatever the outcome. It exists for
+  // timing-free test assertions: a test waits for this line instead of a duration. Format: "[relay] Delivery <id> processed (<outcome>)".
   private async dispatchEvent(envelope: RelayEnvelope): Promise<void> {
+    let outcome: DeliveryOutcome = 'failed';
+    try {
+      outcome = await this.processDelivery(envelope);
+    } finally {
+      this.log(`[relay] Delivery ${envelope.deliveryId} processed (${outcome})`);
+    }
+  }
+
+  private async processDelivery(envelope: RelayEnvelope): Promise<DeliveryOutcome> {
     const loaded = this.loadedPlugins.find((entry) => entry.plugin.source === envelope.source);
     if (!loaded) {
       this.log(`[relay] No plugin loaded for source "${envelope.source}" -- dropping delivery ${envelope.deliveryId}.`);
-      return;
+      return 'no-plugin';
     }
 
     const mapped = loaded.plugin.mapEvent(envelope);
     if (!mapped) {
       this.log(`[relay] Plugin "${loaded.plugin.source}" dropped delivery ${envelope.deliveryId}.`);
-      return;
+      return 'dropped';
     }
 
     // Find the FIRST subscription that matches both eventType and payloadMatch (client-side).
@@ -602,7 +641,7 @@ export class RelayConnection {
 
     if (!matchingSubscription) {
       this.log(`[relay] Delivery ${envelope.deliveryId} (${envelope.eventType}) matched no subscription in relay.yml -- dropped.`);
-      return;
+      return 'no-subscription';
     }
 
     const event = matchingSubscription.queueEvent ?? mapped.event;
@@ -611,11 +650,13 @@ export class RelayConnection {
       await ensureDaemonRunning(this.configDir);
       const result = await pushToQueue(this.configDir, event, mapped.payload);
       this.log(pushLogLine({ event, deliveryId: envelope.deliveryId, result, configDir: this.configDir }));
+      return result.status === 'aborted' || result.status === 'rejected' ? 'failed' : 'pushed';
     } catch (err) {
       this.log(
         `[relay] Failed to push "${event}" (delivery ${envelope.deliveryId}): ${getErrorMessage(err)}. ` +
         `Check subscribers.yml and the daemon logs in ${this.configDir}/logs.`
       );
+      return 'failed';
     }
   }
 }

@@ -82,7 +82,7 @@ describe('replayEvent', () => {
     await expect(replayEvent(configDir, 'e1')).rejects.toThrow(ReplayError);
     const err = await replayEvent(configDir, 'e1').catch(e => e);
     expect(getErrorMessage(err)).toMatch(/has no recorded working directory/);
-    expect(getErrorMessage(err)).toMatch(/cd .* && queue replay/);
+    expect(getErrorMessage(err)).toMatch(/queue replay e1 --cwd <project>/);
   });
 
   it('throws ReplayError when entry has cwd but directory no longer exists', async () => {
