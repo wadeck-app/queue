@@ -56,14 +56,14 @@ sections:
     emptyMessage: No events on this page
     columns:
       - { key: "ts", label: "Time", format: "datetime" }
-      - { key: "event", label: "Event", href: "/modules/queue/events?q={event}" }
+      - { key: "event", label: "Event", href: "/modules/queue/events/{event}" }
       - { key: "eventId", label: "Event ID", mono: true }
       - { key: "project", label: "Project" }
       - { key: "matchedCount", label: "Matched" }
       - { key: "totalCount", label: "Total" }
       - type: actions
         items:
-          - { label: Replay, action: replayEvent, variant: primary }
+          - { label: Replay, action: replayEvent, icon: play, variant: primary }
 
   - $type: HorizontalStack
     justify: justify-between

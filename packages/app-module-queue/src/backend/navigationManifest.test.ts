@@ -16,7 +16,7 @@ describe('pages are linkable (widgets and other pages link to /modules/queue<pat
   it('every page has a distinct path starting with a slash', () => {
     const paths = pages.map((page) => page['path']);
     for (const path of paths) {
-      expect(path, JSON.stringify(path)).toMatch(/^\/[a-z0-9_-]*$/);
+      expect(path, JSON.stringify(path)).toMatch(/^(\/(:?[a-z0-9_-]+)?)+$/);
     }
     expect(new Set(paths).size).toBe(paths.length);
   });

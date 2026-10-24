@@ -36,18 +36,17 @@ describe('events-page.yaml: what the table shows and what the expanded row shows
     expect(keys).not.toContain('lastSeenAt');
   });
 
-  it('expands to the description rendered as Markdown, then the JSON of the rest', () => {
-    const expansion = table['expansion'] as Node;
-    expect(expansion['$type']).toBe('VerticalStack');
-    const [markdown, json] = expansion['items'] as Node[];
-    expect(markdown).toMatchObject({ $type: 'Markdown', text: '$ctx.row.description' });
-    expect(json).toMatchObject({ $type: 'JsonViewer', row: '$ctx.row', field: 'detailsText' });
+  it('expands to the description rendered as Markdown, nothing else: the rest is on the page of the event', () => {
+    expect(table['expansion']).toEqual({ $type: 'Markdown', text: '$ctx.row.description' });
   });
 
-  // An icon-only button cannot wrap; its label stays the accessible name and the tooltip.
-  it('keeps the push button to one line: icon only', () => {
-    const actions = (columns.find((column) => column['type'] === 'actions') as { items: Array<{ icon?: string }> }).items;
-    expect(actions[0]?.icon).toBe('rocket');
+  it('has no test push in the list: it sits next to the example on the page of the event', () => {
+    expect(columns.find((column) => column['type'] === 'actions')).toBeUndefined();
+    expect(doc['$actions']).toBeUndefined();
+  });
+
+  it('links the name to the page of that event, by exact name', () => {
+    expect(columns[0]).toMatchObject({ key: 'name', href: '/modules/queue/events/{name}' });
   });
 });
 
@@ -94,8 +93,8 @@ describe('events-page.yaml', () => {
     expect(badge['variant']).toBe('warning');
   });
 
-  it('has the columns name, source, description excerpt, 24 h, last seen, status, then the row actions', () => {
-    expect(columns.map((column) => column['key'] ?? column['type'])).toEqual(['name', 'source', 'descriptionExcerpt', 'count24h', 'lastSeenText', 'status', 'actions']);
+  it('has the columns name, source, description excerpt, 24 h, last seen, status', () => {
+    expect(columns.map((column) => column['key'] ?? column['type'])).toEqual(['name', 'source', 'descriptionExcerpt', 'count24h', 'lastSeenText', 'status']);
     expect(columns[0]?.['mono']).toBe(true);
   });
 
@@ -108,15 +107,6 @@ describe('events-page.yaml', () => {
     expect(Object.keys(status.badge).sort()).toEqual(['declared', 'undeclared']);
   });
 
-  it('puts the details in an expanded row, like the payload of the History page', () => {
-    const expansion = (table['expansion'] as { items: Node[] }).items[1] as Node;
-    expect(expansion['$type']).toBe('JsonViewer');
-    // JsonViewer gets no row otherwise and renders an empty block
-    expect(expansion['row']).toBe('$ctx.row');
-    expect(expansion['field']).toBe('detailsText');
-    expect(expansion['maxHeight']).toBeDefined();
-  });
-
   it('explains in one sentence how a program declares its events when there are none', () => {
     const message = String(table['emptyMessage']);
     expect(message).toContain('queue.registerEvents');
@@ -125,16 +115,8 @@ describe('events-page.yaml', () => {
     expect(message.split('. ')).toHaveLength(1);
   });
 
-  it('pushes a test event from the row, after a confirmation that says it runs the real subscribers', () => {
-    const action = (doc['$actions'] as Record<string, Node>)['pushTest'] as Node;
-    expect(action['url']).toBe('POST /api/modules/queue/events/{name}/push-test');
-    expect(String(action['confirm'])).toMatch(/real subscribers/);
-    const actions = columns.find((column) => column['type'] === 'actions') as { items: Node[] };
-    expect(actions.items).toEqual([{ label: 'Push test event', action: 'pushTest', icon: 'rocket', variant: 'primary', condition: 'canPushTest' }]);
-  });
-
   it('is made of DSL nodes only: no raw HTML', () => {
-    expect(new Set(allTypes(doc))).toEqual(new Set(['PageContent', 'PageHeader', 'HorizontalStack', 'SearchBar', 'CompactSelect', 'Badge', 'DataTable', 'VerticalStack', 'Markdown', 'JsonViewer']));
+    expect(new Set(allTypes(doc))).toEqual(new Set(['PageContent', 'PageHeader', 'HorizontalStack', 'SearchBar', 'CompactSelect', 'Badge', 'DataTable', 'Markdown']));
     // comments may mention a tag, the nodes may not carry one
     const withoutComments = text.split('\n').filter((line) => !line.trim().startsWith('#')).join('\n');
     expect(withoutComments).not.toMatch(/<\/?[a-z][a-z0-9]*[ >/]/i);

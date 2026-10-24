@@ -1,0 +1,121 @@
+# One event type: what the program declared (description, schema, example) next to what really happened (24 h count, last push).
+# Reached by link only (/events/<event name>), from the Events list, History, Subscribers and the Overview.
+$sources:
+  event:
+    url: GET /api/modules/queue/events/detail
+    params:
+      name: $route.name
+
+# {name} comes from the params of the ActionButton (percent-encoded); the body carries the payload text, which the route validates against the schema again.
+$actions:
+  pushTest:
+    url: POST /api/modules/queue/events/{name}/push-test
+    confirm: Push this event with its example payload? It runs the real subscribers of this event.
+    successMessage: Test event pushed
+    errorPrefix: Could not push the test event
+    reloadSources: true
+
+$type: PageContent
+sections:
+  # The source is a badge next to the title: it leads to every event that source declares.
+  - $type: HorizontalStack
+    gap: gap-3
+    align: items-center
+    items:
+      - $type: PageHeader
+        title: $sources.event.name
+      - $type: Badge
+        $if: $sources.event.sourceBadge
+        label: $sources.event.sourceBadge
+        href: $sources.event.sourceHref
+        variant: info
+  # An unknown name or no name: what is wrong and the closest declared names.
+  - $type: Badge
+    $if: $sources.event.message
+    label: $sources.event.message
+    variant: warning
+  # The facts on one line of badges; the count leads to the dispatches of this event.
+  - $type: HorizontalStack
+    $if: $sources.event.found
+    gap: gap-2
+    align: items-center
+    items:
+      - $type: Badge
+        label: $sources.event.status
+        variant: info
+      - $type: Badge
+        $if: $sources.event.terminalText
+        label: $sources.event.terminalText
+        variant: neutral
+      - $type: Badge
+        label: $sources.event.countBadge
+        href: $sources.event.historyHref
+        variant: neutral
+      - $type: Badge
+        label: $sources.event.lastSeenBadge
+        variant: neutral
+      - $type: Badge
+        $if: $sources.event.correlationBadge
+        label: $sources.event.correlationBadge
+        variant: neutral
+  - $type: PageHeader
+    $if: $sources.event.description
+    title: Description
+  - $type: Markdown
+    $if: $sources.event.description
+    text: $sources.event.description
+  # The test push sits next to the example it pushes.
+  - $type: HorizontalStack
+    $if: $sources.event.found
+    gap: gap-3
+    align: items-center
+    items:
+      - $type: PageHeader
+        title: Example payload
+      - $type: ActionButton
+        $if: $sources.event.canPushTest
+        action: pushTest
+        label: Push test event
+        icon: rocket
+        iconOnly: true
+        variant: primary
+        params:
+          name: $sources.event.name
+        body:
+          payload: $sources.event.exampleText
+  - $type: JsonViewer
+    $if: $sources.event.hasExample
+    row: $sources.event
+    field: exampleText
+    maxHeight: 24rem
+  - $type: Badge
+    $if: $sources.event.exampleHint
+    label: $sources.event.exampleHint
+    variant: warning
+  - $type: PageHeader
+    $if: $sources.event.hasSchema
+    title: Schema
+    subtitle: JSON Schema of the payload, as declared.
+  - $type: JsonViewer
+    $if: $sources.event.hasSchema
+    row: $sources.event
+    field: schemaText
+    maxHeight: 32rem
+  - $type: PageHeader
+    $if: $sources.event.filterable.length
+    title: Filterable fields
+    subtitle: The payload paths queue wait --when can test.
+  - $type: DataTable
+    $if: $sources.event.filterable.length
+    rows: $sources.event.filterable
+    columns:
+      - { key: "path", label: "Path", mono: true }
+      - { key: "type", label: "Type" }
+      - { key: "requiredText", label: "Presence" }
+  - $type: PageHeader
+    $if: $sources.event.waitText
+    title: Wait for it
+    subtitle: Blocks until this event is pushed; adapt the filter.
+  - $type: Markdown
+    $if: $sources.event.waitText
+    text: $sources.event.waitText

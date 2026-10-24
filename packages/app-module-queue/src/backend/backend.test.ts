@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, PendingNotFoundError, NotInFlightError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
@@ -24,7 +24,9 @@ const {
   mockPushEvent,
   mockGetLogs,
   mockGetEvents,
+  mockGetEventPage,
   mockPushTestEvent,
+  mockValidateEventPayload,
   mockRetryEvent,
   mockGetDaemonState,
   mockGetRelayInfo,
@@ -50,7 +52,9 @@ const {
   mockPushEvent: vi.fn(),
   mockGetLogs: vi.fn(),
   mockGetEvents: vi.fn(),
+  mockGetEventPage: vi.fn(),
   mockPushTestEvent: vi.fn(),
+  mockValidateEventPayload: vi.fn(),
   mockRetryEvent: vi.fn(),
   mockGetDaemonState: vi.fn(),
   mockGetRelayInfo: vi.fn(),
@@ -70,7 +74,7 @@ vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlq
 vi.mock('./subscribers.js', () => ({ listSubscribers: mockListSubscribers }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
-vi.mock('./events.js', () => ({ getEvents: mockGetEvents, pushTestEvent: mockPushTestEvent }));
+vi.mock('./events.js', () => ({ getEvents: mockGetEvents, getEventPage: mockGetEventPage, pushTestEvent: mockPushTestEvent, validateEventPayload: mockValidateEventPayload }));
 vi.mock('./retry.js', () => ({ retryEvent: mockRetryEvent }));
 vi.mock('./daemon.js', () => ({ getDaemonState: mockGetDaemonState }));
 vi.mock('./relay.js', () => ({ getRelayInfo: mockGetRelayInfo }));
@@ -132,6 +136,8 @@ describe('backend', () => {
       'POST /history/:eventId/replay',
       'GET /logs',
       'GET /events',
+      'GET /events/detail',
+      'POST /events/:name/validate-payload',
       'POST /events/:name/push-test',
       'POST /retry/:eventId',
       'POST /pending/give-up-stuck',
@@ -709,6 +715,31 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ events: [], total: 0, sources: [], sourceOptions: [], problems: [], problemsText: '' });
   });
 
+  it('GET /events/detail answers the page of the event named by ?name=, and 500 with the reason when the catalog cannot be read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetEventPage.mockReturnValueOnce({ found: true, name: 'job.started' });
+    const ok = fakeReply();
+    await routes.get('GET /events/detail')!(fakeReq({ query: { name: 'job.started' } }), asReply(ok));
+    expect(mockGetEventPage).toHaveBeenCalledWith(expect.any(String), 'job.started');
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith({ found: true, name: 'job.started' });
+
+    mockGetEventPage.mockImplementationOnce(() => { throw new Error('EACCES: events'); });
+    const broken = fakeReply();
+    await routes.get('GET /events/detail')!(fakeReq({ query: { name: 'x' } }), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: events' });
+  });
+
+  it("GET /events/detail without ?name= asks the page for an empty name, which answers found: false with the hint", async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetEventPage.mockReturnValueOnce({ found: false });
+    await routes.get("GET /events/detail")!(fakeReq({ query: {} }), asReply(fakeReply()));
+    expect(mockGetEventPage).toHaveBeenCalledWith(expect.any(String), '');
+  });
+
   it('GET /events answers 400 with the actionable message for a bad query and 500 for any other failure', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
@@ -757,6 +788,42 @@ describe('backend', () => {
     await handler(fakeReq({ params: { name: 'job.started' } }), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
     expect(broken.send).toHaveBeenCalledWith({ error: 'boom' });
+  });
+
+  it('POST /events/:name/push-test pushes the edited payload when the body carries one, and answers 400 when it is refused', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const handler = routes.get('POST /events/:name/push-test')!;
+    mockPushTestEvent.mockResolvedValueOnce({ status: 'queued', eventId: 'e2' });
+    await handler(fakeReq({ params: { name: 'job.started' }, body: { payload: '{"jobId":"x"}' } }), asReply(fakeReply()));
+    expect(mockPushTestEvent).toHaveBeenCalledWith(expect.any(String), 'job.started', '{"jobId":"x"}');
+
+    mockPushTestEvent.mockRejectedValueOnce(new InvalidPayloadError('The payload was not pushed: payload.jobId: must be string'));
+    const refused = fakeReply();
+    await handler(fakeReq({ params: { name: 'job.started' }, body: { payload: '{}' } }), asReply(refused));
+    expect(refused.code).toHaveBeenCalledWith(400);
+    expect(refused.send).toHaveBeenCalledWith({ error: 'The payload was not pushed: payload.jobId: must be string' });
+  });
+
+  it('POST /events/:name/validate-payload answers the verdict for the text of the body, 404 for an event nobody declares, 400 without text', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const handler = routes.get('POST /events/:name/validate-payload')!;
+    mockValidateEventPayload.mockReturnValueOnce({ valid: true, errors: [], message: 'The payload matches the schema' });
+    const ok = fakeReply();
+    await handler(fakeReq({ params: { name: 'job.started' }, body: { payload: '{}' } }), asReply(ok));
+    expect(mockValidateEventPayload).toHaveBeenCalledWith(expect.any(String), 'job.started', '{}');
+    expect(ok.send).toHaveBeenCalledWith({ valid: true, errors: [], message: 'The payload matches the schema' });
+
+    mockValidateEventPayload.mockImplementationOnce(() => { throw new TestPayloadNotFoundError('x is not declared by any program'); });
+    const unknown = fakeReply();
+    await handler(fakeReq({ params: { name: 'x' }, body: { payload: '{}' } }), asReply(unknown));
+    expect(unknown.code).toHaveBeenCalledWith(404);
+
+    const noBody = fakeReply();
+    await handler(fakeReq({ params: { name: 'job.started' }, body: {} }), asReply(noBody));
+    expect(noBody.code).toHaveBeenCalledWith(400);
+    expect(String((noBody.send.mock.calls[0]![0] as { error: string }).error)).toContain('payload');
   });
 
   it('GET /daemon answers the daemon state', async () => {

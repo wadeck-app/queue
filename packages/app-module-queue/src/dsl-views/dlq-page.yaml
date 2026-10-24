@@ -39,5 +39,5 @@ sections:
       - { key: "id", label: "Id", mono: true }
       - type: actions
         items:
-          - { label: Replay, action: replayEntry, variant: primary }
-          - { label: Clear, action: clearEntry, variant: danger-outline }
+          - { label: Replay, action: replayEntry, icon: play, variant: primary }
+          - { label: Clear, action: clearEntry, icon: trash, variant: danger-outline }

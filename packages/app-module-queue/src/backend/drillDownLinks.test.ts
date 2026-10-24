@@ -25,7 +25,8 @@ function collectLinks(value: unknown, file: string, links: Link[], owner = ''): 
   } else if (typeof value === 'object' && value !== null) {
     const node = value as Node;
     const name = typeof node['$type'] === 'string' ? node['$type'] : typeof node['key'] === 'string' ? `column ${node['key']}` : owner;
-    if (typeof node['href'] === 'string') {
+    // An href bound to a source ($sources.event.sourceHref) is built by the backend: events.test.ts checks what it answers
+    if (typeof node['href'] === 'string' && !node['href'].startsWith('$')) {
       links.push({ file, href: node['href'], owner: name });
     }
     Object.values(node).forEach((child) => collectLinks(child, file, links, name));
@@ -58,7 +59,8 @@ describe('drill-down links of the views', () => {
     const url = new URL(link.href.replace(/\{[^}]+\}/g, 'x'), 'http://app');
     expect(url.pathname.startsWith('/modules/queue')).toBe(true);
     const pagePath = url.pathname.slice('/modules/queue'.length) || '/';
-    const pageFile = pages.get(pagePath);
+    // A page path may have :param segments (/events/:name): they match any one segment
+    const pageFile = [...pages].find(([path]) => new RegExp(`^${path.replace(/:[a-z0-9_-]+/gi, '[^/]+')}$`).test(pagePath))?.[1];
     expect(pageFile, `no page of the manifest has the path ${pagePath}`).toBeDefined();
     const read = urlParamsOf(pageFile!);
     for (const name of url.searchParams.keys()) {
@@ -101,12 +103,12 @@ describe('where the numbers lead', () => {
     ]);
   });
 
-  it('an event name in a table leads to its history, or to its documentation in the Events page', () => {
+  it('an event name in a table leads to its history, or to the page of that event', () => {
     expect(hrefsOf('pending-page.yaml')).toEqual(['/modules/queue/history?event={event}']);
     expect(hrefsOf('dlq-page.yaml')).toEqual(['/modules/queue/history?event={event}']);
     expect(hrefsOf('logs-page.yaml')).toEqual(['/modules/queue/history?event={event}']);
-    expect(hrefsOf('history-page.yaml')).toEqual(['/modules/queue/events?q={event}']);
-    expect(hrefsOf('subscribers-page.yaml')).toContain('/modules/queue/events?q={event}');
-    expect(hrefsOf('events-page.yaml')).toEqual(['/modules/queue/history?event={name}']);
+    expect(hrefsOf('history-page.yaml')).toEqual(['/modules/queue/events/{event}']);
+    expect(hrefsOf('subscribers-page.yaml')).toContain('/modules/queue/events/{event}');
+    expect(hrefsOf('events-page.yaml')).toEqual(['/modules/queue/events/{name}']);
   });
 });

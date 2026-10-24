@@ -8,15 +8,6 @@ $sources:
       source: $urlParam.source
       status: $urlParam.status
 
-# {name} is the event name of the clicked row (the renderer percent-encodes it). The route pushes the example the program declared.
-$actions:
-  pushTest:
-    url: POST /api/modules/queue/events/{name}/push-test
-    confirm: Push this event with its example payload? It runs the real subscribers of this event.
-    successMessage: Test event pushed
-    errorPrefix: Could not push the test event
-    reloadSources: true
-
 $type: PageContent
 sections:
   - $type: PageHeader
@@ -48,30 +39,18 @@ sections:
     $if: $sources.events.problemsText
     label: $sources.events.problemsText
     variant: warning
-  # The details (description, flags, schema, example, filterable paths, a wait command) are in the expanded row.
-  # `row` is not injected into the expansion: pass it with $ctx.row.
+  # The whole description is in the expanded row; schema, example, filterable paths and the test push are on the page of the event (name link).
   - $type: DataTable
     rows: $sources.events.events
-    # The whole description first, as Markdown (the cell only holds its first sentence), then the rest as JSON.
+    # `row` is not injected into the expansion: pass it with $ctx.row. The cell only holds the first sentence.
     expansion:
-      $type: VerticalStack
-      gap: gap-3
-      items:
-        - $type: Markdown
-          $if: $ctx.row.description
-          text: $ctx.row.description
-        - $type: JsonViewer
-          row: $ctx.row
-          field: detailsText
-          maxHeight: 24rem
+      $type: Markdown
+      text: $ctx.row.description
     emptyMessage: No event matches; a program declares its events with queue.registerEvents (@wadeck-app/queue-sdk) or with `queue events register`.
     columns:
-      - { key: "name", label: "Name", mono: true, nowrap: true, href: "/modules/queue/history?event={name}" }
+      - { key: "name", label: "Name", mono: true, nowrap: true, href: "/modules/queue/events/{name}" }
       - { key: "source", label: "Source", nowrap: true }
       - { key: "descriptionExcerpt", label: "Description", truncate: true }
       - { key: "count24h", label: "24 h" }
       - { key: "lastSeenText", label: "Last seen", mono: true, nowrap: true, title: "Last seen {lastSeenAt}" }
       - { key: "status", label: "Status", nowrap: true, badge: { declared: success, undeclared: warning } }
-      - type: actions
-        items:
-          - { label: Push test event, action: pushTest, icon: rocket, variant: primary, condition: canPushTest }

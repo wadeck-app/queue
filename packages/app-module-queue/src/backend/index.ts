@@ -8,11 +8,11 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, PendingNotFoundError, NotInFlightError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
-import { getEvents, pushTestEvent } from './events.js';
+import { getEvents, getEventPage, pushTestEvent, validateEventPayload } from './events.js';
 import { retryEvent } from './retry.js';
 import { giveUpPending, giveUpStuck } from './pending.js';
 import { getDaemonState } from './daemon.js';
@@ -162,14 +162,45 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  // Pushes the declared example of the event through the daemon: it runs the real subscribers of that event
+  // Everything the page of one event shows (?name=<event name>); an unknown name answers found: false with the closest names
+  ctx.registerRoute('GET', '/events/detail', (req, reply) => {
+    const query = (req as { query?: QueryParams }).query ?? {};
+    const name = typeof query['name'] === 'string' ? query['name'] : '';
+    try {
+      return reply.code(200).send(getEventPage(configDir, name));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // Checks the text of an edited example against the schema the event declares (body { payload: "<json text>" })
+  ctx.registerRoute('POST', '/events/:name/validate-payload', (req, reply) => {
+    const { name } = req.params;
+    const body = (req as { body: unknown }).body;
+    if (!isRecord(body) || typeof body['payload'] !== 'string') {
+      return reply.code(400).send({ error: `POST /events/${name}/validate-payload expects a JSON body { payload: string } (the JSON text to check); got: ${JSON.stringify(body)}` });
+    }
+    try {
+      return reply.code(200).send(validateEventPayload(configDir, name, body['payload']));
+    } catch (err) {
+      return reply.code(err instanceof TestPayloadNotFoundError ? 404 : 500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // Pushes the declared example of the event through the daemon, or the edited one when the body carries { payload: "<json text>" }:
+  // it runs the real subscribers of that event
   ctx.registerRoute('POST', '/events/:name/push-test', async (req, reply) => {
     const { name } = req.params;
+    const body = (req as { body?: unknown }).body;
+    const payloadText = isRecord(body) && typeof body['payload'] === 'string' ? body['payload'] : undefined;
     try {
-      return reply.code(200).send(await pushTestEvent(configDir, name));
+      return reply.code(200).send(await pushTestEvent(configDir, name, ...(payloadText === undefined ? [] : [payloadText])));
     } catch (err) {
       if (err instanceof TestPayloadNotFoundError) {
         return reply.code(404).send({ error: getErrorMessage(err) });
+      }
+      if (err instanceof InvalidPayloadError) {
+        return reply.code(400).send({ error: getErrorMessage(err) });
       }
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }

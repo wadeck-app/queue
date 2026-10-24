@@ -39,14 +39,12 @@ sections:
     $if: $sources.pending.stuckCount
     label: $sources.pending.stuckText
     variant: warning
-  - $type: Form
+  - $type: ActionButton
     $if: $sources.pending.stuckCount
-    onSubmit: $ctx.giveUpStuck
-    initialData: {}
-    fields: []
-    actions:
-      - $type: ButtonSave
-        label: Give up all the stuck events
+    action: giveUpStuck
+    label: Give up all the stuck events
+    icon: archive
+    variant: danger-outline
   - $type: DataTable
     rows: $sources.pending.entries
     emptyMessage: Nothing is waiting
@@ -60,5 +58,5 @@ sections:
       - { key: "id", label: "Id", mono: true }
       - type: actions
         items:
-          - { label: Retry now, action: retryPending, variant: primary }
-          - { label: Give up, action: giveUpPending, variant: danger-outline }
+          - { label: Retry now, action: retryPending, icon: rotate-ccw, variant: primary }
+          - { label: Give up, action: giveUpPending, icon: archive, variant: danger-outline }
