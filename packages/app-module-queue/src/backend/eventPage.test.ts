@@ -28,20 +28,36 @@ describe('event-page.yaml', () => {
     expect(doc['$sources']).toMatchObject({ event: { url: 'GET /api/modules/queue/events/detail', params: { name: '$route.name' } } });
   });
 
-  it('pushes the shown example with an icon button next to its title: the name in the url, the payload text in the body', () => {
-    const [button] = find(doc, 'ActionButton');
-    expect(button).toMatchObject({
-      action: 'pushTest',
+  it('edits the example in a monospace text area bound to a page variable seeded from the declared example', () => {
+    expect(doc['$vars']).toEqual({ payload: '$sources.event.exampleText' });
+    expect(find(doc, 'FieldTextarea')).toEqual([expect.objectContaining({ bind: 'payload', mono: true, $if: '$sources.event.hasExample' })]);
+  });
+
+  it('validates the text, keeping the answer and the text that was validated', () => {
+    const actions = doc['$actions'] as Record<string, Node>;
+    expect(actions['validatePayload']).toMatchObject({ url: 'POST /api/modules/queue/events/{name}/validate-payload', resultKey: 'validation', requestKey: 'validated' });
+    const validate = find(doc, 'ActionButton').find((button) => button['action'] === 'validatePayload');
+    expect(validate).toMatchObject({ body: { payload: '$vars.payload' } });
+  });
+
+  it('enables the rocket only while the current text is the one that was validated without a problem', () => {
+    const push = find(doc, 'ActionButton').find((button) => button['action'] === 'pushTest');
+    expect(push).toMatchObject({
       icon: 'rocket',
       iconOnly: true,
       label: 'Push test event',
       $if: '$sources.event.canPushTest',
-      params: { name: '$sources.event.name' },
-      body: { payload: '$sources.event.exampleText' },
+      disabled: '!$validation.valid || $vars.payload != $validated.payload',
+      body: { payload: '$vars.payload' },
     });
     expect((doc['$actions'] as Record<string, Node>)['pushTest']).toMatchObject({ url: 'POST /api/modules/queue/events/{name}/push-test' });
   });
 
+  it('lists the validation problems with their paths', () => {
+    const table = find(doc, 'DataTable').find((candidate) => candidate['rows'] === '$validation.errors');
+    expect(table).toMatchObject({ $if: '$validation.errors.length', columns: [{ key: 'path' }, { key: 'message' }] });
+    expect(find(doc, 'Badge')).toContainEqual({ $type: 'Badge', $if: '$validation.errors.length', label: '$validation.verdict', variant: 'warning' });
+  });
   it('puts the source in a badge that leads to the events of that source', () => {
     const badge = find(doc, 'Badge').find((candidate) => candidate['label'] === '$sources.event.sourceBadge');
     expect(badge).toMatchObject({ href: '$sources.event.sourceHref' });

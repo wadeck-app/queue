@@ -6,8 +6,18 @@ $sources:
     params:
       name: $route.name
 
-# {name} comes from the params of the ActionButton (percent-encoded); the body carries the payload text, which the route validates against the schema again.
+# The text of the example is edited in $vars.payload (seeded once from the declared example, never overwritten by a poll).
+$vars:
+  payload: $sources.event.exampleText
+
+# {name} is filled from the route (/events/:name), percent-encoded. validatePayload keeps its answer in $validation and the text it validated in
+# $validated: the push button is enabled only while the current text is the one that was validated, successfully. The push route validates again.
 $actions:
+  validatePayload:
+    url: POST /api/modules/queue/events/{name}/validate-payload
+    resultKey: validation
+    requestKey: validated
+    errorPrefix: Could not validate the payload
   pushTest:
     url: POST /api/modules/queue/events/{name}/push-test
     confirm: Push this event with its example payload? It runs the real subscribers of this event.
@@ -64,14 +74,28 @@ sections:
   - $type: Markdown
     $if: $sources.event.description
     text: $sources.event.description
-  # The test push sits next to the example it pushes.
-  - $type: HorizontalStack
+  - $type: PageHeader
     $if: $sources.event.found
+    title: Example payload
+    subtitle: Edit it, validate it against the schema, then push it as a test event.
+  - $type: FieldTextarea
+    $if: $sources.event.hasExample
+    label: Payload (JSON)
+    bind: payload
+    mono: true
+    rows: 12
+  # Validate first; the rocket stays disabled until the CURRENT text has been validated without a problem.
+  - $type: HorizontalStack
+    $if: $sources.event.hasExample
     gap: gap-3
     align: items-center
     items:
-      - $type: PageHeader
-        title: Example payload
+      - $type: ActionButton
+        action: validatePayload
+        label: Validate against the schema
+        icon: check
+        body:
+          payload: $vars.payload
       - $type: ActionButton
         $if: $sources.event.canPushTest
         action: pushTest
@@ -79,15 +103,24 @@ sections:
         icon: rocket
         iconOnly: true
         variant: primary
-        params:
-          name: $sources.event.name
+        disabled: "!$validation.valid || $vars.payload != $validated.payload"
+        disabledReason: Validate the current payload first
         body:
-          payload: $sources.event.exampleText
-  - $type: JsonViewer
-    $if: $sources.event.hasExample
-    row: $sources.event
-    field: exampleText
-    maxHeight: 24rem
+          payload: $vars.payload
+      - $type: Badge
+        $if: $validation.valid
+        label: Valid
+        variant: success
+  - $type: Badge
+    $if: $validation.errors.length
+    label: $validation.verdict
+    variant: warning
+  - $type: DataTable
+    $if: $validation.errors.length
+    rows: $validation.errors
+    columns:
+      - { key: "path", label: "Where", mono: true }
+      - { key: "message", label: "Problem" }
   - $type: Badge
     $if: $sources.event.exampleHint
     label: $sources.event.exampleHint

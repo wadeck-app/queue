@@ -360,27 +360,27 @@ describe('validateEventPayload (the edited example, checked against the declared
   it('accepts a payload that matches the schema', () => {
     const result = validateEventPayload(configDir, 'job.completed', JSON.stringify({ jobId: 'a', attempts: 2 }));
     expect(result).toMatchObject({ valid: true, errors: [] });
-    expect(result.message).toContain('matches the schema');
+    expect(result.verdict).toContain('matches the schema');
   });
 
   it('lists every problem with the path of the field, not only the first', () => {
     const result = validateEventPayload(configDir, 'job.completed', JSON.stringify({ attempts: 'two' }));
     expect(result.valid).toBe(false);
-    expect(result.errors).toEqual(["payload: must have required property 'jobId'", 'payload.attempts: must be number']);
-    expect(result.message).toContain('2 problems');
+    expect(result.errors).toEqual([{ path: 'payload', message: "must have required property 'jobId'" }, { path: 'payload.attempts', message: 'must be number' }]);
+    expect(result.verdict).toContain('2 problems');
   });
 
   it('refuses text that is not JSON, with the parser message, and does not look at the schema', () => {
     const result = validateEventPayload(configDir, 'job.completed', '{ "jobId": ');
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toContain('not valid JSON');
+    expect(result.errors[0]?.message).toContain('not valid JSON');
   });
 
   it('says the schema is missing, instead of pretending to validate, when the event declares none', () => {
     const result = validateEventPayload(configDir, 'job.nolschema', '{}');
     expect(result).toMatchObject({ valid: true, errors: [] });
-    expect(result.message).toContain('declares no schema');
+    expect(result.verdict).toContain('declares no schema');
   });
 
   it('refuses a name nobody declares, with the closest names', () => {

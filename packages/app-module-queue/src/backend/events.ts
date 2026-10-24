@@ -147,10 +147,10 @@ export function getEvents(configDir: string, query: QueryParams, nowMs: number =
 
 export interface PayloadValidation {
   valid: boolean;
-  /** One line per problem: "payload.attempts: must be number"; the JSON parser message when the text is not JSON. */
-  errors: string[];
-  /** The one-line verdict the page shows. */
-  message: string;
+  /** One entry per problem: { path: "payload.attempts", message: "must be number" }; the JSON parser message (empty path) when the text is not JSON. */
+  errors: Array<{ path: string; message: string }>;
+  /** The one-line verdict the page shows. (Not called "message": the notifier of the shell turns a `message` of a response into a green toast.) */
+  verdict: string;
 }
 
 /** The declared event or the error a test push and a validation both start with. */
@@ -167,7 +167,7 @@ function declaredDetailOrThrow(configDir: string, name: string, purpose: string)
   return detail;
 }
 
-function problemsOf(schema: Record<string, unknown>, payload: unknown): string[] {
+function problemsOf(schema: Record<string, unknown>, payload: unknown): Array<{ path: string; message: string }> {
   // strict: false, the schemas come from programs and may carry keywords this validator does not know
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   if (validate(payload)) {
@@ -175,7 +175,7 @@ function problemsOf(schema: Record<string, unknown>, payload: unknown): string[]
   }
   return (validate.errors ?? []).map((issue) => {
     const where = issue.instancePath === '' ? 'payload' : `payload${issue.instancePath.split('/').slice(1).map((part) => `.${part}`).join('')}`;
-    return `${where}: ${issue.message ?? 'is invalid'}`;
+    return { path: where, message: issue.message ?? 'is invalid' };
   });
 }
 
@@ -186,15 +186,15 @@ export function validateEventPayload(configDir: string, name: string, payloadTex
   try {
     payload = JSON.parse(payloadText);
   } catch (err) {
-    return { valid: false, errors: [`The text is not valid JSON: ${getErrorMessage(err)}`], message: 'Not valid JSON' };
+    return { valid: false, errors: [{ path: '', message: `The text is not valid JSON: ${getErrorMessage(err)}` }], verdict: 'Not valid JSON' };
   }
   if (detail.schema === undefined) {
-    return { valid: true, errors: [], message: `Valid JSON; ${name} declares no schema, so nothing else was checked` };
+    return { valid: true, errors: [], verdict: `Valid JSON; ${name} declares no schema, so nothing else was checked` };
   }
   const errors = problemsOf(detail.schema, payload);
   return errors.length === 0
-    ? { valid: true, errors: [], message: 'The payload matches the schema' }
-    : { valid: false, errors, message: `${errors.length} problem${errors.length === 1 ? '' : 's'} against the schema` };
+    ? { valid: true, errors: [], verdict: 'The payload matches the schema' }
+    : { valid: false, errors, verdict: `${errors.length} problem${errors.length === 1 ? '' : 's'} against the schema` };
 }
 
 /**
@@ -205,7 +205,7 @@ export async function pushTestEvent(configDir: string, name: string, payloadText
   if (payloadText !== undefined) {
     const verdict = validateEventPayload(configDir, name, payloadText);
     if (!verdict.valid) {
-      throw new InvalidPayloadError(`The payload was not pushed: ${verdict.errors.join('; ')}`);
+      throw new InvalidPayloadError(`The payload was not pushed: ${verdict.errors.map((problem) => (problem.path === '' ? problem.message : `${problem.path}: ${problem.message}`)).join('; ')}`);
     }
     const parsed: unknown = JSON.parse(payloadText);
     return pushEvent(configDir, name, parsed);
