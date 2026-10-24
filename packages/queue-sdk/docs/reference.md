@@ -110,6 +110,7 @@ daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: 
 await queue.registerEvents('myapp', [{ name: 'myapp.thing', description: 'A thing happened.' }]);
 daemon.registrations();     // [{ source: 'myapp', events: [...], protocol: '1.1.0' }]
 daemon.respondNextRegistration({ status: 'rejected', reason: '...', problems: [{ path: 'events[0].name', message: '...' }] });
+daemon.resetNextRegistration();   // the connection breaks on the next registration; the SDK retries once (idempotent), two breaks in a row give `unknown`
 daemon.respondNext({ status: 'aborted', reason: 'refused' });   // the next push gets this result
 daemon.resetNext();         // the next push breaks the connection: the SDK answers `unknown`
 await daemon.close();       // also removes the temporary config dir

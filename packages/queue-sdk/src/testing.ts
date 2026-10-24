@@ -47,6 +47,11 @@ export interface FakeQueueDaemon {
   respondNextRegistration(result: Record<string, unknown>): void;
   /** The connection is broken on the next push: the SDK answers `unknown`. */
   resetNext(): void;
+  /**
+   * The connection is broken on the next `times` registrations (default 1). The SDK retries a registration once, because it is
+   * idempotent: one break still ends `registered`, two in a row end `unknown`.
+   */
+  resetNextRegistration(times?: number): void;
   /** Stops the daemon and removes its temporary config dir. */
   close(): Promise<void>;
 }
@@ -99,6 +104,11 @@ export async function startFakeQueueDaemon(options: FakeQueueDaemonOptions = {})
     },
     resetNext: () => {
       fake.script.push({ kind: 'reset' });
+    },
+    resetNextRegistration: (times = 1) => {
+      for (let i = 0; i < times; i++) {
+        fake.registerScript.push({ kind: 'reset' });
+      }
     },
     close: async () => {
       await fake.close();

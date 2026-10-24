@@ -114,3 +114,19 @@ describe('startFakeQueueDaemon', () => {
     expect(existsSync(daemon.configDir)).toBe(false);
   });
 });
+
+describe('startFakeQueueDaemon: breaking the connection on a registration', () => {
+  it('one broken registration is retried by the SDK (it is idempotent) and succeeds', async () => {
+    const daemon = await start();
+    daemon.resetNextRegistration();
+    const queue = createQueuePublisher({ configDir: daemon.configDir, silent: true });
+    await expect(queue.registerEvents('demo', [{ name: 'demo.a', description: 'd' }])).resolves.toMatchObject({ status: 'registered' });
+  });
+
+  it('two broken registrations in a row leave the outcome unknown', async () => {
+    const daemon = await start();
+    daemon.resetNextRegistration(2);
+    const queue = createQueuePublisher({ configDir: daemon.configDir, silent: true });
+    await expect(queue.registerEvents('demo', [{ name: 'demo.a', description: 'd' }])).resolves.toMatchObject({ status: 'unknown' });
+  });
+});
