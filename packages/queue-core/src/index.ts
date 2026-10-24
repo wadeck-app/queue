@@ -25,4 +25,6 @@ export type { QueueCounts } from './operations.js';
 export type { WalEntry } from './storage/Wal.js';
 export { LogFormatter } from './storage/LogFormatter.js';
 export { readLogTail, logFilePath, isLogDate, readDispatchDurations } from './storage/LogReader.js';
+export { readLogRecords, parseLogRecord, eventOfSubscriber, LOG_OUTCOMES } from './storage/LogRecords.js';
+export type { LogRecord, LogOutcome, LogRecords, LogRecordsOptions } from './storage/LogRecords.js';
 export type { LogTail, LogTailOptions, DispatchDurations } from './storage/LogReader.js';

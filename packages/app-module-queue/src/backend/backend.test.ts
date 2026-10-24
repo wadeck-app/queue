@@ -10,6 +10,7 @@ const {
   mockGetActivitySeries,
   mockGetOutcomes,
   mockGetBreakdown,
+  mockGetOverviewRange,
   mockListPending,
   mockListHistory,
   mockGetHistoryEntry,
@@ -31,6 +32,7 @@ const {
   mockGetActivitySeries: vi.fn(),
   mockGetOutcomes: vi.fn(),
   mockGetBreakdown: vi.fn(),
+  mockGetOverviewRange: vi.fn(),
   mockListPending: vi.fn(),
   mockListHistory: vi.fn(),
   mockGetHistoryEntry: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
 vi.mock('./activity.js', () => ({ getActivity: mockGetActivity, getActivitySeries: mockGetActivitySeries }));
 vi.mock('./outcomes.js', () => ({ getOutcomes: mockGetOutcomes }));
 vi.mock('./breakdown.js', () => ({ getBreakdown: mockGetBreakdown }));
+vi.mock('./overviewRange.js', () => ({ getOverviewRange: mockGetOverviewRange }));
 vi.mock('./pending.js', () => ({ listPending: mockListPending }));
 vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: mockGetHistoryEntry }));
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
@@ -114,6 +117,7 @@ describe('backend', () => {
       'GET /activity/series',
       'GET /outcomes',
       'GET /breakdown',
+      'GET /overview',
       'GET /history',
       'GET /history/:eventId',
       'POST /history/:eventId/replay',
@@ -543,6 +547,38 @@ describe('backend', () => {
     mockGetOutcomes.mockImplementationOnce(() => { throw new Error('EACCES: history'); });
     const broken = fakeReply();
     await routes.get('GET /outcomes')!(fakeReq(), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: history' });
+  });
+
+  it('GET /overview answers the totals and charts of the period given by ?range=, and the default period without one', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const overview = { range: '6h', title: 'Last 6 hours', totals: { events: 3 } };
+    mockGetOverviewRange.mockReturnValueOnce(overview);
+    const ok = fakeReply();
+    await routes.get('GET /overview')!(fakeReq({ query: { range: '6h' } }), asReply(ok));
+    expect(mockGetOverviewRange).toHaveBeenCalledWith(expect.any(String), '6h');
+    expect(ok.code).toHaveBeenCalledWith(200);
+    expect(ok.send).toHaveBeenCalledWith(overview);
+
+    mockGetOverviewRange.mockReturnValueOnce(overview);
+    await routes.get('GET /overview')!(fakeReq(), asReply(fakeReply()));
+    expect(mockGetOverviewRange).toHaveBeenLastCalledWith(expect.any(String), undefined);
+  });
+
+  it('GET /overview answers 400 with the accepted periods for a period it does not know, 500 for a history it cannot read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetOverviewRange.mockImplementationOnce(() => { throw new InvalidQueryError('range must be one of 1h, 6h, 24h, 3d, 7d, got: "2w"'); });
+    const bad = fakeReply();
+    await routes.get('GET /overview')!(fakeReq({ query: { range: '2w' } }), asReply(bad));
+    expect(bad.code).toHaveBeenCalledWith(400);
+    expect(bad.send).toHaveBeenCalledWith({ error: 'range must be one of 1h, 6h, 24h, 3d, 7d, got: "2w"' });
+
+    mockGetOverviewRange.mockImplementationOnce(() => { throw new Error('EACCES: history'); });
+    const broken = fakeReply();
+    await routes.get('GET /overview')!(fakeReq(), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
     expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: history' });
   });

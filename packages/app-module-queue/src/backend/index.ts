@@ -18,7 +18,8 @@ import { getRelayInfo } from './relay.js';
 import { listWebhooks, listDeliveries } from './relayWebhooks.js';
 import { listSubscribers } from './subscribers.js';
 import { pushEvent } from './push.js';
-import { parseHistoryQuery } from './historyQuery.js';
+import { parseHistoryQuery, validateSingleString } from './historyQuery.js';
+import { getOverviewRange } from './overviewRange.js';
 
 interface QueryParams { [key: string]: string | string[] | undefined }
 
@@ -78,6 +79,16 @@ export default function (ctx: ModuleContext): void {
       return reply.code(200).send(getBreakdown(configDir));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // The totals and charts of one period of the Overview page (?range=1h|6h|24h|3d|7d, default 24h)
+  ctx.registerRoute('GET', '/overview', (req, reply) => {
+    const query = (req as { query?: QueryParams }).query ?? {};
+    try {
+      return reply.code(200).send(getOverviewRange(configDir, validateSingleString(query['range'], 'range')));
+    } catch (err) {
+      return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
     }
   });
 

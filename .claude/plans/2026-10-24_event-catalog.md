@@ -32,9 +32,12 @@ Each program that pushes events declares them once (name, description, JSON Sche
 |---|---|
 | `source` | Required, `[a-z0-9][a-z0-9_-]*`, at most 64 characters; names the file |
 | `name` | Required, dot-separated segments of `[A-Za-z0-9_-]+`, at most 128 characters; unique inside the source |
-| `description` | Required, non-empty, at most 500 characters |
+| `description` | Required, non-empty, at most 500 characters. Convention for owners (in the SDK docs): say when it fires, whether it can fire several times for one entity (a step started again on each retry), and what does NOT fire it |
 | `schema` | Optional JSON Schema object (stored as given, not interpreted); at most 64 KB serialised |
 | `example` | Optional JSON value, at most 16 KB; used to prefill the "Push test event" form |
+| `correlationKey` | Optional string or list of dotted payload paths that identify the entity the event is about (`payload.jobId`); `queue wait` filters by exact name and `--when`, so an agent needs it to wait for one entity |
+| `terminal` | Optional boolean: this event ends the thing it is about (a job completed, failed, timed out...) |
+| `outcome` | Optional `success`, `failure` or `info`; with `terminal`, lets an agent build "wait for the job to finish" from the catalog |
 | Limits | At most 500 events per source |
 
 Every violation is reported with its path (`events[3].name`) and the rule, as a `rejected` answer; nothing is stored when any event is invalid.
@@ -62,6 +65,19 @@ New route `GET /events`: catalog merged with the last 24 h counts, the subscribe
 | Row | "Push test event" with the example prefilled and a confirmation (it runs the real subscribers) |
 | Undocumented row | Shows how many pushes were seen and which cwd pushed it, so the owner can be found |
 | Source header | When it registered last; a source not seen for a long time is marked stale |
+
+## For agents (the poll-event skill)
+
+Requirements gathered from claude-owner. An agent that must wait for something asks the catalog instead of guessing or reading hand-written tables.
+
+| Command | Contract |
+|---|---|
+| `queue events list [--source S] [--prefix flow.] [--match "flow.>"] [--declared-only] [--terminal] [--json]` | `--match` uses the subscribers.yml pattern syntax. JSON: `{ "events": [...], "total": N }`, entries without schemas: `name`, `source`, `description`, `declared` (false for names seen in the history that nobody declared, listed, not hidden), `terminal`, `outcome`, `correlationKey`, `lastSeenAt`, `count24h`; sources carry `registeredAt` so a stale source is visible |
+| `queue events show <name> [--json]` | Schema and example, a flat `filterable` list (`payload.jobId`, type, required) because `--when` takes `payload.path=value`, the `correlationKey`, and a ready `waitExample` (`queue wait job.completed --when "payload.jobId=<jobId>" --since 5m --json`). Unknown name: exit 4 (invalid usage, same as `wait`) with the nearest declared names |
+| `queue wait <name>` | An undeclared name still waits (old or undeclared producers exist) but warns on stderr with the nearest declared names; with `--json` the result carries `declared: false` and `suggestions`, and on timeout `lastSeenAt` of that name from the history (null = never seen: a typo or a rename, as opposed to a slow producer). `--strict`: an unknown name is exit 4 at once. Exit 2 and 3 keep their meaning (timeout, relay) |
+
+- Wait matches exact names only (no wildcard) and several `--when` are ANDed; the catalog output is built around that.
+- The read-only `events` commands print their output even when stdin is not a TTY (an agent in a background shell would otherwise get "output discarded" as with the other commands).
 
 ## Adoption
 

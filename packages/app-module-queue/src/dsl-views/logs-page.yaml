@@ -4,21 +4,51 @@ $sources:
     params:
       limit: $urlParam.size
       date: $urlParam.date
+      outcome: $urlParam.outcome
+      event: $urlParam.event
 
 $type: PageContent
 sections:
   - $type: PageHeader
     title: Dispatch log
     subtitle: $sources.logs.date
+  # The filters of the page, in the URL: ok = a subscriber ran, miss = its filter did not match, fail = an attempt failed, dlq = given up.
+  # They need dsl-ui >= 2026.10.19-117 (urlParam on SearchBar and CompactSelect).
+  - $type: HorizontalStack
+    gap: gap-3
+    align: items-center
+    items:
+      - $type: SearchBar
+        urlParam: event
+        placeholder: Event name
+      - $type: CompactSelect
+        urlParam: outcome
+        ariaLabel: Outcome
+        placeholder: Any outcome
+        options:
+          - { value: ok, label: ok }
+          - { value: miss, label: miss }
+          - { value: fail, label: fail }
+          - { value: dlq, label: dlq }
+          - { value: info, label: info }
   - $type: Badge
     $if: $sources.logs.omitted
-    label: Older records of this day are not shown (raise the size, or use queue logs).
+    label: Older matching records of this day are not shown (raise the size, or use queue logs).
     variant: info
+  # One short row per record; the whole record (target, duration, error, captured output, filter reason) is in the expanded row,
+  # like the payload in the History page. `row` is not injected into the expansion: pass it with $ctx.row.
   - $type: DataTable
-    rows: $sources.logs.lines
-    emptyMessage: Nothing was logged on this day
+    rows: $sources.logs.records
+    expansion:
+      $type: JsonViewer
+      row: $ctx.row
+      field: detailsText
+      maxHeight: 20rem
+    emptyMessage: Nothing was logged on this day, or nothing matches the filters
     columns:
-      - { key: "text", label: "Record", mono: true }
+      - { key: "time", label: "Time", mono: true }
+      - { key: "outcome", label: "Result", badge: { ok: success, miss: warning, fail: danger, dlq: danger, info: default } }
+      - { key: "event", label: "Event" }
   - $type: HorizontalStack
     justify: justify-end
     items:

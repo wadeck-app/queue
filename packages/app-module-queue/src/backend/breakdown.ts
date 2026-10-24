@@ -20,25 +20,25 @@ export interface SubscriberStats {
 }
 
 export interface QueueBreakdown {
-  /** The most pushed events of the last 24 hours, most frequent first. */
+  /** The most pushed events of the period, most frequent first. */
   topEvents: EventCount[];
   /** Pushes of the events that did not make the top. */
   otherEvents: number;
-  /** The busiest subscribers of the last 24 hours (most dispatches first), with how their dispatches ended. */
+  /** The busiest subscribers of the period (most dispatches first), with how their dispatches ended. */
   subscribers: SubscriberStats[];
 }
 
 const DAY_MS = 24 * 3_600_000;
 
-/** Which events are pushed most and how each subscriber fares, over the last 24 hours. */
-export function getBreakdown(configDir: string, nowMs: number = Date.now()): QueueBreakdown {
+/** Which events are pushed most and how each subscriber fares, over the last 24 hours or over `windowMs`. */
+export function getBreakdown(configDir: string, nowMs: number = Date.now(), windowMs: number = DAY_MS): QueueBreakdown {
   const history = new HistoryReader(join(configDir, 'history'));
-  const byEvent = [...history.countTriggersByEvent(nowMs, DAY_MS)].map(([event, count]) => ({ event, count }));
+  const byEvent = [...history.countTriggersByEvent(nowMs, windowMs)].map(([event, count]) => ({ event, count }));
   byEvent.sort((a, b) => b.count - a.count || a.event.localeCompare(b.event));
   const topEvents = byEvent.slice(0, TOP_EVENTS);
 
-  const durations = readDispatchDurations(configDir, nowMs, DAY_MS);
-  const subscribers = [...history.countOutcomesBySubscriber(nowMs, DAY_MS)]
+  const durations = readDispatchDurations(configDir, nowMs, windowMs);
+  const subscribers = [...history.countOutcomesBySubscriber(nowMs, windowMs)]
     .map(([subscriberId, counts]) => {
       const timing = durations.get(subscriberId);
       return {

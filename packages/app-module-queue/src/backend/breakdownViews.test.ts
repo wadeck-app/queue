@@ -46,15 +46,42 @@ describe('status-widget.yaml', () => {
 
 describe('hourly chart (the last 24 h, counts per hour)', () => {
   const widgetCharts = (load('activity-widget.yaml')['items'] as Node[]).filter((item) => item['$type'] === 'Chart');
-  const overviewCharts = (load('overview-page.yaml')['sections'] as Node[]).filter((section) => section['$type'] === 'Chart');
 
-  it.each([
-    ['activity widget', widgetCharts[1]],
-    ['overview page', overviewCharts[1]],
-  ])('%s plots the hourly series as counts, not bytes (1753 would print "1.8 KB")', (_name, chart) => {
-    expect(chart?.['data']).toBe('$sources.series.lastDay');
-    expect(chart?.['yFormat']).toBe('number');
-    expect(chart?.['xAxisType']).toBe('category');
+  it('the activity widget plots the hourly series as counts, not bytes (1753 would print "1.8 KB")', () => {
+    expect(widgetCharts[1]?.['data']).toBe('$sources.series.lastDay');
+    expect(widgetCharts[1]?.['yFormat']).toBe('number');
+    expect(widgetCharts[1]?.['xAxisType']).toBe('category');
+  });
+});
+
+describe('overview-page.yaml', () => {
+  const doc = load('overview-page.yaml');
+  const sections = doc['sections'] as Node[];
+  const bar = sections[0] as { items: Node[] };
+  const charts = sections.filter((section) => section['$type'] === 'Chart');
+
+  it('reads one source for the whole page, with the period of the URL', () => {
+    const overview = (doc['$sources'] as Record<string, Node>)['overview'] as { url: string; params: Record<string, string> };
+    expect(overview.url).toBe('GET /api/modules/queue/overview');
+    expect(overview.params).toEqual({ range: '$urlParam.range' });
+  });
+
+  it('offers the periods the route accepts, in the URL so that a link keeps the period', () => {
+    const select = bar.items.find((item) => item['$type'] === 'CompactSelect') as { urlParam: string; options: Array<{ value: string }> };
+    expect(select.urlParam).toBe('range');
+    expect(select.options.map((option) => option.value)).toEqual(['1h', '6h', '24h', '3d', '7d']);
+  });
+
+  it('plots events and failures as counts, not bytes, in theme colours, failures only when there are some', () => {
+    expect(charts.map((chart) => chart['data'])).toEqual(['$sources.overview.events', '$sources.overview.failures']);
+    for (const chart of charts) {
+      expect(chart['yFormat']).toBe('number');
+      expect(chart['xAxisType']).toBe('category');
+      for (const series of chart['series'] as Node[]) {
+        expect(series['color']).toMatch(/^var\(--color-[a-z-]+\)$/);
+      }
+    }
+    expect(charts[1]?.['$if']).toBe('$sources.overview.hasFailures');
   });
 });
 

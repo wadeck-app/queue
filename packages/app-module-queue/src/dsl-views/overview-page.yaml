@@ -1,89 +1,84 @@
 $sources:
-  activity:
-    url: GET /api/modules/queue/activity
-  series:
-    url: GET /api/modules/queue/activity/series
-  outcomes:
-    url: GET /api/modules/queue/outcomes
-  breakdown:
-    url: GET /api/modules/queue/breakdown
+  overview:
+    url: GET /api/modules/queue/overview
+    params:
+      range: $urlParam.range
 
 $type: PageContent
 sections:
-  - $type: PageHeader
-    title: Overview
-    subtitle: What the queue did lately, from its history and dispatch log.
+  - $type: HorizontalStack
+    gap: gap-3
+    align: items-center
+    justify: justify-between
+    items:
+      - $type: PageHeader
+        title: Overview
+        subtitle: What the queue did lately, from its history and dispatch log.
+      # The period drives every figure and chart below; the URL keeps it (?range=6h), so a link or a bookmark keeps the period.
+      - $type: CompactSelect
+        urlParam: range
+        ariaLabel: Period
+        placeholder: Last 24 hours
+        options:
+          - { value: 1h, label: Last hour }
+          - { value: 6h, label: Last 6 hours }
+          - { value: 24h, label: Last 24 hours }
+          - { value: 3d, label: Last 3 days }
+          - { value: 7d, label: Last 7 days }
   - $type: HorizontalStack
     gap: gap-3
     items:
       - $type: StatTile
-        label: Events, last 5 min
-        value: $sources.activity.last5Min
+        label: Events pushed
+        value: $sources.overview.totals.events
       - $type: StatTile
-        label: Events, last 60 min
-        value: $sources.activity.last60Min
+        label: Delivered
+        value: $sources.overview.totals.delivered
       - $type: StatTile
-        label: Events, last 24 h
-        value: $sources.activity.last24Hours
+        label: Failed attempts
+        value: $sources.overview.totals.failedAttempts
       - $type: StatTile
-        label: Delivered, last 24 h
-        value: $sources.outcomes.last24Hours.delivered
-      - $type: StatTile
-        label: Failed attempts, last 24 h
-        value: $sources.outcomes.last24Hours.failedAttempts
-      - $type: StatTile
-        label: Given up (DLQ), last 24 h
-        value: $sources.outcomes.last24Hours.givenUp
+        label: Given up (DLQ)
+        value: $sources.overview.totals.givenUp
   - $type: PageHeader
-    title: Events pushed, last hour
-    subtitle: Per 5 minutes; the last bar is the current, partial one.
+    title: Events pushed
+    subtitle: Per slice of the period; the last bar is the current, partial one.
   - $type: Chart
-    data: $sources.series.lastHour
+    data: $sources.overview.events
     xAxisKey: label
     xAxisType: category
     yFormat: number
     height: 240
     series:
-      - { key: events, name: "Events per 5 min", type: bar, yAxisId: left, color: "var(--color-primary)" }
+      - { key: events, name: "Events", type: bar, yAxisId: left, color: "var(--color-primary)" }
   - $type: PageHeader
-    title: Events pushed, last 24 hours
-    subtitle: Per hour; the last point is the current, partial hour.
+    $if: $sources.overview.hasFailures
+    title: Failures
+    subtitle: A failed attempt is retried; a dispatch given up sits in the DLQ.
   - $type: Chart
-    data: $sources.series.lastDay
+    $if: $sources.overview.hasFailures
+    data: $sources.overview.failures
     xAxisKey: label
     xAxisType: category
     yFormat: number
     height: 240
     series:
-      - { key: events, name: "Events per hour", type: area, yAxisId: left, color: "var(--color-primary)" }
+      - { key: failedAttempts, name: "Failed attempts", type: bar, yAxisId: left, color: "var(--color-warning)" }
+      - { key: givenUp, name: "Given up", type: bar, yAxisId: left, color: "var(--color-danger)" }
   - $type: PageHeader
-    $if: $sources.outcomes.hasFailures
-    title: Failures, last 24 hours
-    subtitle: Per hour. A failed attempt is retried; a dispatch given up sits in the DLQ.
-  - $type: Chart
-    $if: $sources.outcomes.hasFailures
-    data: $sources.outcomes.series
-    xAxisKey: label
-    xAxisType: category
-    yFormat: number
-    height: 240
-    series:
-      - { key: failedAttempts, name: "Failed attempts per hour", type: bar, yAxisId: left, color: "var(--color-warning)" }
-      - { key: givenUp, name: "Given up per hour", type: bar, yAxisId: left, color: "var(--color-danger)" }
-  - $type: PageHeader
-    title: Most pushed events, last 24 hours
+    title: Most pushed events
   - $type: DataTable
-    rows: $sources.breakdown.topEvents
-    emptyMessage: No event in the last 24 h
+    rows: $sources.overview.topEvents
+    emptyMessage: No event in this period
     columns:
       - { key: "event", label: "Event" }
       - { key: "count", label: "Pushed" }
   - $type: PageHeader
-    title: Subscribers, last 24 hours
+    title: Subscribers
     subtitle: Busiest first. Durations come from the dispatch log.
   - $type: DataTable
-    rows: $sources.breakdown.subscribers
-    emptyMessage: No dispatch in the last 24 h
+    rows: $sources.overview.subscribers
+    emptyMessage: No dispatch in this period
     columns:
       - { key: "subscriberId", label: "Subscriber", mono: true }
       - { key: "delivered", label: "Delivered" }

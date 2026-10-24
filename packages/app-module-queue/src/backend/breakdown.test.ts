@@ -68,6 +68,12 @@ describe('getBreakdown', () => {
     expect(getBreakdown(configDir, NOW).subscribers).toHaveLength(TOP_SUBSCRIBERS);
   });
 
+  it('counts over the window it is given: an event 30 hours old is in a 3-day breakdown, not in the default 24 hours', () => {
+    writeHistory('2026-01-02', [trigger('onRecent'), trigger('onOld', NOW - 30 * HOUR)]);
+    expect(getBreakdown(configDir, NOW).topEvents).toEqual([{ event: 'onRecent', count: 1 }]);
+    expect(getBreakdown(configDir, NOW, 72 * HOUR).topEvents).toEqual([{ event: 'onOld', count: 1 }, { event: 'onRecent', count: 1 }]);
+  });
+
   it('is empty when nothing was recorded, whether the folders are empty or missing', () => {
     expect(getBreakdown(configDir, NOW)).toEqual({ topEvents: [], otherEvents: 0, subscribers: [] });
     expect(getBreakdown(join(configDir, 'nowhere'), NOW)).toEqual({ topEvents: [], otherEvents: 0, subscribers: [] });
