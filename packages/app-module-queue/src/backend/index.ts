@@ -8,10 +8,11 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
+import { getEvents, pushTestEvent } from './events.js';
 import { retryEvent } from './retry.js';
 import { getDaemonState } from './daemon.js';
 import { getRelayInfo } from './relay.js';
@@ -147,6 +148,29 @@ export default function (ctx: ModuleContext): void {
       return reply.code(200).send(getLogs(configDir, query));
     } catch (err) {
       return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // The event catalog (what the programs declared) joined with the history; filters: q, source, status, prefix, match, declaredOnly, terminal
+  ctx.registerRoute('GET', '/events', (req, reply) => {
+    const query = (req as { query?: QueryParams }).query ?? {};
+    try {
+      return reply.code(200).send(getEvents(configDir, query));
+    } catch (err) {
+      return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // Pushes the declared example of the event through the daemon: it runs the real subscribers of that event
+  ctx.registerRoute('POST', '/events/:name/push-test', async (req, reply) => {
+    const { name } = req.params;
+    try {
+      return reply.code(200).send(await pushTestEvent(configDir, name));
+    } catch (err) {
+      if (err instanceof TestPayloadNotFoundError) {
+        return reply.code(404).send({ error: getErrorMessage(err) });
+      }
+      return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
   });
 

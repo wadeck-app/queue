@@ -78,6 +78,16 @@
     {
       "kind": "page",
       "slot": "nav",
+      "label": "Queue Events",
+      "path": "/events",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/events-page.yaml"
+      }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
       "label": "Queue Pending",
       "path": "/pending",
       "view": {

@@ -103,6 +103,26 @@ describe('launcherTemplate resolveStdio', () => {
       expect(result.args).toEqual(['history']);
     });
 
+    it.each([['events', 'list'], ['events', 'show']])('non-TTY + %s %s: read-only catalog command, output is kept (inherit, no notice)', (...command) => {
+      const result = resolveStdio([...command, 'job.completed'], false);
+      expect(result.stdio).toBe('inherit');
+      expect(result.notice).toBeNull();
+      expect(result.auto).toBe(false);
+      expect(result.args).toEqual([...command, 'job.completed']);
+    });
+
+    it('non-TTY + events register: it writes through the daemon, so it keeps the discarded output like any other command', () => {
+      const result = resolveStdio(['events', 'register', '--source', 'x'], false);
+      expect(result.stdio).toBe('ignore');
+      expect(result.notice).toContain('--cli-foreground');
+    });
+
+    it('non-TTY + events list + --cli-background: the explicit flag still wins', () => {
+      const result = resolveStdio(['events', 'list', '--cli-background'], false);
+      expect(result.stdio).toBe('ignore');
+      expect(result.notice).toBeNull();
+    });
+
     it('non-TTY + start: should return ignore with no notice (background command)', () => {
       const result = resolveStdio(['start'], false);
       expect(result.stdio).toBe('ignore');

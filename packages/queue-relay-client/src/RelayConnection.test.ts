@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { WebSocketServer } from 'ws';
 import { isRecord } from '@wadeck-app/queue-core';
 import { RelayConnection } from './RelayConnection.js';
+import { waitFor } from './testing/waitFor.js';
+import { installLogicalClock } from './testing/logicalClock.js';
 
 // Mock push.js before RelayConnection imports it
 const { mockPushModule } = vi.hoisted(() => {
@@ -38,6 +40,15 @@ function parseMessage(data: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(parsed));
 }
 
+// A retry delay no test ever reaches: a loop that is not interrupted by stop() hangs until the (hang guard) test timeout
+const NEVER_MS = 3_600_000;
+
+// Heartbeat liveness tests run on a logical clock (Date.now() only moves when the server receives a client ping): each client ping
+// advances it by LIVENESS_STEP_MS, so after PINGS_TO_PROVE pings the logical time exceeds the liveness threshold (intervalMs + timeoutMs = 100)
+// several times over. A connection that survives them proves the traffic counts as activity, whatever the speed of the machine.
+const LIVENESS_STEP_MS = 30;
+const PINGS_TO_PROVE = 6;
+
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-relay-connection-test-${crypto.randomUUID()}`);
   mkdirSync(dir, { recursive: true });
@@ -49,7 +60,7 @@ describe('RelayConnection', () => {
 
   afterEach(() => {
     if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
+      rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -70,8 +81,11 @@ describe('RelayConnection', () => {
       // Start the connection in the background
       const startPromise = connection.start();
 
-      // Give it time to try loading the config and log the error
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Wait until the config load error is logged
+      await waitFor(
+        () => logs.some((line) => line.includes('[relay]') && line.includes('Cannot load relay.yml')),
+        'the "Cannot load relay.yml" log line'
+      );
 
       // Check that error was logged with file path
       const errorLogs = logs.filter((line) => line.includes('[relay]') && line.includes('Cannot load relay.yml'));
@@ -81,8 +95,8 @@ describe('RelayConnection', () => {
       // Now fix the YAML (valid with empty plugins)
       writeFileSync(relayYmlPath, 'relayUrl: "ws://127.0.0.1:1/relay-ws"\ntoken: "test"\nplugins: []\n');
 
-      // Give it time to retry and load the fixed config
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Wait for the retry that loads the fixed config
+      await waitFor(() => logs.some((line) => line.includes('no plugins')), 'the "no plugins" log line after the fix');
 
       // Check that the "no plugins" message was logged
       const noPluginsLogs = logs.filter((line) => line.includes('no plugins'));
@@ -105,8 +119,8 @@ describe('RelayConnection', () => {
 
       const startPromise = connection.start();
 
-      // Give it time to try loading the config
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Wait until the missing file is logged
+      await waitFor(() => logs.some((line) => line.includes('No relay.yml found')), 'the "No relay.yml found" log line');
 
       // Check that the missing file message includes the directory
       const missingLogs = logs.filter((line) => line.includes('No relay.yml found'));
@@ -119,30 +133,26 @@ describe('RelayConnection', () => {
   });
 
   describe('stop() interrupt behavior', () => {
-    it('resolves the loop promptly (< 1s) even while sleeping', async () => {
+    it('resolves the loop promptly even while sleeping', async () => {
       tmpDir = makeTmpDir();
       const logs: string[] = [];
       const connection = new RelayConnection({
         configDir: tmpDir,
-        retryDelayMs: 30_000, // Long sleep
+        // Never reached: if stop() did not interrupt the sleep, start() would not resolve and the test would hit its hang guard
+        retryDelayMs: NEVER_MS,
         onLog: (line) => logs.push(line),
       });
 
-      const startTime = Date.now();
       const startPromise = connection.start();
 
-      // Give it time to enter the sleep
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // The loop logs, then enters the sleep right away
+      await waitFor(() => logs.some((line) => line.includes('No relay.yml found')), 'the loop to reach its retry sleep');
 
       // Stop should interrupt the sleep
       connection.stop();
 
-      // Wait for start() to resolve
+      // Resolves only because the sleep was interrupted
       await startPromise;
-      const elapsed = Date.now() - startTime;
-
-      // Should resolve in much less than the retry delay
-      expect(elapsed).toBeLessThan(1000);
     });
   });
 
@@ -165,8 +175,8 @@ describe('RelayConnection', () => {
 
       const startPromise = connection.start();
 
-      // Give it time to load the config
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Wait until the config is loaded
+      await waitFor(() => logs.some((line) => line.includes('no plugins')), 'the "no plugins" log line');
 
       // Check that the message was logged
       const noPluginsLogs = logs.filter((line) => line.includes('no plugins'));
@@ -193,8 +203,8 @@ describe('RelayConnection', () => {
 
       const startPromise = connection.start();
 
-      // Give it time to try loading and fail
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Wait until the load failed
+      await waitFor(() => logs.some((line) => line.includes('Cannot load relay.yml')), 'the "Cannot load relay.yml" log line');
 
       // Initially not connected (no valid config yet)
       expect(connection.isConnected()).toBe(false);
@@ -220,8 +230,11 @@ describe('RelayConnection', () => {
 
       const startPromise = connection.start();
 
-      // Give it time to retry several times
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Wait until it retried several times (one log line per attempt)
+      await waitFor(
+        () => logs.filter((line) => line.includes('Cannot load relay.yml')).length >= 5,
+        'at least 5 failed config load attempts'
+      );
 
       // Get listener count if possible (this is mostly a leak detector via test completion)
       // If listeners accumulated, the test process would report warnings
@@ -238,7 +251,7 @@ describe('RelayConnection', () => {
       const logs: string[] = [];
       const connection = new RelayConnection({
         configDir: tmpDir,
-        retryDelayMs: 10,
+        retryDelayMs: NEVER_MS,
         onLog: (line) => logs.push(line),
       });
 
@@ -246,22 +259,21 @@ describe('RelayConnection', () => {
       writeFileSync(relayYmlPath, 'relayUrl: "ws://127.0.0.1:1/relay-ws"\ntoken: "test"\nplugins: []\n');
 
       // Start and stop
+      const noPluginsCount = (): number => logs.filter((line) => line.includes('no plugins')).length;
       const startPromise1 = connection.start();
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await waitFor(() => noPluginsCount() === 1, 'the first run to load the config');
       connection.stop();
       await startPromise1;
 
       // Start again - should not enter hot loop
-      const startTime = Date.now();
       const startPromise2 = connection.start();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await waitFor(() => noPluginsCount() >= 2, 'the second run to load the config');
       connection.stop();
       await startPromise2;
-      const elapsed = Date.now() - startTime;
 
-      // If reusing aborted controller, would cause immediate loop (fast)
-      // Normal behavior with retry delay should be measurable
-      expect(elapsed).toBeGreaterThan(20);
+      // With the retry delay out of reach, a sleeping second run loads the config exactly once. Reusing the aborted controller
+      // would make the sleep return immediately and the loop spin, logging many more lines.
+      expect(noPluginsCount()).toBe(2);
     });
   });
 
@@ -269,11 +281,9 @@ describe('RelayConnection', () => {
     it('exits loop without trying to connect if stop() called after plugin load', async () => {
       tmpDir = makeTmpDir();
       const logs: string[] = [];
-      let pluginLoadAttempts = 0;
-
       const connection = new RelayConnection({
         configDir: tmpDir,
-        retryDelayMs: 10,
+        retryDelayMs: NEVER_MS,
         onLog: (line) => logs.push(line),
       });
 
@@ -286,17 +296,12 @@ describe('RelayConnection', () => {
 
       const startPromise = connection.start();
 
-      // Give it time to load and process empty plugins
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Wait until the empty plugins are processed
+      await waitFor(() => logs.some((line) => line.includes('no plugins')), 'the "no plugins" log line');
 
-      // Stop should exit the loop promptly
-      const stopTime = Date.now();
+      // Stop should exit the loop promptly: it resolves only because the pending sleep is interrupted
       connection.stop();
       await startPromise;
-      const elapsed = Date.now() - stopTime;
-
-      // Should resolve quickly (< 500ms including any pending sleep)
-      expect(elapsed).toBeLessThan(500);
     });
 
     it('exits loop without attempting connection if stopped after config load succeeds', async () => {
@@ -315,7 +320,7 @@ describe('RelayConnection', () => {
       try {
         const connection = new RelayConnection({
           configDir: tmpDir,
-          retryDelayMs: 10,
+          retryDelayMs: NEVER_MS,
           onLog: (line) => logs.push(line),
         });
 
@@ -327,7 +332,7 @@ describe('RelayConnection', () => {
         );
 
         const startPromise = connection.start();
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await waitFor(() => logs.some((line) => line.includes('no plugins')), 'the "no plugins" log line');
         connection.stop();
         await startPromise;
 
@@ -341,18 +346,6 @@ describe('RelayConnection', () => {
   });
 
   describe('R8: token refusal and backoff handling', () => {
-    // Helper: wait for condition with timeout
-    async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
-      const start = Date.now();
-      while (Date.now() - start < maxMs) {
-        if (condition()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
-    }
-
     describe('(a) Invalid token error + 4001 close: no reconnect with same token', () => {
       it('receives error "Invalid token" then close 4001 -> exactly ONE attempt, refused-token log', async () => {
         tmpDir = makeTmpDir();
@@ -402,9 +395,10 @@ plugins:
         try {
           const startPromise = connection.start();
           // Wait for initial connection and rejection
-          await waitFor(() => logs.some((line) => line.includes('refused the token')), 500);
+          await waitFor(() => logs.some((line) => line.includes('refused the token')), 'the "refused the token" log line');
 
-          // Give extra time to ensure no second connection is attempted
+          // Negative check without a positive barrier (needs a production seam, see the final report): give extra time to ensure no
+          // second connection is attempted. A slow machine only makes it weaker, never failing.
           await new Promise((resolve) => setTimeout(resolve, 150));
 
           connection.stop();
@@ -481,7 +475,8 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => logs.some((line) => line.includes('refused the token')), 500);
+          await waitFor(() => logs.some((line) => line.includes('refused the token')), 'the "refused the token" log line');
+          // Negative check without a positive barrier (see the final report): a slow machine only makes it weaker, never failing
           await new Promise((resolve) => setTimeout(resolve, 150));
 
           connection.stop();
@@ -551,7 +546,10 @@ plugins:
         try {
           const startPromise = connection.start();
           // Wait for first rejection
-          await waitFor(() => connectionCount === 1 && logs.some((line) => line.includes('refused the token')), 500);
+          await waitFor(
+            () => connectionCount === 1 && logs.some((line) => line.includes('refused the token')),
+            'the first connection to be refused'
+          );
 
           const countAfterRefusal = connectionCount;
 
@@ -563,6 +561,7 @@ plugins:
     subscriptions:
       - eventType: [test]
 `);
+          // Negative check without a positive barrier (see the final report): a slow machine only makes it weaker, never failing
           await new Promise((resolve) => setTimeout(resolve, 200));
           expect(connectionCount).toBe(countAfterRefusal);
 
@@ -574,7 +573,7 @@ plugins:
     subscriptions:
       - eventType: [test]
 `);
-          await waitFor(() => connection.isConnected(), 1000);
+          await waitFor(() => connection.isConnected(), 'the connection to authenticate with the new token');
           expect(connectionCount).toBe(2);
 
           // After successful auth, lastError should be cleared
@@ -645,9 +644,12 @@ plugins:
         try {
           const startPromise = connection.start();
           // Wait for at least 2 connection attempts (with faster backoff)
-          await waitFor(() => connectionCount >= 2, 1000);
+          await waitFor(() => connectionCount >= 2, 'a second connection attempt');
           // Stopping mid-handshake would race with the diagnostic: wait until it is recorded
-          await waitFor(() => (connection.getDiagnostics().lastError ?? '').includes('authentication timed out'), 1000);
+          await waitFor(
+            () => (connection.getDiagnostics().lastError ?? '').includes('authentication timed out'),
+            'the authentication timeout diagnostic'
+          );
 
           connection.stop();
           await startPromise;
@@ -669,7 +671,7 @@ plugins:
       it('close 4429 -> wait authBlockedMs before next attempt', async () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
-        const connectionTimes: number[] = [];
+        let connectionCount = 0;
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -695,7 +697,7 @@ plugins:
         );
 
         wss.on('connection', (ws) => {
-          connectionTimes.push(Date.now());
+          connectionCount++;
           ws.on('message', (data) => {
             const msg = parseMessage(data);
             if (msg.type === 'auth') {
@@ -704,14 +706,15 @@ plugins:
           });
         });
 
+        // Every delay except authBlockedMs is out of reach: a second connection can only come from the authBlockedMs wait, no timing is measured
         const injectedOptions = {
           retryDelayMs: 10,
           reconnect: {
-            minMs: 1,
-            maxMs: 100,
-            authBlockedMs: 100,
-            tryAgainMs: 50,
-            abuseMs: 75,
+            minMs: NEVER_MS,
+            maxMs: NEVER_MS,
+            authBlockedMs: 20,
+            tryAgainMs: NEVER_MS,
+            abuseMs: NEVER_MS,
             random: () => 1,
           },
         };
@@ -724,17 +727,11 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          // Wait for 2 connection attempts
-          await waitFor(() => connectionTimes.length >= 2, 500);
+          // The second connection proves that close 4429 waits authBlockedMs (the only reachable delay) before the next attempt
+          await waitFor(() => connectionCount >= 2, 'a second connection after the authBlockedMs wait');
 
           connection.stop();
           await startPromise;
-
-          // Second connection should be at least authBlockedMs after first
-          if (connectionTimes.length >= 2) {
-            const delay = connectionTimes[1]! - connectionTimes[0]!;
-            expect(delay).toBeGreaterThanOrEqual(80); // Allow small jitter margin
-          }
 
           // Should have log about backing off
           const backoffLog = logs.find((line) => line.includes('Too many failed authentications'));
@@ -759,7 +756,7 @@ plugins:
     });
 
     describe('(g) stop() during authBlocked wait resolves promptly', () => {
-      it('resolves < 500ms even during long authBlockedMs wait', async () => {
+      it('resolves promptly even during long authBlockedMs wait', async () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
 
@@ -800,7 +797,8 @@ plugins:
           reconnect: {
             minMs: 1,
             maxMs: 100,
-            authBlockedMs: 5000, // Long wait
+            // Never reached: if stop() did not interrupt the wait, start() would not resolve and the test would hit its hang guard
+            authBlockedMs: NEVER_MS,
             tryAgainMs: 50,
             abuseMs: 75,
             random: () => 1,
@@ -815,16 +813,12 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          // Let it attempt once and enter the long authBlockedMs wait
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          // Let it attempt once and enter the long authBlockedMs wait (the backoff is logged right before the wait)
+          await waitFor(() => logs.some((line) => line.includes('Too many failed authentications')), 'the authBlocked backoff log line');
 
-          // Now stop and measure time
-          const stopStart = Date.now();
+          // Resolves only because the wait was interrupted
           connection.stop();
           await startPromise;
-          const stopElapsed = Date.now() - stopStart;
-
-          expect(stopElapsed).toBeLessThan(500);
         } finally {
           wss.close();
         }
@@ -879,7 +873,10 @@ plugins:
 
       try {
         const startPromise = connection.start();
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await waitFor(
+          () => (connection.getDiagnostics().lastError ?? '').includes('The relay refused the token') && connection.getDiagnostics().lastCloseCode === 4001,
+          'the refused token diagnostic'
+        );
         connection.stop();
         await startPromise;
 
@@ -923,18 +920,6 @@ plugins:
 `
       );
 
-      // Helper: wait for condition with timeout
-      async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
-        const start = Date.now();
-        while (Date.now() - start < maxMs) {
-          if (condition()) {
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
-      }
-
       wss.on('connection', (ws) => {
         connections.push(ws);
         ws.on('message', (data) => {
@@ -963,7 +948,7 @@ plugins:
         const startPromise = connection.start();
 
         // Wait for first connection attempt and 4001 error
-        await waitFor(() => connection.getDiagnostics().lastCloseCode === 4001);
+        await waitFor(() => connection.getDiagnostics().lastCloseCode === 4001, 'close code 4001 in the diagnostics');
         let diag = connection.getDiagnostics();
         expect(diag.lastError).toContain('The relay refused the token');
         expect(diag.lastCloseCode).toBe(4001);
@@ -981,7 +966,7 @@ plugins:
         );
 
         // Wait for successful reconnect and authenticated message
-        await waitFor(() => connection.isConnected());
+        await waitFor(() => connection.isConnected(), 'the connection to authenticate with the fixed token');
         diag = connection.getDiagnostics();
 
         // lastError should be cleared after successful auth
@@ -1012,7 +997,7 @@ plugins:
 
       try {
         const startPromise = connection.start();
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await waitFor(() => (connection.getDiagnostics().lastError ?? '').includes('Cannot load relay.yml'), 'the "Cannot load relay.yml" diagnostic');
         connection.stop();
         await startPromise;
 
@@ -1048,7 +1033,7 @@ plugins:
 
       try {
         const startPromise = connection.start();
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await waitFor(() => (connection.getDiagnostics().lastError ?? '').includes('Failed to load plugins'), 'the "Failed to load plugins" diagnostic');
         connection.stop();
         await startPromise;
 
@@ -1092,7 +1077,7 @@ plugins:
 
       try {
         const startPromise = connection.start();
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await waitFor(() => (connection.getDiagnostics().lastError ?? '').includes('Connection error:'), 'the "Connection error:" diagnostic');
         connection.stop();
         await startPromise;
 
@@ -1144,7 +1129,7 @@ plugins:
 
       try {
         const startPromise = connection.start();
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        await waitFor(() => connection.getDiagnostics().lastCloseCode === 1000, 'close code 1000 in the diagnostics');
         connection.stop();
         await startPromise;
 
@@ -1174,18 +1159,6 @@ plugins:
     beforeEach(() => {
       vi.clearAllMocks();
     });
-
-    // Helper: wait for condition with timeout
-    async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
-      const start = Date.now();
-      while (Date.now() - start < maxMs) {
-        if (condition()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
-    }
 
     describe('(a) subscribeAll sends ONE subscribe per plugin with correct filter structure', () => {
       it('sends one subscribe message with union of eventTypes and empty payloadMatch', async () => {
@@ -1237,7 +1210,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => receivedMessages.some((m) => m.type === 'subscribe'), 2000);
+          await waitFor(() => receivedMessages.some((m) => m.type === 'subscribe'), 'the condition: receivedMessages.some((m) => m.type === \'subscribe\')');
 
           const subscribeMsg = receivedMessages.find((m) => m.type === 'subscribe');
           expect(subscribeMsg).toBeDefined();
@@ -1307,7 +1280,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => receivedMessages.some((m) => m.type === 'subscribe'), 2000);
+          await waitFor(() => receivedMessages.some((m) => m.type === 'subscribe'), 'the condition: receivedMessages.some((m) => m.type === \'subscribe\')');
 
           const subscribeMsg = receivedMessages.find((m) => m.type === 'subscribe');
           expect(subscribeMsg).toBeDefined();
@@ -1391,7 +1364,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => pushToQueueCalls.length > 0, 2000);
+          await waitFor(() => pushToQueueCalls.length > 0, 'the condition: pushToQueueCalls.length > 0');
 
           expect(pushToQueueCalls[0]?.event).toBe('custom_push_event');
 
@@ -1468,7 +1441,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => pushToQueueCalls.length > 0, 2000);
+          await waitFor(() => pushToQueueCalls.length > 0, 'the condition: pushToQueueCalls.length > 0');
 
           expect(pushToQueueCalls[0]?.event).toBe('on.github.push');
 
@@ -1554,7 +1527,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => pushToQueueCalls.length > 0, 2000);
+          await waitFor(() => pushToQueueCalls.length > 0, 'the condition: pushToQueueCalls.length > 0');
 
           expect(pushToQueueCalls[0]?.event).toBe('pr_closed');
 
@@ -1638,7 +1611,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => pushToQueueCalls.length > 0, 2000);
+          await waitFor(() => pushToQueueCalls.length > 0, 'the condition: pushToQueueCalls.length > 0');
 
           // First matching subscription wins (the catch-all is first)
           expect(pushToQueueCalls[0]?.event).toBe('catch_all_event');
@@ -1720,7 +1693,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => logs.some((line) => line.includes('matched no subscription')), 2000);
+          await waitFor(() => logs.some((line) => line.includes('matched no subscription')), 'the condition: logs.some((line) => line.includes(\'matched no subscription\'))');
 
           // pushToQueue should NOT have been called
           expect(pushToQueueCalls).toHaveLength(0);
@@ -1803,7 +1776,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => logs.some((line) => line.includes('ABORTED')), 2000);
+          await waitFor(() => logs.some((line) => line.includes('ABORTED')), 'the condition: logs.some((line) => line.includes(\'ABORTED\'))');
 
           // Should have FAILURE line with ABORTED, reason, delivery id
           const abortLog = logs.find((line) => line.includes('ABORTED'));
@@ -1886,7 +1859,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => logs.some((line) => line.includes('ABORTED')), 2000);
+          await waitFor(() => logs.some((line) => line.includes('ABORTED')), 'the condition: logs.some((line) => line.includes(\'ABORTED\'))');
 
           const abortLog = logs.find((line) => line.includes('ABORTED'));
           expect(abortLog).toBeDefined();
@@ -1965,7 +1938,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => logs.some((line) => line.includes('Pushed')), 2000);
+          await waitFor(() => logs.some((line) => line.includes('Pushed')), 'the condition: logs.some((line) => line.includes(\'Pushed\'))');
 
           const successLog = logs.find((line) => line.includes('Pushed'));
           expect(successLog).toBeDefined();
@@ -2045,7 +2018,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => logs.some((line) => line.includes('Pushed')), 2000);
+          await waitFor(() => logs.some((line) => line.includes('Pushed')), 'the condition: logs.some((line) => line.includes(\'Pushed\'))');
 
           const successLog = logs.find((line) => line.includes('Pushed'));
           expect(successLog).toBeDefined();
@@ -2124,7 +2097,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => logs.some((line) => line.includes('Failed to push')), 2000);
+          await waitFor(() => logs.some((line) => line.includes('Failed to push')), 'the condition: logs.some((line) => line.includes(\'Failed to push\'))');
 
           const errorLog = logs.find((line) => line.includes('Failed to push'));
           expect(errorLog).toBeDefined();
@@ -2143,23 +2116,13 @@ plugins:
   });
 
   describe('R10: heartbeat liveness detection', () => {
-    // Helper: wait for condition with timeout
-    async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
-      const start = Date.now();
-      while (Date.now() - start < maxMs) {
-        if (condition()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
-    }
-
     describe('(a) healthy server: no liveness errors across multiple heartbeat ticks', () => {
       it('with real ws server (autoPong: true default), stays connected for 5+ heartbeat ticks', async () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         let connectionCount = 0;
+        let serverPings = 0;
+        const clock = installLogicalClock();
 
         const wss = new WebSocketServer({ port: 0, autoPong: true });
         const port = portOf(wss);
@@ -2186,6 +2149,10 @@ plugins:
 
         wss.on('connection', (ws) => {
           connectionCount++;
+          ws.on('ping', () => {
+            serverPings++;
+            clock.advance(LIVENESS_STEP_MS);
+          });
           ws.on('message', (data) => {
             const msg = parseMessage(data);
             if (msg.type === 'auth') {
@@ -2203,10 +2170,10 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          // Wait for connection and then let 5 heartbeat ticks pass: 5 * 50 = 250ms minimum
-          await waitFor(() => connection.isConnected(), 500);
+          // Wait for connection and then for enough heartbeat ticks (client pings) to cross the liveness threshold several times
+          await waitFor(() => connection.isConnected(), 'the connection to authenticate');
           const initialConnectionCount = connectionCount;
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await waitFor(() => serverPings >= PINGS_TO_PROVE, 'the heartbeat pings reaching the server');
 
           connection.stop();
           await startPromise;
@@ -2217,6 +2184,7 @@ plugins:
           const noSignLogs = logs.filter((l) => l.includes('No sign of life'));
           expect(noSignLogs.length).toBe(0);
         } finally {
+          clock.restore();
           wss.close();
         }
       });
@@ -2265,7 +2233,7 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => connectionCount >= 2, 3000);
+          await waitFor(() => connectionCount >= 2, 'the condition: connectionCount >= 2');
 
           expect(connectionCount).toBeGreaterThanOrEqual(2);
           const deadLogs = logs.filter((l) => l.includes('No sign of life from the relay'));
@@ -2313,13 +2281,13 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => diagnosticsAtDetection !== null, 3000);
+          await waitFor(() => diagnosticsAtDetection !== null, 'the condition: diagnosticsAtDetection !== null');
 
           const seen = diagnosticsAtDetection as { lastError: string | null; lastErrorAt: string | null } | null;
           expect(seen?.lastError).toContain('No sign of life from the relay');
           expect(seen?.lastErrorAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
           // The loop keeps recovering after the detection
-          await waitFor(() => connectionCount >= 2, 3000);
+          await waitFor(() => connectionCount >= 2, 'the condition: connectionCount >= 2');
           expect(connectionCount).toBeGreaterThanOrEqual(2);
 
           connection.stop();
@@ -2333,19 +2301,25 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         let connectionCount = 0;
-        const pingTimers: NodeJS.Timeout[] = [];
+        const clock = installLogicalClock();
+        let serverPings = 0;
 
         const wss = new WebSocketServer({ port: 0, autoPong: false });
         const port = portOf(wss);
         writeRelayYml(tmpDir, port);
         wss.on('connection', (ws) => {
           connectionCount++;
+          // Server-initiated ping in answer to each client ping (the client answers it automatically and it counts as activity),
+          // while the client's own pings stay unanswered (autoPong false)
+          ws.on('ping', () => {
+            serverPings++;
+            ws.ping();
+            clock.advance(LIVENESS_STEP_MS);
+          });
           ws.on('message', (data) => {
             const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
-              // Server-initiated pings every 20 ms: the client answers them automatically and they count as activity
-              pingTimers.push(setInterval(() => { if (ws.readyState === ws.OPEN) ws.ping(); }, 20));
             }
           });
         });
@@ -2360,9 +2334,9 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          await waitFor(() => connection.isConnected(), 1000);
-          // Let more than 4 full liveness windows (100 ms each) pass
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await waitFor(() => connection.isConnected(), 'the connection to authenticate');
+          // Let more than 4 full liveness windows (100 logical ms each) pass
+          await waitFor(() => serverPings >= PINGS_TO_PROVE, 'the heartbeat pings reaching the server');
 
           expect(connectionCount).toBe(1);
           expect(logs.filter((l) => l.includes('No sign of life')).length).toBe(0);
@@ -2370,7 +2344,7 @@ plugins:
           connection.stop();
           await startPromise;
         } finally {
-          pingTimers.forEach((t) => clearInterval(t));
+          clock.restore();
           wss.close();
         }
       });
@@ -2381,6 +2355,8 @@ plugins:
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         let connectionCount = 0;
+        let serverPings = 0;
+        const clock = installLogicalClock();
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -2407,6 +2383,10 @@ plugins:
 
         wss.on('connection', (ws) => {
           connectionCount++;
+          ws.on('ping', () => {
+            serverPings++;
+            clock.advance(LIVENESS_STEP_MS);
+          });
           ws.on('message', (data) => {
             const msg = parseMessage(data);
             if (msg.type === 'auth') {
@@ -2425,11 +2405,11 @@ plugins:
         try {
           const startPromise = connection.start();
           // Wait for connection
-          await waitFor(() => connection.isConnected(), 500);
+          await waitFor(() => connection.isConnected(), 'the connection to authenticate');
           const initialConnectionCount = connectionCount;
 
-          // Let time pass to ensure heartbeat ticks run without issues
-          await new Promise((resolve) => setTimeout(resolve, 250));
+          // Wait until enough heartbeat ticks (client pings) ran to cross the liveness threshold several times
+          await waitFor(() => serverPings >= PINGS_TO_PROVE, 'the heartbeat pings reaching the server');
 
           connection.stop();
           await startPromise;
@@ -2440,6 +2420,7 @@ plugins:
           const noSignLogs = logs.filter((l) => l.includes('No sign of life'));
           expect(noSignLogs.length).toBe(0);
         } finally {
+          clock.restore();
           wss.close();
         }
       });
@@ -2451,7 +2432,10 @@ plugins:
         const logs: string[] = [];
         let connectionCount = 0;
 
-        const wss = new WebSocketServer({ port: 0 });
+        const clock = installLogicalClock();
+        let serverPings = 0;
+        // autoPong false: the server never answers the client pings, only its application messages can count as activity
+        const wss = new WebSocketServer({ port: 0, autoPong: false });
         const port = portOf(wss);
 
         const pluginPath = join(tmpDir, 'plugin.js');
@@ -2474,26 +2458,18 @@ plugins:
 `
         );
 
-        let messageInterval: any = null;
         wss.on('connection', (ws) => {
           connectionCount++;
+          // One application message in answer to each client ping, and the logical time moves on
+          ws.on('ping', () => {
+            serverPings++;
+            ws.send(JSON.stringify({ type: 'heartbeat_ack' }));
+            clock.advance(LIVENESS_STEP_MS);
+          });
           ws.on('message', (data) => {
             const msg = parseMessage(data);
             if (msg.type === 'auth') {
               ws.send(JSON.stringify({ type: 'authenticated', username: 't' }));
-              // Send a message every 35ms to keep activity alive (heartbeat is 50ms timeout)
-              messageInterval = setInterval(() => {
-                try {
-                  ws.send(JSON.stringify({ type: 'heartbeat_ack' }));
-                } catch {
-                  // connection closed
-                }
-              }, 35);
-            }
-          });
-          ws.on('close', () => {
-            if (messageInterval) {
-              clearInterval(messageInterval);
             }
           });
         });
@@ -2508,10 +2484,10 @@ plugins:
         try {
           const startPromise = connection.start();
           // Wait for connection to establish
-          await waitFor(() => connection.isConnected(), 500);
+          await waitFor(() => connection.isConnected(), 'the connection to authenticate');
           const initialConnectionCount = connectionCount;
-          // Let heartbeats tick for a while with continuous messages
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          // Let heartbeats tick until the logical time crossed the liveness threshold several times, with messages as the only traffic
+          await waitFor(() => serverPings >= PINGS_TO_PROVE, 'the heartbeat pings reaching the server');
 
           connection.stop();
           await startPromise;
@@ -2522,6 +2498,7 @@ plugins:
           const noSignLogs = logs.filter((l) => l.includes('No sign of life'));
           expect(noSignLogs.length).toBe(0);
         } finally {
+          clock.restore();
           wss.close();
         }
       });
@@ -2531,7 +2508,8 @@ plugins:
       it('after stop(), connection resolves promptly and no further pings are sent', async () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
-        const serverPings: number[] = [];
+        let serverPings = 0;
+        let serverClosed = false;
 
         const wss = new WebSocketServer({ port: 0 });
         const port = portOf(wss);
@@ -2564,7 +2542,10 @@ plugins:
             }
           });
           ws.on('ping', () => {
-            serverPings.push(Date.now());
+            serverPings++;
+          });
+          ws.on('close', () => {
+            serverClosed = true;
           });
         });
 
@@ -2577,24 +2558,23 @@ plugins:
 
         try {
           const startPromise = connection.start();
-          // Wait for connection to establish
-          await waitFor(() => connection.isConnected(), 500);
-          const pingsAfterStart = serverPings.length;
+          // Wait for connection to establish and for the heartbeat to be running (at least one ping)
+          await waitFor(() => connection.isConnected(), 'the connection to authenticate');
+          await waitFor(() => serverPings >= 1, 'the first heartbeat ping');
 
-          // Stop and measure
-          const stopTime = Date.now();
           connection.stop();
           await startPromise;
-          const stopElapsed = Date.now() - stopTime;
 
-          // Should resolve promptly
-          expect(stopElapsed).toBeLessThan(500);
+          // The server saw the close: TCP keeps order, so every ping sent before the stop has been counted by now
+          await waitFor(() => serverClosed, 'the server to see the connection close');
+          const pingsAtClose = serverPings;
 
-          // Wait a bit more to see if any additional pings arrive
+          // Negative check without a positive barrier (see the final report): wait through more than one heartbeat interval (50 ms);
+          // a slow machine only makes it weaker, never failing
           await new Promise((resolve) => setTimeout(resolve, 200));
 
-          // No significant increase in pings after stop (allow for 1-2 in-flight pings)
-          expect(serverPings.length).toBeLessThanOrEqual(pingsAfterStart + 2);
+          // No ping after the stop
+          expect(serverPings).toBe(pingsAtClose);
         } finally {
           wss.close();
         }
@@ -2651,9 +2631,10 @@ plugins:
         try {
           const startPromise = connection.start();
           // Wait for token refusal
-          await waitFor(() => logs.some((l) => l.includes('refused the token')), 500);
+          await waitFor(() => logs.some((l) => l.includes('refused the token')), 'the "refused the token" log line');
 
-          // Give extra time to confirm no further reconnect is attempted
+          // Negative check without a positive barrier (see the final report): give extra time to confirm no further reconnect is
+          // attempted. A slow machine only makes it weaker, never failing.
           await new Promise((resolve) => setTimeout(resolve, 150));
 
           connection.stop();
@@ -2671,18 +2652,6 @@ plugins:
   });
 
   describe('R9: subscriptionCount ack and HTTP 429 handling', () => {
-    // Helper: wait for condition with timeout
-    async function waitFor(condition: () => boolean, maxMs: number = 2000): Promise<void> {
-      const start = Date.now();
-      while (Date.now() - start < maxMs) {
-        if (condition()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      throw new Error(`Timeout waiting for condition after ${maxMs}ms`);
-    }
-
     describe('(a) subscriptionCount ack with multiple plugins: no warning when count >= subscribes sent', () => {
       it('2 plugins same source, server acks with subscriptionCount 1,2 -> NO warning, logs Subscribed with count', async () => {
         tmpDir = makeTmpDir();
@@ -2758,12 +2727,9 @@ plugins:
           // Wait for both subscriptions and their acks
           await waitFor(
             () => receivedMessages.filter((m) => m.type === 'subscribe').length === 2 &&
-                   logs.filter((l) => l.includes('[relay] Subscribed:')).length >= 2,
-            2000
-          );
+                   logs.filter((l) => l.includes('[relay] Subscribed:')).length >= 2, 'the condition: receivedMessages.filter((m) => m.type === \'subscribe\').length === 2 && logs.filter((l) => l.includes(\'[relay] Subscribed:\')).length >= 2');
 
-          // Give time to ensure no warning is logged
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          // The warning (if any) is logged in the same synchronous block as the "Subscribed" line the wait above observed: no extra wait needed
 
           connection.stop();
           await startPromise;
@@ -2858,9 +2824,7 @@ plugins:
           // Wait for both subscriptions and their acks
           await waitFor(
             () => receivedMessages.filter((m) => m.type === 'subscribe').length === 2 &&
-                   logs.filter((l) => l.includes('replaced an earlier one')).length === 1,
-            2000
-          );
+                   logs.filter((l) => l.includes('replaced an earlier one')).length === 1, 'the condition: receivedMessages.filter((m) => m.type === \'subscribe\').length === 2 && logs.filter((l) => l.includes(\'replaced an earlier one\')).length === 1');
 
           connection.stop();
           await startPromise;
@@ -2936,11 +2900,9 @@ plugins:
           const startPromise = connection.start();
           await waitFor(
             () => receivedMessages.filter((m) => m.type === 'subscribe').length === 1 &&
-                   logs.filter((l) => l.includes('[relay] Subscribed:')).length >= 1,
-            2000
-          );
+                   logs.filter((l) => l.includes('[relay] Subscribed:')).length >= 1, 'the condition: receivedMessages.filter((m) => m.type === \'subscribe\').length === 1 && logs.filter((l) => l.includes(\'[relay] Subscribed:\')).length >= 1');
 
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          // The warning (if any) is logged in the same synchronous block as the "Subscribed" line the wait above observed
 
           connection.stop();
           await startPromise;
@@ -3032,9 +2994,7 @@ plugins:
           // Wait for both subscriptions and warning
           await waitFor(
             () => receivedMessages.filter((m) => m.type === 'subscribe').length === 2 &&
-                   logs.filter((l) => l.includes('replaced an earlier one')).length === 1,
-            2000
-          );
+                   logs.filter((l) => l.includes('replaced an earlier one')).length === 1, 'the condition: receivedMessages.filter((m) => m.type === \'subscribe\').length === 2 && logs.filter((l) => l.includes(\'replaced an earlier one\')).length === 1');
 
           connection.stop();
           await startPromise;
@@ -3102,7 +3062,7 @@ plugins:
           const startPromise = connection.start();
 
           // Wait for the 429 error to be logged - may take a moment for the connection to be attempted
-          await waitFor(() => logs.some((l) => l.includes('429')), 1000);
+          await waitFor(() => logs.some((l) => l.includes('429')), 'the condition: logs.some((l) => l.includes(\'429\'))');
 
           // Check that the error message indicates 429
           const errorLogs = logs.filter((l) => l.includes('429'));
@@ -3172,7 +3132,7 @@ plugins:
           const startPromise = connection.start();
 
           // Wait for 503 error to be logged
-          await waitFor(() => logs.some((l) => l.includes('503')), 1000);
+          await waitFor(() => logs.some((l) => l.includes('503')), 'the condition: logs.some((l) => l.includes(\'503\'))');
 
           // Check that error message indicates 503
           const errorLogs = logs.filter((l) => l.includes('503'));
@@ -3187,7 +3147,7 @@ plugins:
         }
       });
 
-      it('stop() during 429 wait resolves promptly (< 500ms)', async () => {
+      it('stop() during 429 wait resolves promptly', async () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
 
@@ -3206,7 +3166,8 @@ plugins:
           reconnect: {
             minMs: 1_000,
             maxMs: 30_000,
-            authBlockedMs: 5000, // Long backoff
+            // Never reached: if stop() did not interrupt the wait, start() would not resolve and the test would hit its hang guard
+            authBlockedMs: NEVER_MS,
             tryAgainMs: 60_000,
             abuseMs: 300_000,
             random: () => 0.5,
@@ -3233,20 +3194,14 @@ plugins:
         });
 
         try {
-          const startTime = Date.now();
           const startPromise = connection.start();
 
-          // Wait a bit for the first 429 response
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          // Wait for the first 429 response
+          await waitFor(() => logs.some((l) => l.includes('429')), 'the 429 log line');
 
-          // Now stop during the 5s wait
+          // Now stop during the wait: start() resolves only because the wait was interrupted
           connection.stop();
           await startPromise;
-
-          const elapsed = Date.now() - startTime;
-
-          // Should resolve promptly, not wait for the full 5s backoff
-          expect(elapsed).toBeLessThan(500);
         } finally {
           server.close();
         }

@@ -19,5 +19,5 @@
     "types": ["vitest/globals", "node"]
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/testing/fakeQueue.ts"]
+  "exclude": ["src/**/*.test.ts", "src/testing/fakeQueue.ts", "src/testing/waitFor.ts"]
 }

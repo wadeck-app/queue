@@ -13,8 +13,9 @@ import { getErrorMessage } from '../errors.js';
 import { checkClientProtocol } from '@wadeck-app/queue-sdk/protocol';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { countQueue, subscribersFor, removeFromDlq } from '../operations.js';
+import { validateSourceDeclaration, writeSourceDeclaration } from '../catalog/EventCatalog.js';
 import type {
-  QueueCommands, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse,
+  QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse,
   ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse,
   DlqClearRequest, DlqClearResponse,
 } from './QueueCommands.js';
@@ -298,6 +299,25 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       });
 
       return { status: 'ok' };
+    },
+
+    // Protocol 1.1.0. The daemon is the only writer of the catalog; readers read the files. Nothing is queued or dispatched.
+    'register-events'(payload?: unknown): RegisterEventsResponse {
+      const req = (payload ?? {}) as Partial<RegisterEventsRequest>;
+      const protocol = checkClientProtocol(req.protocol);
+      if (!protocol.ok) {
+        return { status: 'rejected', reason: protocol.reason, supported: protocol.supported };
+      }
+      const checked = validateSourceDeclaration({ source: req.source, events: req.events });
+      if (!checked.ok) {
+        return {
+          status: 'rejected',
+          reason: `the declaration is invalid: ${checked.problems.map((problem) => `${problem.path || 'declaration'}: ${problem.message}`).join('; ')}`,
+          problems: checked.problems,
+        };
+      }
+      writeSourceDeclaration(configDir, checked.declaration);
+      return { status: 'registered', source: checked.declaration.source, count: checked.declaration.events.length };
     },
 
     'dlq-clear'(payload?: unknown): DlqClearResponse {

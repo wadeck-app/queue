@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createQueueService } from './QueueService.js';
+import { readCatalog } from '../catalog/EventCatalog.js';
 
 let configDir: string;
 let projectDir: string;
@@ -86,5 +87,45 @@ describe('push protocol version (SemVer, see @wadeck-app/queue-sdk/protocol)', (
     const response = await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir, protocol } as never);
     expect(response).toMatchObject({ status: 'rejected', supported: '^1.0.0' });
     expect(response.reason).toMatch(/protocol/i);
+  });
+});
+
+describe('register-events (the event catalog, protocol 1.1.0)', () => {
+  const declaration = { source: 'flow', events: [{ name: 'flow.step.started', description: 'A step began. Fires again on each retry.' }] };
+
+  it('stores the declaration of a source and answers how many events it holds', async () => {
+    const service = createQueueService(configDir);
+    const response = await service.commands['register-events']({ ...declaration, protocol: '1.1.0' });
+    expect(response).toEqual({ status: 'registered', source: 'flow', count: 1 });
+    expect(readCatalog(configDir).sources.map((source) => source.source)).toEqual(['flow']);
+  });
+
+  it('replaces what the source declared before', async () => {
+    const service = createQueueService(configDir);
+    await service.commands['register-events'](declaration);
+    await service.commands['register-events']({ source: 'flow', events: [{ name: 'flow.other', description: 'd' }] });
+    expect(readCatalog(configDir).sources[0]?.events.map((event) => event.name)).toEqual(['flow.other']);
+  });
+
+  it('rejects an invalid declaration with every problem and its path, and stores nothing', async () => {
+    const service = createQueueService(configDir);
+    const response = await service.commands['register-events']({ source: 'Flow', events: [{ name: 'bad name', description: '' }] });
+    expect(response.status).toBe('rejected');
+    expect(response.problems?.map((problem) => problem.path)).toEqual(['source', 'events[0].name', 'events[0].description']);
+    expect(response.reason).toContain('source');
+    expect(readCatalog(configDir).sources).toEqual([]);
+  });
+
+  it('rejects a protocol it does not accept, like push does, and stores nothing', async () => {
+    const service = createQueueService(configDir);
+    const response = await service.commands['register-events']({ ...declaration, protocol: '2.0.0' });
+    expect(response).toMatchObject({ status: 'rejected', supported: '^1.0.0' });
+    expect(readCatalog(configDir).sources).toEqual([]);
+  });
+
+  it('leaves the queue idle: it records nothing in the history or the WAL', async () => {
+    const service = createQueueService(configDir);
+    await service.commands['register-events'](declaration);
+    expect(service.isIdle()).toBe(true);
   });
 });

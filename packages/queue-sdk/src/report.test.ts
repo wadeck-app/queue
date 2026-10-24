@@ -36,6 +36,15 @@ describe('createReporter', () => {
     expect(line).toContain('may');
   });
 
+  it('words a declaration failure as a declaration of the source, not as an event', () => {
+    const sink = vi.fn();
+    const reporter = createReporter({ sink });
+    reporter.failure(failure({ operation: 'register-events', event: 'demo', message: 'update queue-cli' }));
+    reporter.failure(failure({ operation: 'register-events', event: 'demo2', kind: 'unknown-outcome', outcome: 'unknown', message: 'reset' }));
+    expect(String(sink.mock.calls[0]?.[0])).toBe('[queue-sdk] the declaration of the events of "demo" was not stored: update queue-cli');
+    expect(String(sink.mock.calls[1]?.[0])).toContain('may or may not have been stored');
+  });
+
   it('prints again after the first success', () => {
     const sink = vi.fn();
     const reporter = createReporter({ sink });

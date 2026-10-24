@@ -3,10 +3,22 @@ import { resolve } from 'node:path';
 import { createDaemonResolver, isPidAlive, type DaemonInfo, type Resolution } from './daemon.js';
 import { loopbackRequest, type HttpOutcome, type LoopbackRequest } from './http.js';
 import { resolveConfigDir } from './configDir.js';
-import { PROTOCOL_VERSION } from './protocol.js';
+import { daemonSupportsEventCatalog, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION } from './protocol.js';
 import { createReporter, describeHttpError, type FailureKind, type QueueFailure, type Reporter } from './report.js';
 import { defaultStartDeps, startDaemon, type RunOutcome, type StartDeps, type StartResult } from './start.js';
-import { parsePushAnswer, serializePushRequest, toPublishResult, type PublishResult, type PushRequest, type PushResponse } from './wire.js';
+import {
+  parsePushAnswer,
+  parseRegisterAnswer,
+  serializePushRequest,
+  serializeRegisterRequest,
+  toPublishResult,
+  type EventDeclaration,
+  type PublishResult,
+  type PushRequest,
+  type PushResponse,
+  type RegisterResult,
+  type Serialized,
+} from './wire.js';
 
 export interface QueuePublisherOptions {
   /** Project directory sent with every event (selects `.queue/subscribers.yml`). Default `process.cwd()`. */
@@ -52,7 +64,14 @@ export interface QueuePublisher {
   publish(event: string, payload: unknown, options?: PublishOptions): void;
   /** Never rejects: failures are in the result. `unknown` means the event may have been queued. */
   publishAndWait(event: string, payload: unknown, options?: PublishOptions): Promise<PublishResult>;
-  /** Resolves when every push in flight has settled. */
+  /**
+   * Declares the events a program pushes (the event catalog, push protocol 1.1.0). Call it at every start: it REPLACES everything
+   * `source` declared before. Never rejects, never throws: `registered`, `rejected` (the daemon refused the declaration, `problems`
+   * says why), `unsupported` (the daemon is older than 1.1.0: update queue-cli), `dropped` (nothing sent or stored), or `unknown`.
+   * Unlike a push it is retried once after a connection reset or a timeout, because repeating it is harmless.
+   */
+  registerEvents(source: string, events: EventDeclaration[]): Promise<RegisterResult>;
+  /** Resolves when every push and declaration in flight has settled. */
   flush(): Promise<void>;
   /** Describes how the daemon would be reached. Sends no event and starts nothing. */
   status(): Promise<QueueStatus>;
@@ -104,7 +123,28 @@ function readOffVariable(env: NodeJS.ProcessEnv, reporter: Reporter): boolean {
   return false;
 }
 
-type Ensured = { ok: true; daemon: DaemonInfo; token: string } | { ok: false; kind: FailureKind; message: string };
+type Outcome = 'dropped' | 'unknown';
+
+/** One command sent to the daemon: what differs between a push and a registration. Everything else is shared (see `exchange`). */
+interface Exchange<R> {
+  path: string;
+  httpTimeout: number;
+  /** Repeat the request once after a connection reset or a timeout. Only for a command that is safe to repeat. */
+  retryAmbiguous: boolean;
+  /** The JSON body for the given protocol version. */
+  body(protocol: string): Serialized;
+  /** Reports the failure and builds the result. */
+  fail(kind: FailureKind, message: string, outcome?: Outcome): R;
+  /** The message when the outcome stays unknown; `cause` says what happened. */
+  ambiguous(cause: string): string;
+  /** Once the daemon is verified, before anything is sent: a result stops the exchange. */
+  precheck?(daemon: DaemonInfo): R | undefined;
+  /** On HTTP 404: a result stops the exchange; undefined leaves it to the generic HTTP error. */
+  notFound?(daemon: DaemonInfo, text: string): R | undefined;
+  interpret(daemon: DaemonInfo, text: string): R;
+}
+
+type Ensured ={ ok: true; daemon: DaemonInfo; token: string } | { ok: false; kind: FailureKind; message: string };
 
 export function createQueuePublisher(options: QueuePublisherOptions = {}): QueuePublisher {
   return createQueuePublisherWithDeps(options, {});
@@ -201,8 +241,82 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
     return { ok: true, daemon: state.daemon, token: token.token };
   }
 
+  // The shared machinery of every command sent to the daemon: discovery, verification, start on demand, the 401 and the
+  // refused-connection retries, and the failure reporting. A command only says what differs (see `Exchange`).
+  async function exchange<R>(ex: Exchange<R>): Promise<R> {
+    const first = ex.body(PROTOCOL_VERSION);
+    if (!first.ok) {
+      return ex.fail('not-serialisable', first.reason);
+    }
+
+    let authRetried = false;
+    let restartRetried = false;
+    let ambiguousRetried = false;
+    for (;;) {
+      const ensured = await ensureDaemon();
+      if (!ensured.ok) {
+        return ex.fail(ensured.kind, ensured.message);
+      }
+      const { daemon, token } = ensured;
+      const early = ex.precheck?.(daemon);
+      if (early !== undefined) {
+        return early;
+      }
+      let body = first.body;
+      if (daemon.negotiated !== PROTOCOL_VERSION) {
+        const again = ex.body(daemon.negotiated);
+        body = again.ok ? again.body : body;
+      }
+      const outcome = await request({
+        port: daemon.port,
+        method: 'POST',
+        path: ex.path,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body,
+        timeoutMs: ex.httpTimeout,
+      });
+      if (outcome.kind === 'failure') {
+        resolver.invalidate();
+        if (!outcome.connected && outcome.code === 'ECONNREFUSED') {
+          if (!restartRetried) {
+            restartRetried = true;
+            continue;
+          }
+          return ex.fail('not-ready', `the daemon refused the connection on port ${daemon.port} again after being started: run \`queue status\` in a terminal`);
+        }
+        if (!outcome.connected) {
+          return ex.fail('unexpected', `could not reach the daemon on port ${daemon.port}: ${outcome.message}`);
+        }
+        if (ex.retryAmbiguous && !ambiguousRetried) {
+          ambiguousRetried = true;
+          continue;
+        }
+        const cause = outcome.timedOut ? `no answer within ${ex.httpTimeout} ms` : `the connection broke while the daemon was handling the request (${outcome.message})`;
+        return ex.fail('unknown-outcome', ex.ambiguous(cause), 'unknown');
+      }
+      if (outcome.status === 401) {
+        resolver.invalidate();
+        if (!authRetried) {
+          authRetried = true;
+          continue;
+        }
+        return ex.fail('unauthorized', describeHttpError(401, outcome.text, [token]));
+      }
+      if (outcome.status === 404) {
+        const missing = ex.notFound?.(daemon, outcome.text);
+        if (missing !== undefined) {
+          return missing;
+        }
+      }
+      if (outcome.status !== 200) {
+        return ex.fail('http-error', describeHttpError(outcome.status, outcome.text, [token]));
+      }
+      return ex.interpret(daemon, outcome.text);
+    }
+  }
+
   async function attempt(event: string, payload: unknown, call: PublishOptions): Promise<PublishResult> {
-    const fail = (kind: FailureKind, message: string, outcome: 'dropped' | 'unknown' = 'dropped'): PublishResult => {
+    const fail = (kind: FailureKind, message: string, outcome: Outcome = 'dropped'): PublishResult => {
       reporter.failure({ kind, message, event, outcome });
       return { status: outcome === 'unknown' ? 'unknown' : 'dropped', reason: message };
     };
@@ -216,60 +330,16 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
     const requestTimeout = isBefore ? call.timeoutMs : undefined;
     const httpTimeout = isBefore ? (requestTimeout ?? DAEMON_BEFORE_TIMEOUT_MS) + BEFORE_MARGIN_MS : (call.timeoutMs ?? timeoutMs);
     const wire: PushRequest = { event, payload, cwd: resolve(call.cwd ?? defaultCwd), protocol: PROTOCOL_VERSION, ...(requestTimeout !== undefined && { timeout: requestTimeout }) };
-    const serialized = serializePushRequest(wire);
-    if (!serialized.ok) {
-      return fail('not-serialisable', serialized.reason);
-    }
-
-    let authRetried = false;
-    let restartRetried = false;
-    for (;;) {
-      const ensured = await ensureDaemon();
-      if (!ensured.ok) {
-        return fail(ensured.kind, ensured.message);
-      }
-      const { daemon, token } = ensured;
-      let body = serialized.body;
-      if (daemon.negotiated !== PROTOCOL_VERSION) {
-        const again = serializePushRequest({ ...wire, protocol: daemon.negotiated });
-        body = again.ok ? again.body : body;
-      }
-      const outcome = await request({
-        port: daemon.port,
-        method: 'POST',
-        path: '/push',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body,
-        timeoutMs: httpTimeout,
-      });
-      if (outcome.kind === 'failure') {
-        resolver.invalidate();
-        if (!outcome.connected && outcome.code === 'ECONNREFUSED') {
-          if (!restartRetried) {
-            restartRetried = true;
-            continue;
-          }
-          return fail('not-ready', `the daemon refused the connection on port ${daemon.port} again after being started: run \`queue status\` in a terminal`);
-        }
-        if (!outcome.connected) {
-          return fail('unexpected', `could not reach the daemon on port ${daemon.port}: ${outcome.message}`);
-        }
-        const cause = outcome.timedOut ? `no answer within ${httpTimeout} ms` : `the connection broke while the daemon was handling the event (${outcome.message})`;
-        return fail('unknown-outcome', `${cause}: the event may have been queued, it is not retried (raise timeoutMs if the daemon is slow)`, 'unknown');
-      }
-      if (outcome.status === 401) {
-        resolver.invalidate();
-        if (!authRetried) {
-          authRetried = true;
-          continue;
-        }
-        return fail('unauthorized', describeHttpError(401, outcome.text, [token]));
-      }
-      if (outcome.status !== 200) {
-        return fail('http-error', describeHttpError(outcome.status, outcome.text, [token]));
-      }
-      return interpret(daemon, outcome.text, fail);
-    }
+    return exchange<PublishResult>({
+      path: '/push',
+      httpTimeout,
+      // A reset or a timeout after sending may have recorded the event, and there is no idempotency key: never retried.
+      retryAmbiguous: false,
+      body: (protocol) => serializePushRequest({ ...wire, protocol }),
+      fail,
+      ambiguous: (cause) => `${cause}: the event may have been queued, it is not retried (raise timeoutMs if the daemon is slow)`,
+      interpret: (daemon, text) => interpret(daemon, text, fail),
+    });
   }
 
   function interpret(daemon: DaemonInfo, text: string, fail: (kind: FailureKind, message: string) => PublishResult): PublishResult {
@@ -299,37 +369,120 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
     return toPublishResult(response);
   }
 
-  const pending = new Set<Promise<PublishResult>>();
+  async function registerAttempt(source: string, events: EventDeclaration[]): Promise<RegisterResult> {
+    const label = typeof source === 'string' ? source : '(registerEvents)';
+    const fail = (kind: FailureKind, message: string, outcome: Outcome = 'dropped'): RegisterResult => {
+      reporter.failure({ kind, message, event: label, outcome, operation: 'register-events' });
+      return { status: outcome === 'unknown' ? 'unknown' : 'dropped', reason: message };
+    };
+    if (typeof source !== 'string' || source.trim() === '') {
+      return fail('invalid-argument', `the source must be a non-empty string naming the program that declares the events, such as "orchestrator", got ${JSON.stringify(source) ?? String(source)}`);
+    }
+    const unsupported = (daemonProtocolVersion: string, prefix: string): RegisterResult => {
+      const message = `${prefix}update queue-cli (the queue daemon speaks push protocol ${daemonProtocolVersion}, the event catalog needs ${EVENT_CATALOG_MIN_VERSION}); publishing events is not affected`;
+      reporter.failure({ kind: 'unsupported', message, event: label, outcome: 'dropped', operation: 'register-events' });
+      return { status: 'unsupported', reason: message };
+    };
+    return exchange<RegisterResult>({
+      path: '/register-events',
+      httpTimeout: timeoutMs,
+      // Registering replaces the whole declaration of the source: repeating it after an unknown outcome is safe.
+      retryAmbiguous: true,
+      body: (protocol) => serializeRegisterRequest({ protocol, source, events }),
+      fail,
+      ambiguous: (cause) => `${cause}, twice: the declaration may have been stored. Registering replaces the previous declaration, so calling registerEvents again is safe (raise timeoutMs if the daemon is slow)`,
+      precheck: (daemon) => (daemonSupportsEventCatalog(daemon.protocol.version) ? undefined : unsupported(daemon.protocol.version, '')),
+      notFound: (daemon) => unsupported(daemon.protocol.version, 'the daemon does not know the register-events command (HTTP 404): '),
+      interpret: (daemon, text) => interpretRegistration(daemon, text, source, fail),
+    });
+  }
+
+  function interpretRegistration(daemon: DaemonInfo, text: string, source: string, fail: (kind: FailureKind, message: string) => RegisterResult): RegisterResult {
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch (error) {
+      return fail('bad-answer', `the daemon answered something that is not JSON (${getErrorMessage(error)}): ${text.slice(0, 200)}`);
+    }
+    const parsed = parseRegisterAnswer(json);
+    if (!parsed.ok) {
+      return fail('bad-answer', parsed.reason);
+    }
+    const response = parsed.response;
+    if (response.status === 'rejected') {
+      const problems = response.problems ?? [];
+      const listed = problems.map((problem) => `${problem.path === '' ? 'declaration' : problem.path}: ${problem.message}`).join('; ');
+      const detail =
+        problems.length > 0
+          ? listed
+          : `${response.reason ?? 'no reason given'}${response.supported !== undefined ? ` (the daemon, protocol ${daemon.protocol.version}, accepts ${response.supported}; this SDK speaks ${PROTOCOL_VERSION}: update @wadeck-app/queue-sdk or queue-cli so that the versions overlap)` : ''}`;
+      const reason = `the daemon rejected the declaration of "${source}": ${detail}`;
+      reporter.failure({ kind: 'rejected-declaration', message: reason, event: source, outcome: 'dropped', operation: 'register-events' });
+      return { status: 'rejected', ...(problems.length > 0 && { problems }), reason };
+    }
+    reporter.success();
+    return { status: 'registered', ...(response.count !== undefined && { count: response.count }) };
+  }
+
+  const pending = new Set<Promise<unknown>>();
 
   const envOff = readOffVariable(deps.env ?? process.env, reporter);
   const isOff = options.off === true || envOff;
   const OFF_REASON = options.off === true ? 'the publisher is switched off (option off: true)' : 'the publisher is switched off by the environment variable QUEUE_SDK_OFF=1';
 
-  function launch(event: string, payload: unknown, call: PublishOptions): Promise<PublishResult> {
+  interface Launch<R> {
+    /** The event name (or the source) a failure is reported for. */
+    label: string;
+    operation?: 'register-events';
+    overflow: string;
+    work: () => Promise<R>;
+    dropped: (reason: string) => R;
+  }
+
+  // The single accounting of the work in flight (maxPending, flush, off), shared by pushes and registrations.
+  function launch<R>(spec: Launch<R>): Promise<R> {
+    const operation = spec.operation === undefined ? {} : { operation: spec.operation };
     if (isOff) {
-      return Promise.resolve({ status: 'dropped', reason: `${OFF_REASON}: nothing was sent` });
+      return Promise.resolve(spec.dropped(`${OFF_REASON}: nothing was sent`));
     }
     if (pending.size >= maxPending) {
-      const message = `maxPending (${maxPending}) pushes are already in flight: the event is dropped (call await flush() between bursts, or raise maxPending)`;
-      reporter.failure({ kind: 'overflow', message, event: String(event), outcome: 'dropped' });
-      return Promise.resolve({ status: 'dropped', reason: message });
+      reporter.failure({ kind: 'overflow', message: spec.overflow, event: spec.label, outcome: 'dropped', ...operation });
+      return Promise.resolve(spec.dropped(spec.overflow));
     }
-    const promise = attempt(event, payload, call ?? {}).catch((error: unknown): PublishResult => {
+    const promise = spec.work().catch((error: unknown): R => {
       const message = `unexpected error in @wadeck-app/queue-sdk: ${getErrorMessage(error)}`;
-      reporter.failure({ kind: 'unexpected', message, event: String(event), outcome: 'dropped' });
-      return { status: 'dropped', reason: message };
+      reporter.failure({ kind: 'unexpected', message, event: spec.label, outcome: 'dropped', ...operation });
+      return spec.dropped(message);
     });
     pending.add(promise);
     void promise.then(() => pending.delete(promise));
     return promise;
   }
 
+  function launchPush(event: string, payload: unknown, call: PublishOptions): Promise<PublishResult> {
+    return launch<PublishResult>({
+      label: String(event),
+      overflow: `maxPending (${maxPending}) pushes are already in flight: the event is dropped (call await flush() between bursts, or raise maxPending)`,
+      work: () => attempt(event, payload, call ?? {}),
+      dropped: (reason) => ({ status: 'dropped', reason }),
+    });
+  }
+
   return {
     publish(event, payload, call = {}): void {
-      void launch(event, payload, call);
+      void launchPush(event, payload, call);
     },
     publishAndWait(event, payload, call = {}): Promise<PublishResult> {
-      return launch(event, payload, call);
+      return launchPush(event, payload, call);
+    },
+    registerEvents(source, events): Promise<RegisterResult> {
+      return launch<RegisterResult>({
+        label: typeof source === 'string' ? source : '(registerEvents)',
+        operation: 'register-events',
+        overflow: `maxPending (${maxPending}) pushes or declarations are already in flight: the declaration is dropped (call await flush() between bursts, or raise maxPending)`,
+        work: () => registerAttempt(source, events),
+        dropped: (reason) => ({ status: 'dropped', reason }),
+      });
     },
     async flush(): Promise<void> {
       while (pending.size > 0) {

@@ -68,6 +68,15 @@ function unescapeJson(body: string): string {
   return body.includes('\\') ? (JSON.parse(`"${body}"`) as string) : body;
 }
 
+export interface EventActivity {
+  /** Pushes of the event in the window. */
+  count: number;
+  /** Pushes of the event in the recent part of the window. */
+  recentCount: number;
+  /** Epoch ms of the last push. */
+  lastSeenMs: number;
+}
+
 export interface OutcomeCounts {
   success: number;
   failed: number;
@@ -192,6 +201,29 @@ export class HistoryReader {
       }
     });
     return counts;
+  }
+
+  /**
+   * Per event name pushed in the `windowMs` before `nowMs`: how many pushes, how many of them in the last `recentMs`, and when
+   * the last one was. One pass, same cost and line matching as {@link countTriggers}: what the event catalog shows next to each event.
+   */
+  eventActivity(nowMs: number, windowMs: number, recentMs: number): Map<string, EventActivity> {
+    const activity = new Map<string, EventActivity>();
+    this.forEachRecord('trigger', nowMs, windowMs, (ts, line) => {
+      const body = EVENT_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
+      if (ts < nowMs - windowMs || body === undefined) {
+        return;
+      }
+      const event = unescapeJson(body);
+      const entry = activity.get(event) ?? { count: 0, recentCount: 0, lastSeenMs: 0 };
+      entry.count++;
+      if (ts >= nowMs - recentMs) {
+        entry.recentCount++;
+      }
+      entry.lastSeenMs = Math.max(entry.lastSeenMs, ts);
+      activity.set(event, entry);
+    });
+    return activity;
   }
 
   /** How the dispatches of each subscriber ended in the `windowMs` before `nowMs` (see {@link bucketOutcomes} for the statuses). */

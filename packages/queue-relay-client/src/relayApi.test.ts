@@ -201,7 +201,7 @@ describe('relayApi', () => {
         }
       });
 
-      it('throws RelayApiError with timeout', { timeout: 10000 }, async () => {
+      it('throws RelayApiError with timeout', async () => {
         mockFetch.mockImplementation(async (url: string, opts: MockFetchOptions) => {
           // Simulate abort by throwing when signal is triggered
           if (opts.signal) {

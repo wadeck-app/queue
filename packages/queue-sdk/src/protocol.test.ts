@@ -7,12 +7,13 @@ import {
   parseDaemonProtocol,
   negotiate,
   checkClientProtocol,
+  daemonSupportsEventCatalog,
 } from './protocol.js';
 import { satisfies } from './semver.js';
 
 describe('protocol constants', () => {
-  it('start at 1.0.0 and are consistent with each other', () => {
-    expect(PROTOCOL_VERSION).toBe('1.0.0');
+  it('start at 1.1.0 and are consistent with each other', () => {
+    expect(PROTOCOL_VERSION).toBe('1.1.0');
     expect(satisfies(PROTOCOL_VERSION, DAEMON_ACCEPTS)).toBe(true);
     expect(satisfies(PROTOCOL_VERSION, SDK_UNDERSTANDS)).toBe(true);
   });
@@ -121,5 +122,16 @@ describe('checkClientProtocol (daemon side, on receipt of a push)', () => {
   it('uses the range it is given (a daemon in a later release)', () => {
     expect(checkClientProtocol('1.0.0', '^2.0.0').ok).toBe(false);
     expect(checkClientProtocol('2.1.0', '^1.0.0 || ^2.0.0').ok).toBe(true);
+  });
+});
+
+describe('daemonSupportsEventCatalog (the event catalog arrived with protocol 1.1.0)', () => {
+  it.each([
+    ['1.0.0', false],
+    ['1.0.9', false],
+    ['1.1.0', true],
+    ['1.4.2', true],
+  ])('a daemon at %s: %s', (version, expected) => {
+    expect(daemonSupportsEventCatalog(version)).toBe(expected);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
@@ -21,6 +21,8 @@ const {
   mockListSubscribers,
   mockPushEvent,
   mockGetLogs,
+  mockGetEvents,
+  mockPushTestEvent,
   mockRetryEvent,
   mockGetDaemonState,
   mockGetRelayInfo,
@@ -43,6 +45,8 @@ const {
   mockListSubscribers: vi.fn(),
   mockPushEvent: vi.fn(),
   mockGetLogs: vi.fn(),
+  mockGetEvents: vi.fn(),
+  mockPushTestEvent: vi.fn(),
   mockRetryEvent: vi.fn(),
   mockGetDaemonState: vi.fn(),
   mockGetRelayInfo: vi.fn(),
@@ -62,6 +66,7 @@ vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlq
 vi.mock('./subscribers.js', () => ({ listSubscribers: mockListSubscribers }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
+vi.mock('./events.js', () => ({ getEvents: mockGetEvents, pushTestEvent: mockPushTestEvent }));
 vi.mock('./retry.js', () => ({ retryEvent: mockRetryEvent }));
 vi.mock('./daemon.js', () => ({ getDaemonState: mockGetDaemonState }));
 vi.mock('./relay.js', () => ({ getRelayInfo: mockGetRelayInfo }));
@@ -122,6 +127,8 @@ describe('backend', () => {
       'GET /history/:eventId',
       'POST /history/:eventId/replay',
       'GET /logs',
+      'GET /events',
+      'POST /events/:name/push-test',
       'POST /retry/:eventId',
       'GET /daemon',
       'GET /relay',
@@ -640,6 +647,67 @@ describe('backend', () => {
     const broken = fakeReply();
     await routes.get('GET /logs')!(fakeReq({ query: {} }), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
+  });
+
+  it('GET /events forwards the query to getEvents', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetEvents.mockReturnValue({ events: [], total: 0, sources: [], sourceOptions: [], problems: [], problemsText: '' });
+    const reply = fakeReply();
+    await routes.get('GET /events')!(fakeReq({ query: { q: 'job', source: 'flow' } }), asReply(reply));
+    expect(mockGetEvents).toHaveBeenCalledWith(expect.any(String), { q: 'job', source: 'flow' });
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ events: [], total: 0, sources: [], sourceOptions: [], problems: [], problemsText: '' });
+  });
+
+  it('GET /events answers 400 with the actionable message for a bad query and 500 for any other failure', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetEvents.mockImplementationOnce(() => { throw new InvalidQueryError('status must be declared or undeclared, got: "x"'); });
+    const bad = fakeReply();
+    await routes.get('GET /events')!(fakeReq({ query: { status: 'x' } }), asReply(bad));
+    expect(bad.code).toHaveBeenCalledWith(400);
+    expect(bad.send).toHaveBeenCalledWith({ error: 'status must be declared or undeclared, got: "x"' });
+
+    mockGetEvents.mockImplementationOnce(() => { throw new Error('EACCES: events'); });
+    const broken = fakeReply();
+    await routes.get('GET /events')!(fakeReq({ query: {} }), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: events' });
+  });
+
+  it('POST /events/:name/push-test pushes the example of the event and answers the push result', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockPushTestEvent.mockResolvedValue({ status: 'queued', eventId: 'e1' });
+    const reply = fakeReply();
+    await routes.get('POST /events/:name/push-test')!(fakeReq({ params: { name: 'job.started' } }), asReply(reply));
+    expect(mockPushTestEvent).toHaveBeenCalledWith(expect.any(String), 'job.started');
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ status: 'queued', eventId: 'e1' });
+  });
+
+  it('POST /events/:name/push-test answers 404 without example, 503 when the daemon is down, 500 otherwise', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const handler = routes.get('POST /events/:name/push-test')!;
+
+    mockPushTestEvent.mockRejectedValueOnce(new TestPayloadNotFoundError('job.completed declares no example payload: add an "example"'));
+    const noExample = fakeReply();
+    await handler(fakeReq({ params: { name: 'job.completed' } }), asReply(noExample));
+    expect(noExample.code).toHaveBeenCalledWith(404);
+    expect(noExample.send).toHaveBeenCalledWith({ error: 'job.completed declares no example payload: add an "example"' });
+
+    mockPushTestEvent.mockRejectedValueOnce(new DaemonUnreachableError('Daemon is not running -- start it with `queue start`'));
+    const down = fakeReply();
+    await handler(fakeReq({ params: { name: 'job.started' } }), asReply(down));
+    expect(down.code).toHaveBeenCalledWith(503);
+
+    mockPushTestEvent.mockRejectedValueOnce(new Error('boom'));
+    const broken = fakeReply();
+    await handler(fakeReq({ params: { name: 'job.started' } }), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'boom' });
   });
 
   it('GET /daemon answers the daemon state', async () => {

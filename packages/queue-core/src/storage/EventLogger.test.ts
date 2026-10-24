@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,12 +18,16 @@ describe('EventLogger', () => {
   let logger: EventLogger;
 
   beforeEach(() => {
+    // The code under test reads the clock to name the day file: pin it so a run across midnight cannot split the day
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-19T12:00:00.000Z'));
     logsDir = join(tmpdir(), `queue-logger-test-${crypto.randomUUID()}`);
     mkdirSync(logsDir, { recursive: true });
     logger = new EventLogger(logsDir);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(logsDir, { recursive: true, force: true });
   });
 

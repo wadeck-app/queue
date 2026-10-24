@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEventWaitArgs } from './eventWaitArgs.js';
+import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS } from './eventWaitArgs.js';
 
 const NOW = Date.parse('2026-10-18T12:00:00.000Z');
 
@@ -55,5 +55,20 @@ describe('parseEventWaitArgs', () => {
   it('rejects a missing event name', () => {
     const result = parseEventWaitArgs(['--json'], NOW);
     expect((result as { message: string }).message).toContain('event');
+  });
+});
+
+describe('parseEventWaitArgs --strict', () => {
+  it('is off by default and does not appear in the options', () => {
+    const result = parseEventWaitArgs(['onFoo'], NOW);
+    expect(result.ok && 'strict' in result.options).toBe(false);
+  });
+
+  it('--strict turns it on and is not taken for the event name', () => {
+    expect(parseEventWaitArgs(['--strict', 'onFoo'], NOW)).toMatchObject({ ok: true, options: { event: 'onFoo', strict: true } });
+  });
+
+  it('is a known flag', () => {
+    expect(EVENT_WAIT_KNOWN_FLAGS).toContain('--strict');
   });
 });

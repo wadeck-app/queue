@@ -1,0 +1,212 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { writeSourceDeclaration } from '@wadeck-app/queue-core';
+
+const mockPushEvent = vi.hoisted(() => vi.fn());
+vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
+
+import { getEvents, pushTestEvent } from './events.js';
+import { InvalidQueryError, TestPayloadNotFoundError } from './errors.js';
+
+const MINUTE = 60_000;
+const NOW = Date.parse('2026-10-24T12:00:00.000Z');
+
+let configDir: string;
+
+beforeEach(() => {
+  mockPushEvent.mockReset();
+  configDir = mkdtempSync(join(tmpdir(), 'app-module-events-'));
+});
+
+afterEach(() => {
+  rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+});
+
+function declare(source: string, events: Array<Record<string, unknown>>): void {
+  writeSourceDeclaration(configDir, { source, events: events as never }, new Date('2026-10-24T09:00:00.000Z'));
+}
+
+function pushes(events: Array<[string, number]>): void {
+  mkdirSync(join(configDir, 'history'), { recursive: true });
+  const lines = events.map(([event, atMs], i) => JSON.stringify({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId: `e${i}`, event, matchedCount: 0, totalCount: 0 }));
+  writeFileSync(join(configDir, 'history', '2026-10-24.ndjson'), lines.join('\n') + '\n');
+}
+
+const names = (query: Record<string, string | string[]>): string[] => getEvents(configDir, query, NOW).events.map((row) => row.name);
+
+function fixture(): void {
+  declare('orchestrator', [
+    { name: 'job.started', description: 'A job run began.', example: { jobId: 'nightly' } },
+    { name: 'job.completed', description: 'A job run ended well.', terminal: true, outcome: 'success', correlationKey: 'payload.jobId' },
+  ]);
+  declare('flow', [{ name: 'flow.step.failed', description: 'A step FAILED for good.' }]);
+  pushes([['job.started', NOW - 5 * MINUTE], ['mystery.event', NOW - MINUTE]]);
+}
+
+describe('getEvents', () => {
+  it('answers events, total, sources and problems, undeclared names last', () => {
+    fixture();
+    const response = getEvents(configDir, {}, NOW);
+    expect(response.events.map((row) => row.name)).toEqual(['flow.step.failed', 'job.completed', 'job.started', 'mystery.event']);
+    expect(response.total).toBe(4);
+    expect(response.sources.map((source) => [source.source, source.eventCount])).toEqual([['flow', 1], ['orchestrator', 2]]);
+    expect(response.problems).toEqual([]);
+  });
+
+  it('keeps the raw ISO last-seen time and the 24 h count for the table', () => {
+    fixture();
+    const started = getEvents(configDir, {}, NOW).events.find((row) => row.name === 'job.started');
+    expect(started).toMatchObject({ count24h: 1, lastSeenAt: new Date(NOW - 5 * MINUTE).toISOString() });
+  });
+
+  it('marks each row declared or undeclared', () => {
+    fixture();
+    const rows = getEvents(configDir, {}, NOW).events;
+    expect(rows.map((row) => [row.name, row.status])).toEqual([
+      ['flow.step.failed', 'declared'],
+      ['job.completed', 'declared'],
+      ['job.started', 'declared'],
+      ['mystery.event', 'undeclared'],
+    ]);
+  });
+
+  it('carries the detail of the expanded row as pretty JSON: description, source, terminal, outcome, correlationKey, schema, example, filterable, waitExample', () => {
+    declare('orchestrator', [{ name: 'job.completed', description: 'Ended.', terminal: true, outcome: 'success', correlationKey: 'payload.jobId', schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] }, example: { jobId: 'nightly' } }]);
+    const [row] = getEvents(configDir, {}, NOW).events;
+    expect(row?.detailsText).toContain('\n');
+    expect(JSON.parse(row!.detailsText)).toEqual({
+      description: 'Ended.',
+      source: 'orchestrator',
+      terminal: true,
+      outcome: 'success',
+      correlationKey: ['payload.jobId'],
+      schema: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] },
+      example: { jobId: 'nightly' },
+      filterable: [{ path: 'payload.jobId', type: 'string', required: true }],
+      waitExample: 'queue wait job.completed --when "payload.jobId=<jobId>" --since 5m --json',
+    });
+  });
+
+  it('the detail of an undeclared name says so instead of inventing a description', () => {
+    pushes([['mystery.event', NOW - MINUTE]]);
+    const [row] = getEvents(configDir, {}, NOW).events;
+    expect(row?.status).toBe('undeclared');
+    expect(JSON.parse(row!.detailsText)).toMatchObject({ source: null, filterable: [], waitExample: 'queue wait mystery.event --since 5m --json' });
+  });
+
+  it('canPushTest is true only for a declared event that has an example', () => {
+    fixture();
+    expect(getEvents(configDir, {}, NOW).events.map((row) => [row.name, row.canPushTest])).toEqual([
+      ['flow.step.failed', false],
+      ['job.completed', false],
+      ['job.started', true],
+      ['mystery.event', false],
+    ]);
+  });
+
+  it('filters by source', () => {
+    fixture();
+    expect(names({ source: 'flow' })).toEqual(['flow.step.failed']);
+  });
+
+  it('filters by prefix and by subscribers.yml pattern', () => {
+    fixture();
+    expect(names({ prefix: 'job.' })).toEqual(['job.completed', 'job.started']);
+    expect(names({ match: 'flow.>' })).toEqual(['flow.step.failed']);
+  });
+
+  it('filters declaredOnly and terminal, and a total that follows the filters', () => {
+    fixture();
+    expect(names({ declaredOnly: 'true' })).not.toContain('mystery.event');
+    expect(names({ declaredOnly: 'false' })).toContain('mystery.event');
+    expect(names({ terminal: 'true' })).toEqual(['job.completed']);
+    expect(getEvents(configDir, { terminal: 'true' }, NOW).total).toBe(1);
+  });
+
+  it('filters by status', () => {
+    fixture();
+    expect(names({ status: 'undeclared' })).toEqual(['mystery.event']);
+    expect(names({ status: 'declared' })).toEqual(['flow.step.failed', 'job.completed', 'job.started']);
+  });
+
+  it('searches q in the name and in the description, case-insensitively', () => {
+    fixture();
+    expect(names({ q: 'JOB.start' })).toEqual(['job.started']);
+    expect(names({ q: 'failed for good' })).toEqual(['flow.step.failed']);
+  });
+
+  it('treats empty parameters as absent (the page sends them empty when a filter is cleared)', () => {
+    fixture();
+    expect(names({ q: '', source: '', status: '', prefix: '', match: '', declaredOnly: '', terminal: '' })).toHaveLength(4);
+  });
+
+  it('offers the declared sources as select options, whatever the filters', () => {
+    fixture();
+    expect(getEvents(configDir, { source: 'flow' }, NOW).sourceOptions).toEqual([
+      { value: 'flow', label: 'flow' },
+      { value: 'orchestrator', label: 'orchestrator' },
+    ]);
+  });
+
+  it('reports an unreadable declaration file with its name, as data and as one line for the badge', () => {
+    fixture();
+    writeFileSync(join(configDir, 'events', 'broken.json'), '{ not json');
+    const response = getEvents(configDir, {}, NOW);
+    expect(response.problems).toHaveLength(1);
+    expect(response.problems[0]?.file).toBe('broken.json');
+    expect(response.problemsText).toContain('broken.json');
+    expect(response.problemsText).toContain('not valid JSON');
+    expect(response.events).toHaveLength(4);
+  });
+
+  it('has an empty problemsText when every file is readable', () => {
+    fixture();
+    expect(getEvents(configDir, {}, NOW).problemsText).toBe('');
+  });
+
+  it('answers an empty catalog without error', () => {
+    expect(getEvents(configDir, {}, NOW)).toMatchObject({ events: [], total: 0, sources: [], sourceOptions: [], problems: [], problemsText: '' });
+  });
+
+  it.each([
+    [{ declaredOnly: 'yes' }, /declaredOnly must be true or false, got: "yes"/],
+    [{ terminal: '1' }, /terminal must be true or false, got: "1"/],
+    [{ status: 'nope' }, /status must be declared or undeclared, got: "nope"/],
+    [{ q: ['a', 'b'] }, /q must be given once, got 2 values/],
+    [{ source: ['a', 'b'] }, /source must be given once/],
+  ])('rejects %j with an actionable InvalidQueryError', (query, message) => {
+    expect(() => getEvents(configDir, query, NOW)).toThrowError(InvalidQueryError);
+    expect(() => getEvents(configDir, query, NOW)).toThrowError(message);
+  });
+});
+
+describe('pushTestEvent', () => {
+  it('pushes the declared example of the event through the daemon push', async () => {
+    fixture();
+    mockPushEvent.mockResolvedValue({ status: 'queued', eventId: 'e1' });
+    const response = await pushTestEvent(configDir, 'job.started');
+    expect(mockPushEvent).toHaveBeenCalledWith(configDir, 'job.started', { jobId: 'nightly' });
+    expect(response).toEqual({ status: 'queued', eventId: 'e1' });
+  });
+
+  it('refuses a declared event without example, naming the fix, and pushes nothing', async () => {
+    fixture();
+    await expect(pushTestEvent(configDir, 'job.completed')).rejects.toThrowError(TestPayloadNotFoundError);
+    await expect(pushTestEvent(configDir, 'job.completed')).rejects.toThrowError(/job\.completed declares no example.*add an "example"/);
+    expect(mockPushEvent).not.toHaveBeenCalled();
+  });
+
+  it('refuses an undeclared name, with the nearest declared names', async () => {
+    fixture();
+    await expect(pushTestEvent(configDir, 'job.startd')).rejects.toThrowError(/job\.startd is not declared by any program.*job\.started/);
+    expect(mockPushEvent).not.toHaveBeenCalled();
+  });
+
+  it('refuses an observed but undeclared name: it has no example either', async () => {
+    fixture();
+    await expect(pushTestEvent(configDir, 'mystery.event')).rejects.toThrowError(TestPayloadNotFoundError);
+    expect(mockPushEvent).not.toHaveBeenCalled();
+  });
+});

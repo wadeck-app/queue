@@ -1,0 +1,31 @@
+[
+  {
+    "name": "a source declares two events, without saying its protocol (it is taken as 1.0.0, which is accepted)",
+    "request": { "source": "demo", "events": [{ "name": "demo.started", "description": "A demo began." }, { "name": "demo.done", "description": "A demo ended.", "terminal": true, "outcome": "success" }] },
+    "response": { "status": "registered", "count": 2 }
+  },
+  {
+    "name": "a source declares an event with a schema, an example and a correlation key, speaking 1.1.0",
+    "request": {
+      "protocol": "1.1.0",
+      "source": "demo",
+      "events": [{ "name": "demo.done", "description": "A demo ended.", "schema": { "type": "object", "properties": { "id": { "type": "string" } } }, "example": { "id": "x" }, "correlationKey": "payload.id" }]
+    },
+    "response": { "status": "registered", "count": 1 }
+  },
+  {
+    "name": "a source declares nothing any more: its previous events are replaced by none",
+    "request": { "protocol": "1.1.0", "source": "demo", "events": [] },
+    "response": { "status": "registered", "count": 0 }
+  },
+  {
+    "name": "an invalid name and a missing description are both reported, with their paths, and nothing is stored",
+    "request": { "source": "demo", "events": [{ "name": "bad name", "description": "ok" }, { "name": "demo.fine" }] },
+    "response": { "status": "rejected", "problemPaths": ["events[0].name", "events[1].description"] }
+  },
+  {
+    "name": "a protocol MAJOR the daemon does not accept is rejected with the accepted range",
+    "request": { "protocol": "2.0.0", "source": "demo", "events": [] },
+    "response": { "status": "rejected", "supported": "^1.0.0" }
+  }
+]

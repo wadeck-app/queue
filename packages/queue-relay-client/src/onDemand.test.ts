@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(relayDir, { recursive: true, force: true });
+  rmSync(relayDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe('waiters registry', () => {

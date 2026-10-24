@@ -24,21 +24,20 @@ describe('queue wait ci (bundled CLI)', () => {
       cwd: rootDir,
       stdio: 'inherit',
       env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-      timeout: 60_000,
       windowsHide: true,
     });
     bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
     if (!existsSync(bundlePath)) {
       throw new Error(`Bundle not found at ${bundlePath}`);
     }
-  }, 90_000);
+  });
 
   beforeEach(() => {
     configDir = mkdtempSync(join(tmpdir(), 'queue-wait-'));
   });
 
   afterEach(() => {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   function writeRun(conclusion: string, name = 'CI / Publish', ageMs = 120_000): void {
@@ -61,7 +60,7 @@ describe('queue wait ci (bundled CLI)', () => {
     writeFileSync(join(historyDir, `${ts.slice(0, 10)}.ndjson`), JSON.stringify(record) + '\n', { flag: 'a' });
   }
 
-  // Asynchronous spawn with an explicit timeout: a hang must fail the test, not freeze the suite
+  // Asynchronous spawn with a hang guard only (never a performance limit): a hang must fail the test, not freeze the suite
   function run(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const env: NodeJS.ProcessEnv = { ...process.env, QUEUE_CONFIG_DIR: configDir };
     delete env['NODE_OPTIONS'];
@@ -69,7 +68,7 @@ describe('queue wait ci (bundled CLI)', () => {
       const child = spawn(process.execPath, [bundlePath, ...args], { cwd: configDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error(`CLI did not finish within 30s: ${args.join(' ')}\n${stderr}`)); }, 30_000);
+      const timer = setTimeout(() => { child.kill(); reject(new Error(`CLI did not finish within 300s (hung?): ${args.join(' ')}\n${stderr}`)); }, 300_000);
       child.stdout.on('data', (c) => { stdout += String(c); });
       child.stderr.on('data', (c) => { stderr += String(c); });
       child.on('error', (err) => { clearTimeout(timer); reject(err); });

@@ -17,11 +17,13 @@ import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client
 import { relayStop } from './relayStop.js';
 import { pinRelay } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
 import { queueWaitCommand } from './waitCli.js';
+import { eventsCommand } from './eventsCli.js';
+import { DaemonCommandNotFoundError } from '@wadeck-app/singleton-daemon-kit';
 import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
@@ -120,7 +122,10 @@ Usage:
   queue retry --event <id>
   queue replay <eventId>    Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>. For manual testing, not delivery guarantees.
-  queue wait <event> [--when <expr>] [--since <d>] [--timeout <d>] [--json]   Block until a matching queue event is recorded (see 'queue wait --help')
+  queue wait <event> [--when <expr>] [--since <d>] [--timeout <d>] [--json] [--strict]   Block until a matching queue event is recorded (see 'queue wait --help')
+  queue events list [--source <s>] [--prefix <p>] [--match <pattern>] [--declared-only] [--terminal] [--json]   Event catalog: names, payloads, last seen
+  queue events show <name> [--json]   Schema, example, payload paths for 'queue wait --when' and a ready command
+  queue events register --source <s> --file <events.json> [--json]   Declare the events of a program that does not use the Node SDK
   queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done
   queue status [--json]
   queue list-subscribers [event] [--json]
@@ -1134,6 +1139,31 @@ async function main(): Promise<void> {
   if (command === 'logs') {
     await queueLogsCommand(configDir, { follow: rest.includes('--follow') || rest.includes('-f') });
     return;
+  }
+
+  if (command === 'events') {
+    process.exit(await eventsCommand(rest, {
+      configDir,
+      io: { stdout: process.stdout, stderr: process.stderr },
+      now: () => Date.now(),
+      readFile: (path) => readFileSync(path, 'utf8'),
+      protocolVersion: PROTOCOL_VERSION,
+      register: async (request) => {
+        await ensureDaemon(configDir);
+        try {
+          return { kind: 'response', response: await createQueueClient(configDir).send('register-events', request) };
+        } catch (err) {
+          // An older daemon answers 404 for a command it does not know
+          if (err instanceof DaemonCommandNotFoundError) {
+            return { kind: 'unsupported' };
+          }
+          throw err;
+        }
+      },
+    }).catch((err: unknown) => {
+      process.stderr.write(`[fail] queue events ${rest[0] ?? ''}: ${getErrorMessage(err)}\n`);
+      return 1;
+    }));
   }
 
   if (command === 'wait') {

@@ -24,7 +24,7 @@ describe('loadRelayConfig', () => {
   });
 
   afterEach(() => {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     // Restore original env
     Object.entries(originalEnv).forEach(([key, value]) => {
       if (value === undefined) {

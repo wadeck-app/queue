@@ -4,7 +4,7 @@ import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import type { EventWaitOptions } from './eventWaitCommand.js';
 
 export const EVENT_WAIT_FLAGS_WITH_VALUE = new Set(['--when', '--since', '--timeout']);
-export const EVENT_WAIT_KNOWN_FLAGS = ['--when', '--since', '--timeout', '--json', '--help', '-h'];
+export const EVENT_WAIT_KNOWN_FLAGS = ['--when', '--since', '--timeout', '--json', '--strict', '--help', '-h'];
 
 const DEFAULT_TIMEOUT = '15m';
 
@@ -39,7 +39,7 @@ function parseSince(raw: string, nowMs: number): number | null {
 export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs {
   const event = args.find((arg, i) => !arg.startsWith('-') && !EVENT_WAIT_FLAGS_WITH_VALUE.has(args[i - 1] ?? ''));
   if (!event) {
-    return { ok: false, message: 'No event name given. Usage: queue wait <event> [--when <expr>]... [--since <duration|time>] [--timeout <duration>] [--json]' };
+    return { ok: false, message: 'No event name given. Usage: queue wait <event> [--when <expr>]... [--since <duration|time>] [--timeout <duration>] [--json] [--strict]' };
   }
 
   const collected: Record<string, string[]> = {};
@@ -76,5 +76,5 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
     sinceMs = parsed;
   }
 
-  return { ok: true, options: { event, whens, sinceMs, timeoutMs, pollMs: FOLLOW_POLL_INTERVAL_MS, json: args.includes('--json') } };
+  return { ok: true, options: { event, whens, sinceMs, timeoutMs, pollMs: FOLLOW_POLL_INTERVAL_MS, json: args.includes('--json'), ...(args.includes('--strict') && { strict: true }) } };
 }

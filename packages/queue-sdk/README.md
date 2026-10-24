@@ -33,16 +33,16 @@ Published on GitHub Packages like `queue-cli`: map the scope once, then install.
 |---|---|
 | `publish(event, payload)` | `void`; never throws |
 | `publishAndWait(event, payload)` | `{ status: 'queued' \| 'dispatched' \| 'dropped' \| 'unknown', eventId?, result?, reason? }`; never rejects |
-| `flush()` | Resolves when every push in flight has settled |
+| `registerEvents(source, events)` | `{ status: 'registered' \| 'rejected' \| 'unsupported' \| 'dropped' \| 'unknown', count?, problems?, reason? }`; declares your events (needs queue-cli >= protocol 1.1.0) |
+| `flush()` | Resolves when every push and declaration in flight has settled |
 | `status()` | How the daemon would be reached; sends nothing, starts nothing |
 
-`unknown` means the connection broke or timed out after sending: the event may be recorded and is never retried (check `queue history`). Events named `before*` are synchronous: the call waits for the subscribers.
-
-Nothing throws. Every failure goes to your `onError` callback and, unless `silent`, to `console.warn` once per problem, with what happened and what to do.
+`unknown` means the connection broke or timed out after sending: the event may be recorded and is never retried (check `queue history`). Events named `before*` are synchronous: the call waits for the subscribers. Nothing throws. Every failure goes to your `onError` callback and, unless `silent`, to `console.warn` once per problem, with what happened and what to do.
 
 ## Documentation
 
 - [Reference](docs/reference.md): options, methods, results, how the daemon is reached, versioning.
+- Declare the events your program pushes at every start (`registerEvents`): the queue lists them for people and agents; see "Declaring your events" in the reference.
 - [Troubleshooting](docs/troubleshooting.md): every failure kind, its cause and the fix.
 - Tests and development without a queue: `@wadeck-app/queue-sdk/testing` (throwaway daemon), `off: true` (test files only), `QUEUE_SDK_OFF=1` (development runs); see the reference.
 - [Push protocol](https://github.com/wadeck-app/queue/blob/main/docs/push-protocol.md): the wire contract, for clients in other languages.

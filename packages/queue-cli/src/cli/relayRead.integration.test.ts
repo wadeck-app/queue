@@ -41,7 +41,6 @@ describe('relayRead integration', () => {
       cwd: rootDir,
       stdio: 'inherit',
       env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-      timeout: 60_000,
       windowsHide: true,
     });
 
@@ -49,7 +48,7 @@ describe('relayRead integration', () => {
     if (!existsSync(bundlePath)) {
       throw new Error(`Bundle not found at ${bundlePath}`);
     }
-  }, 90_000);
+  });
 
   beforeEach((ctx) => {
     requests = [];
@@ -192,7 +191,7 @@ describe('relayRead integration', () => {
 
   afterAll(() => {
     if (tempDir && existsSync(tempDir)) {
-      rmSync(tempDir, { recursive: true, force: true });
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -218,7 +217,7 @@ describe('relayRead integration', () => {
       const child = spawn(process.execPath, [bundlePath, ...args], { cwd: tempDir, env: fullEnv, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error(`CLI did not finish within 30s: ${args.join(' ')}`)); }, 30_000);
+      const timer = setTimeout(() => { child.kill(); reject(new Error(`CLI did not finish within 300s (hung?): ${args.join(' ')}`)); }, 300_000);
       child.stdout.on('data', (chunk) => { stdout += String(chunk); });
       child.stderr.on('data', (chunk) => { stderr += String(chunk); });
       child.on('error', (err) => { clearTimeout(timer); reject(err); });

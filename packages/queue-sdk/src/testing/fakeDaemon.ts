@@ -30,6 +30,8 @@ export interface FakeDaemonOptions {
   reportedConfigDir?: string;
   /** `queueProtocol` of GET /version; undefined = the field is absent (legacy daemon). */
   queueProtocol?: { version: string; accepts: string };
+  /** False: the daemon predates protocol 1.1.0 and answers HTTP 404 "Unknown command" to POST /register-events. Default true. */
+  supportsRegisterEvents?: boolean;
   /** Token the daemon accepts, also written to health_token. */
   token?: string;
 }
@@ -41,6 +43,8 @@ export interface FakeDaemon {
   requests: RecordedRequest[];
   /** Consumed one per authorized push, in order; an empty script means a normal answer. */
   script: PushStep[];
+  /** Same as `script`, consumed one per authorized POST /register-events. */
+  registerScript: PushStep[];
   /** Changes the token the daemon accepts without touching health_token. */
   acceptedToken: string;
   /** Called each time a push is answered 401, e.g. to rotate health_token like a restarted daemon would. */
@@ -48,6 +52,7 @@ export interface FakeDaemon {
   /** Writes config.port (pid = this process unless overridden) and health_token. */
   writeFiles(overrides?: { pid?: number; port?: number }): void;
   pushes(): RecordedRequest[];
+  registrations(): RecordedRequest[];
   close(): Promise<void>;
 }
 
@@ -78,10 +83,21 @@ function defaultAnswer(body: string, counter: number): Record<string, unknown> {
   return event.startsWith('before') ? { status: 'dispatched', eventId: `evt-${counter}`, result: { fine: true } } : { status: 'queued', eventId: `evt-${counter}` };
 }
 
+// The fake does not validate a declaration (the rules belong to the daemon): it stores nothing and counts what it received.
+function defaultRegisterAnswer(body: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(body) as { source?: unknown; events?: unknown };
+    return { status: 'registered', source: parsed.source, count: Array.isArray(parsed.events) ? parsed.events.length : 0 };
+  } catch {
+    return { status: 'rejected', reason: 'the body is not JSON', problems: [{ path: '', message: 'the declaration must be an object { source, events }' }] };
+  }
+}
+
 export async function startFakeDaemon(options: FakeDaemonOptions): Promise<FakeDaemon> {
   mkdirSync(options.configDir, { recursive: true });
   const requests: RecordedRequest[] = [];
   const script: PushStep[] = [];
+  const registerScript: PushStep[] = [];
   let counter = 0;
   const daemon = {
     port: 0,
@@ -89,6 +105,7 @@ export async function startFakeDaemon(options: FakeDaemonOptions): Promise<FakeD
     configDir: options.configDir,
     requests,
     script,
+    registerScript,
     acceptedToken: options.token ?? DEFAULT_TOKEN,
   } as FakeDaemon;
 
@@ -109,14 +126,22 @@ export async function startFakeDaemon(options: FakeDaemonOptions): Promise<FakeD
         });
         return;
       }
-      if (req.method === 'POST' && req.url === '/push') {
+      const isPush = req.method === 'POST' && req.url === '/push';
+      const isRegister = req.method === 'POST' && req.url === '/register-events';
+      if (isPush || isRegister) {
         if (!authorized) {
           daemon.onUnauthorized?.();
           sendJson(res, 401, { error: 'Unauthorized' });
           return;
         }
+        // A daemon older than protocol 1.1.0 does not know the command.
+        if (isRegister && options.supportsRegisterEvents === false) {
+          res.statusCode = 404;
+          res.end('Unknown command');
+          return;
+        }
         counter += 1;
-        const step = script.shift();
+        const step = (isPush ? script : registerScript).shift();
         if (step?.kind === 'reset') {
           req.socket.destroy();
           return;
@@ -129,7 +154,8 @@ export async function startFakeDaemon(options: FakeDaemonOptions): Promise<FakeD
         if (step?.kind === 'delay') {
           await new Promise((resolve) => setTimeout(resolve, step.ms));
         }
-        sendJson(res, 200, { ok: true, result: step?.kind === 'answer' ? step.result : defaultAnswer(body, counter) });
+        const fallback = isPush ? defaultAnswer(body, counter) : defaultRegisterAnswer(body);
+        sendJson(res, 200, { ok: true, result: step?.kind === 'answer' ? step.result : fallback });
         return;
       }
       sendJson(res, 404, { error: 'Not found' });
@@ -142,6 +168,7 @@ export async function startFakeDaemon(options: FakeDaemonOptions): Promise<FakeD
     writeFileSync(join(options.configDir, 'health_token'), `${daemon.token}\n`);
   };
   daemon.pushes = () => requests.filter((request) => request.method === 'POST' && request.url === '/push');
+  daemon.registrations = () => requests.filter((request) => request.method === 'POST' && request.url === '/register-events');
   daemon.close = () =>
     new Promise<void>((resolve) => {
       server.closeAllConnections();

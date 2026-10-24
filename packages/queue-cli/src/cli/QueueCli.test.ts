@@ -187,10 +187,22 @@ describe('queue start / waitForDaemon', () => {
 		const { spawn } = await import('node:child_process');
 		vi.mocked(spawn).mockReturnValue({ unref: vi.fn() } as never);
 
-		const { exitCode, stderr } = await run(['start']);
-		expect(exitCode).toBe(1);
-		expect(stderr).toMatch(/failed to start/i);
-	}, 10_000);
+		// The 5 s start wait runs on a fake clock (setTimeout and Date only: real I/O such as module loading keeps running): it is stepped
+		// until the command ends, so the outcome never depends on how fast the machine is
+		vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+		try {
+			let finished = false;
+			const running = run(['start']).finally(() => { finished = true; });
+			while (!finished) {
+				await vi.advanceTimersByTimeAsync(200);
+			}
+			const { exitCode, stderr } = await running;
+			expect(exitCode).toBe(1);
+			expect(stderr).toMatch(/failed to start/i);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
 
 describe('queue cli unknown subcommand', () => {

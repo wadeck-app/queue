@@ -1,9 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HistoryReader } from './HistoryReader.js';
 import { HistoryLog } from './HistoryLog.js';
+
+// The tests that let HistoryLog stamp a record and then ask the reader about "now" pin the clock: a run across midnight or a slow
+// machine cannot move the record out of its window.
+const PINNED_NOW = new Date('2026-10-19T12:00:00.000Z');
+function pinClock(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(PINNED_NOW);
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function writeDay(historyDir: string, date: string, records: object[]): void {
   const content = records.map(r => JSON.stringify(r)).join('\n') + '\n';
@@ -234,7 +246,8 @@ describe('HistoryReader', () => {
         JSON.stringify({ ts: '2026-01-01T10:00:00.100Z', type: 'outcome', eventId: 'ev-1', event: 'onA', subscriberId: 'onA[0]', status: 'success' }) + '\n',
         'utf-8',
       );
-      const future = new Date(Date.now() + 60_000);
+      // Any mtime different from the one cached by the first read: a fixed far-future date, no clock involved
+      const future = new Date('2099-01-01T00:00:00.000Z');
       utimesSync(filePath, future, future);
 
       const [after] = reader.read();
@@ -361,6 +374,7 @@ describe('HistoryReader.countTriggers (activity counters, without parsing the pa
   });
 
   it('understands what HistoryLog really writes (guards the line format the counter relies on)', () => {
+    pinClock();
     new HistoryLog(historyDir).logTrigger({ eventId: 'real', event: 'onFoo', matchedCount: 1, totalCount: 1, payload: { a: 1 }, cwd: '/p' });
     expect(new HistoryReader(historyDir).countTriggers(Date.now(), WINDOWS)).toEqual([1, 1, 1]);
   });
@@ -488,6 +502,7 @@ describe('HistoryReader.bucketOutcomes (how dispatches ended, per time slice)', 
   });
 
   it('reads what HistoryLog writes, and is zeros for a missing history directory', () => {
+    pinClock();
     const log = new HistoryLog(historyDir);
     log.logOutcome({ eventId: 'e1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'failed', target: 'echo x' });
     const result = new HistoryReader(historyDir).bucketOutcomes(Date.now(), HOUR, 24);
@@ -533,6 +548,24 @@ describe('HistoryReader breakdowns (events and subscribers over a window)', () =
     expect(new HistoryReader(join(historyDir, 'missing')).countTriggersByEvent(NOW, HOUR).size).toBe(0);
   });
 
+  it('eventActivity gives, per event name, the pushes of the window, the pushes of its recent part and when it was last pushed', () => {
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - MINUTE, 'onA'), trigger(NOW - 2 * HOUR, 'onA'), trigger(NOW - 3 * HOUR, 'onB')]);
+    writeDay(historyDir, '2026-01-01', [trigger(NOW - 30 * HOUR, 'onB'), trigger(NOW - 40 * HOUR, 'onC')]);
+    const activity = new HistoryReader(historyDir).eventActivity(NOW, 3 * 24 * HOUR, 24 * HOUR);
+    expect(Object.fromEntries(activity)).toEqual({
+      onA: { count: 2, recentCount: 2, lastSeenMs: NOW - MINUTE },
+      onB: { count: 2, recentCount: 1, lastSeenMs: NOW - 3 * HOUR },
+      onC: { count: 1, recentCount: 0, lastSeenMs: NOW - 40 * HOUR },
+    });
+  });
+
+  it('eventActivity leaves out what is older than the window, ignores outcome records, and is empty for a missing directory', () => {
+    writeDay(historyDir, '2026-01-02', [trigger(NOW - 2 * HOUR, 'onA'), outcome(NOW - MINUTE, 'onFoo[0]', 'success')]);
+    writeDay(historyDir, '2026-01-01', [trigger(NOW - 30 * HOUR, 'onOld')]);
+    expect([...new HistoryReader(historyDir).eventActivity(NOW, 24 * HOUR, HOUR).keys()]).toEqual(['onA']);
+    expect(new HistoryReader(join(historyDir, 'missing')).eventActivity(NOW, HOUR, HOUR).size).toBe(0);
+  });
+
   it('countOutcomesBySubscriber counts each status per subscriber inside the window', () => {
     writeDay(historyDir, '2026-01-02', [
       outcome(NOW - MINUTE, 'onA[0]', 'success'),
@@ -550,6 +583,7 @@ describe('HistoryReader breakdowns (events and subscribers over a window)', () =
   });
 
   it('reads what HistoryLog writes', () => {
+    pinClock();
     const log = new HistoryLog(historyDir);
     log.logTrigger({ eventId: 'e1', event: 'onFoo', matchedCount: 1, totalCount: 1, payload: { a: 1 } });
     log.logOutcome({ eventId: 'e1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'success', target: 'echo' });

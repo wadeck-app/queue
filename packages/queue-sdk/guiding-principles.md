@@ -6,7 +6,8 @@ Rules a contributor keeps. If a change breaks one, the rule and the change are d
 
 - **Never throw, never block the caller.** `publish` returns `void`, `publishAndWait` always resolves. Failure is a value (`dropped`, `unknown`) plus a report.
 - **Never fail silently.** Every failure reaches `onError` and, unless `silent`, the console, with what happened and what to do. Default output is deduplicated per problem until a push succeeds; `onError` is not.
-- **No duplicate events.** Retry only when nothing can have been recorded: 401 (auth runs before the handler), refused connection, no daemon. A reset or a timeout after sending is `unknown` and is not retried.
+- **No duplicate events.** Retry only when nothing can have been recorded: 401 (auth runs before the handler), refused connection, no daemon. A reset or a timeout after sending is `unknown` and is not retried (the one exception is `registerEvents`, see below).
+- **Declarations are documentation, registration is idempotent.** The SDK never validates a pushed payload against a declared schema, and `registerEvents` checks only what cannot be sent (empty source, not JSON-serialisable): the rules belong to the daemon, so the two cannot disagree. Registering replaces the whole declaration of a source, which is why it is the one call retried after a reset or a timeout (once). Everything else about it (discovery, token, 401 retry, `maxPending`, `off`) is the machinery of `publish`, not a copy.
 - **Never send the token to an unverified process.** `GET /version` must return the pid of `config.port` and the same config directory first. The token never appears in a message or a log.
 - **The payload only travels over HTTP.** The only thing ever put on a command line is the constant `start`; the config directory goes through `QUEUE_CONFIG_DIR` in the environment.
 - **Bounded.** `maxPending` caps the work in flight; the overflow is dropped and reported.
@@ -31,7 +32,7 @@ The push protocol has its own SemVer version (`docs/push-protocol.md` in the rep
 | Wording only | PATCH |
 
 - A MAJOR keeps the previous MAJOR in the daemon's `accepts` range for at least one release cycle.
-- Every change updates `contract/protocol-<major>.json`; `queue-core` replays it against the real service and the SDK against its parser.
+- Every change updates the contract fixtures (`contract/protocol-<major>.json`, and `contract/register-events-1.1.json` for the event catalog); `queue-core` replays them against the real service and the SDK against its parser.
 - Change the constants, the fixture and `docs/push-protocol.md` in the same commit.
 
 ## Method

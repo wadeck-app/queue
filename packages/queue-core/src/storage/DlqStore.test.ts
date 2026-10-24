@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DlqStore } from './DlqStore.js';
@@ -24,8 +24,7 @@ describe('DlqStore', () => {
   let dlq: DlqStore;
 
   beforeEach(() => {
-    tmpDir = join(tmpdir(), `dlq-test-${Date.now()}`);
-    mkdirSync(tmpDir, { recursive: true });
+    tmpDir = mkdtempSync(join(tmpdir(), 'dlq-test-'));
     dlq = new DlqStore(join(tmpDir, 'dlq.ndjson'), 3);
   });
 

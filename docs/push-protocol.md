@@ -1,6 +1,6 @@
 # Push protocol
 
-The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.0.0**.
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.1.0**.
 
 Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
 
@@ -15,7 +15,7 @@ The protocol has its own SemVer version, independent from every package version.
 | Clarify this page, fix wording | PATCH | Yes |
 
 - The daemon states the version it implements (`version`) and the SemVer range of client versions it accepts (`accepts`).
-- A client states the version it speaks in the push body (`protocol`). Absent means `1.0.0`.
+- A client states the version it speaks in the request body (`protocol`). Absent means `1.0.0`.
 - A new MAJOR keeps the previous MAJOR in `accepts` for at least one release cycle (for example `^1.0.0 || ^2.0.0`). Deprecated MAJORs: none yet.
 - Supported range syntax: `>=`, `>`, `<=`, `<`, `=`, a bare version, `^`, a space for AND, `||` for OR. Prerelease and build metadata are not used.
 
@@ -43,7 +43,7 @@ No authentication.
   "config_dir": "C:\\Users\\me\\.config\\queue",
   "sdkVersion": 1,
   "port": 47910,
-  "queueProtocol": { "version": "1.0.0", "accepts": "^1.0.0" }
+  "queueProtocol": { "version": "1.1.0", "accepts": "^1.0.0" }
 }
 ```
 
@@ -54,7 +54,7 @@ No authentication.
 Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 ```json
-{ "protocol": "1.0.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+{ "protocol": "1.1.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
 ```
 
 | Field | Required | Meaning |
@@ -85,13 +85,54 @@ A client must treat an unknown `status` as a failure and ignore unknown fields.
 
 A connection reset or a timeout after the request was sent leaves the outcome unknown: the event may be recorded. There is no idempotency key, so do not retry blindly.
 
+## POST /register-events
+
+Since 1.1.0. Declares the events a program pushes (the event catalog). Same headers and Bearer token as `POST /push`.
+
+```json
+{ "protocol": "1.1.0", "source": "orchestrator", "events": [
+  { "name": "job.completed", "description": "A job run ended successfully.", "schema": { "type": "object" }, "example": { "jobId": "nightly" },
+    "correlationKey": "payload.jobId", "terminal": true, "outcome": "success" }
+] }
+```
+
+| Field | Required | Rule |
+|---|---|---|
+| `source` | yes | `[a-z0-9][a-z0-9_-]*`, at most 64 characters; one source per program, it names the stored file |
+| `events` | yes | List of at most 500 events; may be empty |
+| `events[].name` | yes | Dot-separated segments of `[A-Za-z0-9_-]+`, at most 128 characters; unique in the source |
+| `events[].description` | yes | Non-empty, at most 500 characters |
+| `events[].schema` | no | JSON Schema object, stored as given, at most 64 KB serialised |
+| `events[].example` | no | Any JSON value, at most 16 KB |
+| `events[].correlationKey` | no | A dotted payload path (`payload.jobId`) or a list of them |
+| `events[].terminal` | no | Boolean: the event ends the thing it is about |
+| `events[].outcome` | no | `success`, `failure` or `info` |
+| `protocol` | no | As for `push`; absent = `1.0.0` |
+
+A registration replaces everything the same `source` declared before (an empty `events` clears it), is all-or-nothing, and is idempotent. Unknown fields are ignored. Nothing is queued or dispatched, and the daemon never checks a pushed payload against a declared `schema`.
+
+Answer, HTTP 200: `{ "ok": true, "result": <RegisterResponse> }`.
+
+| `result.status` | Meaning | Other fields |
+|---|---|---|
+| `registered` | Stored | `source`, `count` (number of events) |
+| `rejected` | Nothing was stored: the protocol is not accepted, or the declaration breaks a rule above | `reason`; `problems` `[{ "path": "events[3].name", "message": "..." }]` (every problem at once, `path` is empty for the declaration as a whole); `supported` (the accepted range) for a protocol rejection |
+
+| HTTP | Meaning |
+|---|---|
+| 401 | Missing or wrong token; safe to retry with a fresh token |
+| 404 `Unknown command` | The daemon is older than 1.1.0 and does not know the command: do not retry, tell the user to update `queue-cli`. `GET /version` announces it first (`queueProtocol.version` below 1.1.0, or absent) |
+| 500 | Daemon error, `{ "error": "..." }` |
+
+A connection reset or a timeout leaves the outcome unknown, but repeating the request is safe because it is idempotent (the SDK retries once).
+
 ## Example (any language)
 
 ```
 curl -s -X POST http://127.0.0.1:47910/push \
   -H "Authorization: Bearer $(cat ~/.config/queue/health_token)" \
   -H "Content-Type: application/json" \
-  -d '{"protocol":"1.0.0","event":"demo.hello","payload":{},"cwd":"/path/to/project"}'
+  -d '{"protocol":"1.1.0","event":"demo.hello","payload":{},"cwd":"/path/to/project"}'
 ```
 
 The port above is the default (47910); the daemon takes the next free one up to 47920, so read `config.port`.
@@ -100,4 +141,5 @@ The port above is the default (47910); the daemon takes the next free one up to 
 
 | Version | Change |
 |---|---|
+| 1.1.0 | Additive (MINOR): the `register-events` command (event catalog); the daemon still accepts clients `^1.0.0`, and a 1.0.0 daemon answers it with HTTP 404. Recorded in `packages/queue-sdk/contract/register-events-1.1.json` |
 | 1.0.0 | Initial contract: Bearer token, `event`/`payload`/`cwd`, statuses `queued`, `dispatched`, `aborted`; adds `protocol` and the `rejected` status |

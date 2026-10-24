@@ -11,6 +11,10 @@ export default defineConfig({
     // Integration tests start real daemons on fixed ports (queue daemon 47910, relay daemon 47911):
     // running test files in parallel makes them collide or skip.
     fileParallelism: false,
+    // Timeouts are guards against a test that HANGS, never a performance limit: no test may fail because the machine is slow
+    // (starting git or node processes takes seconds on a loaded Windows machine). Normal runs end long before these.
+    testTimeout: 300_000,
+    hookTimeout: 300_000,
     // Daemons started by the integration tests re-register the "queue" module with app-core on every
     // start. Without this they would reach a REAL app-core on the developer's machine (port 4850) or
     // write its ~/.config/app-core/modules/queue.json pointing at a test bundle. Port 1 is never

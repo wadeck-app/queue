@@ -1,6 +1,5 @@
 /** Argument parsing and wiring of `queue wait ci` (the decision logic lives in ciWait.ts / ciWaitCommand.ts). */
 
-import { execFileSync } from 'node:child_process';
 import { join as pathJoin } from 'node:path';
 import { HistoryReader, getErrorMessage } from '@wadeck-app/queue-core';
 import { warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
@@ -8,14 +7,15 @@ import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { CI_EXIT } from './ciWait.js';
 import { ciWaitCommand, parseGithubRepo, type CiWaitCommandOptions } from './ciWaitCommand.js';
-import { inferExpectedWorkflows, parseWorkflowFile } from './ciInfer.js';
+import { createGitPort, inspectRepository, type GitPort } from './ciGit.js';
 import { eventWaitCommand } from './eventWaitCommand.js';
 import { RelayOnDemand, isRelaySourcedEvent } from './relayOnDemand.js';
+import { checkDeclaration, lastSeenAtOf, refuseUndeclared, undeclaredWarning } from './eventWaitCatalog.js';
 import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE } from './eventWaitArgs.js';
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
 Usage:
-  queue wait <event> [--when <expr>]... [--since <duration|time>] [--timeout <duration>] [--json]
+  queue wait <event> [--when <expr>]... [--since <duration|time>] [--timeout <duration>] [--json] [--strict]
   queue wait ci [<sha>] [--repo <owner/name>] [--workflow <name>]... [--timeout <duration>] [--settle <duration>] [--no-infer] [--json]
 
 queue wait <event>: blocks until a queue event of that name is recorded (any "queue push" is, even with no subscriber).
@@ -24,10 +24,16 @@ queue wait <event>: blocks until a queue event of that name is recorded (any "qu
   --since <d|time>   Count events recorded since then: a duration back from now (10m, 2h) or a time (2026-10-18T11:00:00Z).
                      Default: only events recorded after the command started
   --timeout <d>      Give up after this long (default 15m)
-  --json             Machine-readable result on stdout ({"matched":true,"entry":{...}} or {"matched":false,"timedOut":true,...})
+  --json             Machine-readable result on stdout ({"matched":true,"entry":{...}} or {"matched":false,"timedOut":true,...}),
+                     plus "declared" (is the name in the event catalog), "suggestions" (nearest declared names) and, on a
+                     timeout, "lastSeenAt" (last push of that name in the last 7 days, null = none: a typo or a rename,
+                     as opposed to a slow producer)
+  --strict           An event name that no program declared exits 4 at once, with the nearest declared names. Without it the
+                     wait goes on (old and undeclared producers exist) and warns on stderr with the same suggestions
   Example: queue wait onStatusChange --when "payload.taskId=abc" --when "payload.newStatus=done" --since 5m
   It answers at once when a matching event was recorded since --since, so there is no race with the thing you waited for.
-  Exit codes: 0 matched | 2 timeout | 4 invalid usage. "ci" is reserved for the command below.
+  Find the names, the payload paths for --when and a ready command with "queue events list" and "queue events show <name>".
+  Exit codes: 0 matched | 2 timeout | 4 invalid usage / --strict on an undeclared name. "ci" is reserved for the command below.
 
 queue wait ci: blocks until the GitHub CI of a commit is done (events relayed as on.github.workflow_run).
   <sha>              Commit to wait for (full or >= 7 chars); default: HEAD of the current git repository
@@ -53,93 +59,6 @@ Exit codes: 0 CI passed | 1 CI failed | 2 timeout | 3 no run seen / relay not ru
 const FLAGS_WITH_VALUE = new Set(['--repo', '--workflow', '--timeout', '--settle']);
 const KNOWN_FLAGS = ['--repo', '--workflow', '--timeout', '--settle', '--json', '--no-infer', '--help', '-h'];
 
-function git(args: string[]): string | null {
-  try {
-    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
-  } catch {
-    return null;
-  }
-}
-
-function gitSucceeds(args: string[]): boolean {
-  try {
-    execFileSync('git', args, { stdio: 'ignore', windowsHide: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-type GitStep = { proceed: true; workflows: string[]; notes: string[] } | { proceed: false; exitCode: number };
-
-/**
- * Looks at the local git repository to (1) refuse to wait for a commit that was never pushed and
- * (2) work out which workflows the push is expected to start. Never guesses: whatever cannot be decided
- * becomes a note and the default behaviour (every run seen for the commit) applies.
- */
-function inspectRepository(sha: string, repo: string | undefined, remoteRepo: string | null, infer: boolean): GitStep {
-  const notes: string[] = [];
-  const resolved = git(['rev-parse', '--verify', `${sha}^{commit}`]);
-  if (!resolved) {
-    return { proceed: true, workflows: [], notes: ['commit not found in the current git repository: push check and workflow inference skipped'] };
-  }
-  if (repo && remoteRepo && repo.toLowerCase() !== remoteRepo.toLowerCase()) {
-    return { proceed: true, workflows: [], notes: [`--repo ${repo} differs from the "origin" remote (${remoteRepo}): push check and workflow inference skipped`] };
-  }
-
-  const isHead = resolved === git(['rev-parse', 'HEAD']);
-  const branch = isHead ? git(['rev-parse', '--abbrev-ref', 'HEAD']) : null;
-
-  if (isHead) {
-    const upstream = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
-    if (!upstream) {
-      notes.push(`branch "${branch ?? 'HEAD'}" has no upstream: cannot verify that this commit was pushed`);
-    } else if (!gitSucceeds(['merge-base', '--is-ancestor', resolved, upstream])) {
-      process.stderr.write(`[fail] Commit ${resolved.slice(0, 12)} is not on ${upstream}: it was not pushed, so no CI will ever run for it. Run "git push", then "queue wait ci" again.\n`);
-      return { proceed: false, exitCode: CI_EXIT.NO_RUN };
-    }
-  } else if (git(['for-each-ref', '--count=1', 'refs/remotes/origin']) &&
-    !git(['for-each-ref', '--count=1', '--contains', resolved, 'refs/remotes/origin'])) {
-    // An explicit SHA that is not HEAD has no upstream to compare with: it must be on at least one remote branch
-    process.stderr.write(`[fail] Commit ${resolved.slice(0, 12)} is not on any origin branch: it was not pushed, so no CI will ever run for it. Run "git push", then "queue wait ci" again (if it was pushed from elsewhere, run "git fetch" first).\n`);
-    return { proceed: false, exitCode: CI_EXIT.NO_RUN };
-  }
-
-  if (!infer) {
-    return { proceed: true, workflows: [], notes };
-  }
-
-  const listing = git(['ls-tree', '-r', '--name-only', resolved, '--', '.github/workflows']);
-  const files = (listing ?? '').split('\n').filter((f) => /\.ya?ml$/i.test(f));
-  if (files.length === 0) {
-    notes.push('no .github/workflows/*.yml in this commit: workflow inference skipped');
-    return { proceed: true, workflows: [], notes };
-  }
-
-  const workflows = files.map((file) => parseWorkflowFile(file, git(['show', `${resolved}:${file}`]) ?? ''));
-  const changed = git(['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', resolved]);
-  const changedFiles = changed ? changed.split('\n').filter(Boolean) : null;
-  const inference = inferExpectedWorkflows({ workflows, branch: branch && branch !== 'HEAD' ? branch : null, changedFiles });
-
-  if (inference.kind === 'expected') {
-    if (inference.possible.length > 0) {
-      notes.push(`not waited for, but may also run: ${inference.possible.map((p) => `"${p}"`).join(', ')}`);
-    }
-    notes.push(...inference.notes);
-    return { proceed: true, workflows: inference.workflows, notes };
-  }
-  if (inference.kind === 'none') {
-    process.stderr.write(
-      `[fail] No workflow is configured to run on a push of this commit, so there is nothing to wait for:\n` +
-      inference.reasons.map((r) => `  - ${r}`).join('\n') + '\n' +
-      'If a CI is expected anyway (workflow_run, external app), name it with --workflow or skip the inference with --no-infer.\n',
-    );
-    return { proceed: false, exitCode: CI_EXIT.NO_RUN };
-  }
-  notes.push(...inference.notes, 'falling back to "every run seen for the commit" (--settle)');
-  return { proceed: true, workflows: [], notes };
-}
-
 function collectValues(args: string[], flag: string): string[] {
   const values: string[] = [];
   args.forEach((arg, i) => { if (arg === flag && args[i + 1] !== undefined) values.push(args[i + 1]!); });
@@ -160,6 +79,17 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
   }
 
   const { options } = parsed;
+
+  // The catalog is read-only help: an undeclared name still waits (old and undeclared producers exist) unless --strict.
+  // The events of the relay (on.<source>.<type>) are produced by the relay, nobody declares them: they are not checked.
+  const relaySourced = isRelaySourcedEvent(options.event);
+  const declaration = checkDeclaration(configDir, options.event, Date.now());
+  if (!relaySourced && !declaration.declared) {
+    if (options.strict) {
+      return refuseUndeclared(options.event, declaration, options.json, { stdout: process.stdout, stderr: process.stderr });
+    }
+    process.stderr.write(`${undeclaredWarning(options.event, declaration)}\n`);
+  }
   process.stderr.write(`[info] waiting for ${options.event}${options.whens.length ? ` where ${options.whens.join(' and ')}` : ''} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
 
@@ -181,6 +111,8 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     io: { stdout: process.stdout, stderr: process.stderr },
     beforeFirstWait,
+    ...(!relaySourced && { declaration: { declared: declaration.declared, suggestions: declaration.suggestions } }),
+    lastSeenAt: () => lastSeenAtOf(configDir, options.event, Date.now()),
   });
 }
 
@@ -197,7 +129,13 @@ function relayOnDemandFor(configDir: string, startRelay: StartRelay): RelayOnDem
   });
 }
 
-export async function queueWaitCommand(configDir: string, args: string[], startRelay: StartRelay): Promise<number> {
+export interface QueueWaitDeps {
+  /** The git the CI wait looks at; tests pass a fake, the CLI uses the real one. */
+  git?: GitPort;
+}
+
+export async function queueWaitCommand(configDir: string, args: string[], startRelay: StartRelay, deps: QueueWaitDeps = {}): Promise<number> {
+  const git = deps.git ?? createGitPort();
   const target = args[0];
   if (!target || target === '--help' || target === '-h') {
     process.stdout.write(WAIT_HELP);
@@ -213,7 +151,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
   const positionalIndex = rest.findIndex((arg, i) => !arg.startsWith('-') && !FLAGS_WITH_VALUE.has(rest[i - 1] ?? ''));
   const positional = positionalIndex === -1 ? undefined : rest[positionalIndex];
   warnUnknownArgs(rest.filter((_, i) => i !== positionalIndex), KNOWN_FLAGS, 'queue wait ci', FLAGS_WITH_VALUE);
-  const sha = positional ?? git(['rev-parse', 'HEAD']);
+  const sha = positional ?? git.read(['rev-parse', 'HEAD']);
   if (!sha) {
     return fail('No commit given and the current directory is not a git repository. Pass the SHA: queue wait ci <sha>.');
   }
@@ -221,7 +159,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     return fail(`"${sha}" is not a commit SHA (7 to 40 hexadecimal characters). Branch names are not resolved: pass the SHA.`);
   }
 
-  const remote = git(['remote', 'get-url', 'origin']);
+  const remote = git.read(['remote', 'get-url', 'origin']);
   const repo = collectValues(rest, '--repo')[0] ?? (remote ? parseGithubRepo(remote) ?? undefined : undefined);
   if (!repo) {
     process.stderr.write('[warn] No --repo and no GitHub "origin" remote: any repository with this SHA will match.\n');
@@ -241,7 +179,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
   const explicitWorkflows = collectValues(rest, '--workflow');
   let workflows = explicitWorkflows;
   if (!rest.includes('--no-infer')) {
-    const step = inspectRepository(sha, repo, remote ? parseGithubRepo(remote) : null, explicitWorkflows.length === 0);
+    const step = inspectRepository(git, { sha, repo, remoteRepo: remote ? parseGithubRepo(remote) : null, infer: explicitWorkflows.length === 0 }, (text) => process.stderr.write(text));
     if (!step.proceed) {
       return step.exitCode;
     }

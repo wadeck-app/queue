@@ -27,9 +27,11 @@ function resolveStdio(rawArgs, stdinIsTTY) {
   if (!hasBackground && !hasForeground) {
     // Auto-detect: pipe context (non-TTY) → NUL handles to prevent AllocConsole()
     // from libuv when a GUI-parent (flow.exe SUBSYSTEM:WINDOWS) passes PIPE handles.
-    stdio = stdinIsTTY ? 'inherit' : 'ignore';
+    // "queue events list|show" only read the event catalog: an agent in a background shell (non-TTY) needs their output
+    var readOnlyCatalog = cliName === 'queue' && args[0] === 'events' && (args[1] === 'list' || args[1] === 'show');
+    stdio = stdinIsTTY || readOnlyCatalog ? 'inherit' : 'ignore';
     // auto=true only when auto-detection chose 'ignore' (non-TTY)
-    auto = !stdinIsTTY;
+    auto = !stdinIsTTY && !readOnlyCatalog;
   } else {
     // Last flag wins, default 'ignore'
     stdio = 'ignore';

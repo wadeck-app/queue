@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDaemonClient } from '@wadeck-app/singleton-daemon-kit';
 import { startRelayDaemon, type RelayCommands } from './RelayDaemon.js';
+import { waitFor } from './testing/waitFor.js';
 import { markOnDemand, registerWaiter, unregisterWaiter, isOnDemand } from './onDemand.js';
 
 // A separate file from RelayDaemon.test.ts on purpose: the older tests there stop daemons without replacing the forced
@@ -31,10 +32,9 @@ describe('on-demand relay (started by "queue wait") stops itself when nobody wai
   afterEach(async () => {
     await daemonHandle?.stop('command').catch(() => undefined);
     daemonHandle = null;
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   // The shutdown hook arms a forced process.exit: replace it, the test process must not exit
   const shutdownDeps = { setTimeout: () => ({ unref: () => undefined }), exit: () => undefined, log: () => undefined };
 
@@ -53,23 +53,32 @@ describe('on-demand relay (started by "queue wait") stops itself when nobody wai
     daemonHandle = await startRelayDaemon(configDir, shutdownDeps, { idleWatchdog: { graceMs: 150, intervalMs: 40 } });
     const client = relayClient();
 
-    await sleep(500);
+    // Positive barrier instead of a sleep: every watchdog tick checks that the waiter's process is alive with process.kill(pid, 0),
+    // so several such calls prove the watchdog ran (and left the relay up) several times while the waiter lived
+    let livenessChecks = 0;
+    const realKill = process.kill.bind(process);
+    vi.spyOn(process, 'kill').mockImplementation((pid: number, signal?: string | number) => {
+      if (pid === process.pid && signal === 0) {
+        livenessChecks++;
+      }
+      return realKill(pid, signal);
+    });
+    await waitFor(() => livenessChecks >= 5, 'the idle watchdog to check the live waiter at least 5 times');
     expect(await client.isRunning()).toBe(true);
 
     unregisterWaiter(relayDir, process.pid);
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && (await client.isRunning())) {
-      await sleep(50);
-    }
+    await waitFor(async () => !(await client.isRunning()), 'the relay to stop itself once the waiter is gone');
     expect(await client.isRunning()).toBe(false);
     expect(readFileSync(join(relayDir, 'relay.log'), 'utf-8')).toContain('no one is waiting');
     // a stopped relay leaves no on-demand marker behind
     expect(isOnDemand(relayDir)).toBe(false);
-  }, 15_000);
+  });
 
   it('a relay that was not started on demand ignores the waiters entirely', async () => {
     daemonHandle = await startRelayDaemon(configDir, shutdownDeps, { idleWatchdog: { graceMs: 100, intervalMs: 30 } });
-    await sleep(500);
+    // Without an on-demand marker the watchdog ticks leave no observable trace, so there is no positive barrier for "it ignored the
+    // waiters"; a slow machine only makes this check weaker, never failing (seam: an onTick callback in IdleWatchdogOptions).
+    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(await relayClient().isRunning()).toBe(true);
-  }, 15_000);
+  });
 });

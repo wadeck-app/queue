@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as net from 'node:net';
+import { spawnOwned, waitFor, withHangGuard } from '../testWaitFor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');
@@ -15,6 +15,9 @@ const bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
 
 let tempConfigDir: string;
 let portsBusy: boolean = false;
+
+// A removal that survives Windows holding a file for a moment after a child process exited (EPERM, EBUSY): Node retries it
+const removeDir = (path: string): void => rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 
 // Helper to check if a port is listening
 async function isPortListening(port: number, host: string = '127.0.0.1'): Promise<boolean> {
@@ -31,15 +34,8 @@ async function isPortListening(port: number, host: string = '127.0.0.1'): Promis
 }
 
 // Helper to wait for a port to become free
-async function waitForPortFree(port: number, maxWaitMs: number = 5000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    if (!(await isPortListening(port))) {
-      return true;
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return false;
+async function waitForPortFree(port: number): Promise<void> {
+  await waitFor(async () => !(await isPortListening(port)), `port ${port} to become free`);
 }
 
 // Helper to check if process is still running (works on Windows and Unix)
@@ -58,7 +54,6 @@ beforeAll(async () => {
     cwd: rootDir,
     stdio: 'inherit',
     env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-    timeout: 60_000,
     windowsHide: true,
   });
 
@@ -68,11 +63,11 @@ beforeAll(async () => {
   const daemonInUse = await isPortListening(47910);
   const relayInUse = await isPortListening(47911);
   portsBusy = daemonInUse || relayInUse;
-}, 90_000);
+});
 
 afterAll(() => {
   if (tempConfigDir && existsSync(tempConfigDir)) {
-    rmSync(tempConfigDir, { recursive: true, force: true });
+    removeDir(tempConfigDir);
   }
 });
 
@@ -83,7 +78,8 @@ function runCli(args: string[], extraEnv: Record<string, string> = {}): {
 } {
   const result = spawnSync(process.execPath, [bundlePath, ...args], {
     encoding: 'utf-8',
-    timeout: 15_000,
+    // Hang guard only, never a performance limit
+    timeout: 300_000,
     env: {
       ...process.env,
       QUEUE_CONFIG_DIR: tempConfigDir,
@@ -97,6 +93,20 @@ function runCli(args: string[], extraEnv: Record<string, string> = {}): {
   };
 }
 
+interface HistoryPage {
+  entries: Array<{
+    event: string;
+    payload?: { repository?: { full_name?: string } };
+    cwd?: string;
+  }>;
+}
+
+function readHistory(): HistoryPage {
+  const { stdout, exitCode, stderr } = runCli(['history', '--json']);
+  expect(exitCode, `history failed: ${stderr}`).toBe(0);
+  return JSON.parse(stdout) as HistoryPage;
+}
+
 describe('relay end-to-end (integration)', () => {
   it(
     'relay start connects to ws server, filters events via plugin subscription, and records logs',
@@ -105,8 +115,6 @@ describe('relay end-to-end (integration)', () => {
       if (portsBusy) {
         ctx.skip();
       }
-
-      const testStartTime = Date.now();
 
       // Step 1: Create mock WebSocket server on a random port
       const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -126,7 +134,6 @@ describe('relay end-to-end (integration)', () => {
           }
         });
         wss.on('error', reject);
-        setTimeout(() => reject(new Error('WebSocket server failed to start')), 5000);
       });
 
       wss.on('connection', (ws: WebSocket) => {
@@ -138,38 +145,34 @@ describe('relay end-to-end (integration)', () => {
           } else if (msg.type === 'subscribe') {
             subscribeFilter = msg.filter;
             ws.send(JSON.stringify({ type: 'subscribed', filter: msg.filter }));
-            // Send matching event after 300ms
-            setTimeout(() => {
-              ws.send(
-                JSON.stringify({
-                  type: 'event',
-                  envelope: {
-                    source: 'github',
-                    webhookConfigId: 'w1',
-                    eventType: 'push',
-                    deliveryId: 'd-match',
-                    receivedAt: new Date().toISOString(),
-                    payload: { ref: 'refs/heads/main', repository: { full_name: 'o/r' } },
-                  },
-                }),
-              );
-            }, 300);
-            // Send non-matching event after 1500ms
-            setTimeout(() => {
-              ws.send(
-                JSON.stringify({
-                  type: 'event',
-                  envelope: {
-                    source: 'github',
-                    webhookConfigId: 'w1',
-                    eventType: 'push',
-                    deliveryId: 'd-other',
-                    receivedAt: new Date().toISOString(),
-                    payload: { ref: 'refs/heads/main', repository: { full_name: 'other/repo' } },
-                  },
-                }),
-              );
-            }, 1500);
+            // A WebSocket delivers messages in order: the matching event, then the non-matching one. Once the relay has logged the
+            // second as unmatched, it is done with the first (this is the barrier for the "exactly one entry" assertion below).
+            ws.send(
+              JSON.stringify({
+                type: 'event',
+                envelope: {
+                  source: 'github',
+                  webhookConfigId: 'w1',
+                  eventType: 'push',
+                  deliveryId: 'd-match',
+                  receivedAt: new Date().toISOString(),
+                  payload: { ref: 'refs/heads/main', repository: { full_name: 'o/r' } },
+                },
+              }),
+            );
+            ws.send(
+              JSON.stringify({
+                type: 'event',
+                envelope: {
+                  source: 'github',
+                  webhookConfigId: 'w1',
+                  eventType: 'push',
+                  deliveryId: 'd-other',
+                  receivedAt: new Date().toISOString(),
+                  payload: { ref: 'refs/heads/main', repository: { full_name: 'other/repo' } },
+                },
+              }),
+            );
           }
         });
       });
@@ -181,8 +184,9 @@ describe('relay end-to-end (integration)', () => {
         // Pre-cleanup: Stop any existing relay/queue daemons from previous runs
         runCli(['relay', 'stop']);
         runCli(['stop']);
-        // Give daemons time to shut down
-        await new Promise((r) => setTimeout(r, 500));
+        // Wait until both daemons really released their ports
+        await waitForPortFree(47910);
+        await waitForPortFree(47911);
 
         // Step 2: Write relay.yml with mock WebSocket URL
         const relayYmlPath = join(tempConfigDir, 'relay.yml');
@@ -205,8 +209,7 @@ plugins:
         expect(relayStart.stdout).toContain('relay client started');
 
         // Wait for relay to connect and subscribe
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        expect(relayConnected, 'Relay did not connect to WebSocket server').toBe(true);
+        await waitFor(() => relayConnected && subscribeFilter !== null, 'the relay to connect to the WebSocket server and subscribe');
 
         // Get relay daemon PID for later process exit check
         const relayStatusResult = runCli(['relay', 'status', '--json']);
@@ -224,50 +227,24 @@ plugins:
           queueDaemonPid = queueStatus.pid ?? null;
         }
 
-        // Step 4: Poll 'history --json' until matching event appears
-        let historyFound = false;
-        const pollStart = Date.now();
-        const maxWait = 20_000;
+        // Step 4: Wait for the relay to have handled BOTH events: the non-matching one is logged, and it was sent after the matching one
+        const relayLogPath = join(tempConfigDir, 'relay-daemon', 'relay.log');
+        await waitFor(() => existsSync(relayLogPath) && readFileSync(relayLogPath, 'utf-8').includes('d-other'),
+          `the relay log to mention the non-matching delivery d-other (${relayLogPath})`);
 
-        while (Date.now() - pollStart < maxWait) {
-          const { stdout, exitCode } = runCli(['history', '--json']);
-          expect(exitCode).toBe(0);
+        // The matching event must reach the history: wait for it
+        const matchingEntry = await waitFor(() => readHistory().entries.find((e) => e.event === 'on.github.push'),
+          "the 'on.github.push' entry in the history");
 
-          const page = JSON.parse(stdout) as {
-            entries: Array<{
-              event: string;
-              payload?: Record<string, any>;
-              cwd?: string;
-            }>;
-            total: number;
-            limit: number;
-            offset: number;
-          };
+        // Exactly one entry: the non-matching delivery (handled after it) did not produce another
+        const allMatching = readHistory().entries.filter((e) => e.event === 'on.github.push');
+        expect(allMatching).toHaveLength(1);
 
-          const matchingEntry = page.entries.find((e) => e.event === 'on.github.push');
-          if (matchingEntry) {
-            historyFound = true;
-            // Assert exactly one entry after 3 more seconds (negative assertion window)
-            await new Promise((r) => setTimeout(r, 3000));
-
-            const { stdout: finalStdout } = runCli(['history', '--json']);
-            const finalPage = JSON.parse(finalStdout) as { entries: Array<{ event: string }> };
-            const allMatching = finalPage.entries.filter((e) => e.event === 'on.github.push');
-            expect(allMatching).toHaveLength(1);
-
-            // Assert payload and cwd
-            expect(matchingEntry.payload?.repository?.full_name).toBe('o/r');
-            const normalizedEntryCwd = matchingEntry.cwd?.toLowerCase().replace(/\\/g, '/');
-            const normalizedTempCwd = tempConfigDir.toLowerCase().replace(/\\/g, '/');
-            expect(normalizedEntryCwd).toBe(normalizedTempCwd);
-
-            break;
-          }
-
-          await new Promise((r) => setTimeout(r, 300));
-        }
-
-        expect(historyFound, `No 'on.github.push' event found after ${maxWait}ms`).toBe(true);
+        // Assert payload and cwd
+        expect(matchingEntry.payload?.repository?.full_name).toBe('o/r');
+        const normalizedEntryCwd = matchingEntry.cwd?.toLowerCase().replace(/\\/g, '/');
+        const normalizedTempCwd = tempConfigDir.toLowerCase().replace(/\\/g, '/');
+        expect(normalizedEntryCwd).toBe(normalizedTempCwd);
 
         // Step 5: Assert filter deep-equals expected
         expect(subscribeFilter).toEqual({
@@ -277,7 +254,6 @@ plugins:
         });
 
         // Step 6: Assert relay.log exists and contains expected messages
-        const relayLogPath = join(tempConfigDir, 'relay-daemon', 'relay.log');
         expect(existsSync(relayLogPath), `Relay log not found at ${relayLogPath}`).toBe(true);
         const logContent = readFileSync(relayLogPath, 'utf-8');
         expect(logContent).toContain('matched no subscription');
@@ -297,10 +273,6 @@ plugins:
         if (status.pid) {
           relayDaemonPid = status.pid;
         }
-
-        // Assertion: total test elapsed time should be > 3s (proves negative assertion window ran)
-        const elapsedMs = Date.now() - testStartTime;
-        expect(elapsedMs).toBeGreaterThan(3000);
       } finally {
         // Step 8: Guaranteed cleanup in finally block (regardless of assertion failures)
         try {
@@ -313,68 +285,30 @@ plugins:
           // Close WebSocket server
           server.close();
 
-          // Wait for ports to become free (max 5 seconds each)
-          const port47910Free = await waitForPortFree(47910, 5000);
-          const port47911Free = await waitForPortFree(47911, 5000);
+          // Wait for the ports to become free (a hang is reported by the waiter, naming the port)
+          await waitForPortFree(47910);
+          await waitForPortFree(47911);
 
-          expect(port47910Free, 'Port 47910 (queue daemon) still in use after stop').toBe(true);
-          expect(port47911Free, 'Port 47911 (relay) still in use after stop').toBe(true);
-
-          // Step 9: NEW ASSERTION - Verify relay process actually exited
-          // This assertion WILL FAIL until RelayDaemon.ts hooks.onShutdown is wired (expected)
+          // Step 9: Verify relay process actually exited
           if (relayDaemonPid !== null) {
-            let relayProcessExited = false;
-            const relayCheckStart = Date.now();
-            while (Date.now() - relayCheckStart < 5000) {
-              if (!isProcessRunning(relayDaemonPid)) {
-                relayProcessExited = true;
-                break;
-              }
-              await new Promise((r) => setTimeout(r, 100));
-            }
-            // NOTE: This assertion currently FAILS because RelayDaemon.ts doesn't wire hooks.onShutdown
-            // The relay process continues running even after `relay stop` returns.
-            // TODO: Fix in RelayDaemon.ts
-            expect(relayProcessExited, `Relay process ${relayDaemonPid} did not exit after relay stop (RelayDaemon.ts needs hooks.onShutdown)`).toBe(true);
+            const pid = relayDaemonPid;
+            await waitFor(() => !isProcessRunning(pid),
+              `relay process ${pid} to exit after relay stop (RelayDaemon.ts needs hooks.onShutdown)`);
           }
 
           // Step 10: Verify queue daemon process exited if one was started
           if (queueDaemonPid !== null) {
-            let queueProcessExited = false;
-            const queueCheckStart = Date.now();
-            while (Date.now() - queueCheckStart < 5000) {
-              if (!isProcessRunning(queueDaemonPid)) {
-                queueProcessExited = true;
-                break;
-              }
-              await new Promise((r) => setTimeout(r, 100));
-            }
-            expect(queueProcessExited, `Queue daemon process ${queueDaemonPid} did not exit after stop`).toBe(true);
+            const pid = queueDaemonPid;
+            await waitFor(() => !isProcessRunning(pid), `queue daemon process ${pid} to exit after stop`);
           }
         } finally {
-          // Ensure temp dir is removed, with retry for file locks on Windows
+          // Ensure temp dir is removed, with retry for file locks on Windows (throws if still locked: the lock issue must be visible)
           if (tempConfigDir && existsSync(tempConfigDir)) {
-            let removed = false;
-            for (let attempt = 0; attempt < 5; attempt++) {
-              try {
-                rmSync(tempConfigDir, { recursive: true, force: true });
-                removed = true;
-                break;
-              } catch (err) {
-                if (attempt < 4) {
-                  await new Promise((r) => setTimeout(r, 200));
-                }
-              }
-            }
-            if (!removed && existsSync(tempConfigDir)) {
-              // If still can't remove, fail the test to expose the lock issue
-              expect(true, `Could not remove temp dir ${tempConfigDir} (locked files)`).toBe(false);
-            }
+            removeDir(tempConfigDir);
           }
         }
       }
     },
-    60_000,
   );
 });
 
@@ -393,7 +327,8 @@ describe('relay daemon bundle smoke test (integration)', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'queue-relay-config-smoke-'));
     const received: Array<{ type: string; filter?: unknown }> = [];
     const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-    let child: ChildProcess | undefined;
+    let daemon: ReturnType<typeof spawnOwned> | undefined;
+    let exitCode: number | null | undefined;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -419,37 +354,30 @@ describe('relay daemon bundle smoke test (integration)', () => {
         'utf-8',
       );
 
-      let stderr = '';
-      let exitCode: number | null | undefined;
-      child = spawn(process.execPath, [bundleCopy], {
+      daemon = spawnOwned(process.execPath, [bundleCopy], {
         cwd: isolatedDir,
         env: { ...process.env, QUEUE_CONFIG_DIR: configDir, NODE_PATH: '' },
-        stdio: ['ignore', 'ignore', 'pipe'],
       });
-      child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
-      child.on('exit', (code) => { exitCode = code; });
+      void daemon.exited.then((code) => { exitCode = code; });
 
-      const deadline = Date.now() + 15_000;
-      while (Date.now() < deadline && exitCode === undefined && !received.some((m) => m.type === 'subscribe')) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      // Either the daemon subscribes (success) or it exits (the assertions below then report why)
+      await waitFor(() => exitCode !== undefined || received.some((m) => m.type === 'subscribe'), 'the relay daemon to subscribe (or exit)');
 
-      expect(exitCode, `relay daemon exited early with code ${exitCode}; stderr: ${stderr}`).toBeUndefined();
+      expect(exitCode, `relay daemon exited early with code ${exitCode}; stderr: ${daemon.stderr()}`).toBeUndefined();
       const subscribe = received.find((m) => m.type === 'subscribe');
-      expect(subscribe?.filter, `no subscribe received within 15s; stderr: ${stderr}`).toEqual({
+      expect(subscribe?.filter, `no subscribe received; stderr: ${daemon.stderr()}`).toEqual({
         source: 'github',
         eventType: ['push'],
         payloadMatch: {},
       });
     } finally {
-      if (child && child.exitCode === null) {
-        const exited = new Promise<void>((resolve) => child!.once('exit', () => resolve()));
-        child.kill();
-        await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+      if (daemon && daemon.child.exitCode === null) {
+        daemon.child.kill();
+        await withHangGuard(daemon.exited, 'the killed relay daemon to exit');
       }
       wss.close();
-      rmSync(isolatedDir, { recursive: true, force: true });
-      rmSync(configDir, { recursive: true, force: true });
+      removeDir(isolatedDir);
+      removeDir(configDir);
     }
-  }, 30_000);
+  });
 });

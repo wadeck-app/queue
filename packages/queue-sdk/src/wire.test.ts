@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePushAnswer, serializePushRequest, toPublishResult } from './wire.js';
+import { parsePushAnswer, parseRegisterAnswer, serializePushRequest, serializeRegisterRequest, toPublishResult } from './wire.js';
 
 describe('parsePushAnswer', () => {
   it('unwraps a dispatched answer', () => {
@@ -121,5 +121,54 @@ describe('serializePushRequest', () => {
     const shared = { v: 1 };
     expect(serializePushRequest({ event: 'a', payload: null, cwd: '/p' }).ok).toBe(true);
     expect(serializePushRequest({ event: 'a', payload: { a: shared, b: shared }, cwd: '/p' }).ok).toBe(true);
+  });
+});
+
+describe('parseRegisterAnswer', () => {
+  it('reads registered with its count', () => {
+    expect(parseRegisterAnswer({ ok: true, result: { status: 'registered', source: 'demo', count: 2 } })).toEqual({ ok: true, response: { status: 'registered', count: 2 } });
+  });
+
+  it('reads rejected with its reason, problems and supported range, dropping malformed problems', () => {
+    const parsed = parseRegisterAnswer({
+      ok: true,
+      result: { status: 'rejected', reason: 'r', supported: '^1.0.0', problems: [{ path: 'events[0].name', message: 'm' }, { path: 3 }, 'x'] },
+    });
+    expect(parsed).toEqual({ ok: true, response: { status: 'rejected', reason: 'r', supported: '^1.0.0', problems: [{ path: 'events[0].name', message: 'm' }] } });
+  });
+
+  it('ignores unknown fields', () => {
+    expect(parseRegisterAnswer({ ok: true, extra: 1, result: { status: 'registered', future: true } })).toEqual({ ok: true, response: { status: 'registered' } });
+  });
+
+  it('fails on an unknown status and quotes it', () => {
+    const parsed = parseRegisterAnswer({ ok: true, result: { status: 'queued' } });
+    expect(parsed.ok).toBe(false);
+    expect(!parsed.ok && parsed.reason).toContain('queued');
+  });
+
+  it.each([[null], ['x'], [[]], [{ ok: true }], [{ ok: false, result: { status: 'registered' } }], [{ ok: true, result: 3 }]])('fails on %j', (body) => {
+    expect(parseRegisterAnswer(body).ok).toBe(false);
+  });
+});
+
+describe('serializeRegisterRequest', () => {
+  it('serialises a declaration with the protocol', () => {
+    const out = serializeRegisterRequest({ protocol: '1.1.0', source: 'demo', events: [{ name: 'a', description: 'd' }] });
+    expect(out.ok && JSON.parse(out.body)).toEqual({ protocol: '1.1.0', source: 'demo', events: [{ name: 'a', description: 'd' }] });
+  });
+
+  it('names the BigInt with its path in the declaration', () => {
+    const out = serializeRegisterRequest({ source: 'demo', events: [{ name: 'a', description: 'd', example: { n: [1, 10n] } }] });
+    expect(out.ok).toBe(false);
+    expect(!out.ok && out.reason).toContain('events[0].example.n[1]');
+    expect(!out.ok && out.reason).toContain('BigInt');
+  });
+
+  it('names a circular reference', () => {
+    const example: Record<string, unknown> = {};
+    example['self'] = example;
+    const out = serializeRegisterRequest({ source: 'demo', events: [{ name: 'a', description: 'd', example }] });
+    expect(!out.ok && out.reason).toContain('circular');
   });
 });

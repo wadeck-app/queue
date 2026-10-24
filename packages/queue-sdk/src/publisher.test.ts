@@ -6,6 +6,7 @@ import { PROTOCOL_VERSION } from './protocol.js';
 import { createQueuePublisherWithDeps, type PublisherDeps, type QueuePublisher, type QueuePublisherOptions } from './publisher.js';
 import type { QueueFailure } from './report.js';
 import { closedPort, makeTempDir, removeDir, startFakeDaemon, type FakeDaemon, type FakeDaemonOptions } from './testing/fakeDaemon.js';
+import { waitFor } from './testing/waitFor.js';
 
 interface Harness {
   dir: string;
@@ -20,6 +21,7 @@ interface Harness {
 const cleanups: Array<() => Promise<void> | void> = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const cleanup of cleanups.splice(0).reverse()) {
     await cleanup();
   }
@@ -65,7 +67,8 @@ async function setup(options: HarnessOptions = {}): Promise<Harness> {
       return { code };
     },
     pollIntervalMs: 10,
-    startTimeoutMs: 500,
+    // How long a start may take to show a daemon: a guard against a start that never completes, never a performance limit.
+    startTimeoutMs: 300_000,
     ...options.deps,
   };
   h.publisher = createQueuePublisherWithDeps(
@@ -171,8 +174,14 @@ describe('timeouts', () => {
 
   it('reports no answer in time with status unknown, never retries and says it may have been queued', async () => {
     const h = await setup();
+    // The daemon answers after 400 ms of a FAKED clock that never reaches it, and the 100 ms request deadline is fired by the test
+    // only once the daemon has received the push: neither depends on the speed of the machine.
     h.fake!.script.push({ kind: 'delay', ms: 400 });
-    const result = await h.publisher.publishAndWait('a', {}, { timeoutMs: 100 });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const pending = h.publisher.publishAndWait('a', {}, { timeoutMs: 100 });
+    await waitFor('the fake daemon receiving the push', () => h.fake!.pushes().length === 1);
+    vi.advanceTimersByTime(100);
+    const result = await pending;
     expect(result.status).toBe('unknown');
     expect(result.reason).toContain('100 ms');
     expect(result.reason).toContain('may');
@@ -362,8 +371,9 @@ describe('a daemon that cannot be trusted', () => {
     expect(h.failures[0]?.kind).toBe('incompatible');
   });
 
+  // The daemon never becomes usable in these two: the short start deadline is the scenario (give up), whatever the machine speed
   it('treats a /version with another pid as a stale port file: starts the daemon and never sends the token', async () => {
-    const h = await setup({ daemon: { reportedPid: process.pid + 100000 } });
+    const h = await setup({ daemon: { reportedPid: process.pid + 100000 }, deps: { startTimeoutMs: 60 } });
     const result = await h.publisher.publishAndWait('a', {});
     expect(result.status).toBe('dropped');
     expect(h.runs).toHaveLength(1);
@@ -371,7 +381,7 @@ describe('a daemon that cannot be trusted', () => {
   });
 
   it('treats a /version with another config_dir as a stale port file and never sends the token', async () => {
-    const h = await setup({ daemon: { reportedConfigDir: join('somewhere', 'else') } });
+    const h = await setup({ daemon: { reportedConfigDir: join('somewhere', 'else') }, deps: { startTimeoutMs: 60 } });
     const result = await h.publisher.publishAndWait('a', {});
     expect(result.status).toBe('dropped');
     expect(h.fake!.requests.every((request) => request.authorization === undefined)).toBe(true);
@@ -421,7 +431,9 @@ describe('a stopped daemon', () => {
     const h = await setup({
       daemon: false,
       onRun: async (self) => {
-        await new Promise((r) => setTimeout(r, 50));
+        // Let the event loop turn once: every publish was issued synchronously and joined the single start in the same microtask
+        // drain, so after a macrotask they are all waiting on this start (no wall-clock delay involved).
+        await new Promise<void>((r) => setImmediate(r));
         fake = await startFakeDaemon({ configDir: join(self.dir, 'cfg') });
         cleanups.push(() => fake?.close());
         fake.writeFiles();
@@ -536,7 +548,7 @@ describe('status', () => {
   it('describes a running daemon without sending an event', async () => {
     const h = await setup({ daemon: { queueProtocol: { version: '1.0.0', accepts: '^1.0.0' } } });
     const status = await h.publisher.status();
-    expect(status).toMatchObject({ available: true, via: 'daemon', daemonVersion: '9.9.9', protocol: '1.0.0' });
+    expect(status).toMatchObject({ available: true, via: 'daemon', daemonVersion: '9.9.9', protocol: PROTOCOL_VERSION });
     expect(h.fake!.pushes()).toHaveLength(0);
   });
 
@@ -650,5 +662,294 @@ describe('the QUEUE_SDK_OFF environment variable (trying a program in developmen
     const h = await setup({ publisher: { off: true }, deps: { env: { QUEUE_SDK_OFF: '1' } } });
     await expect(h.publisher.publishAndWait('app.thing', {})).resolves.toMatchObject({ status: 'dropped' });
     expect(h.httpCalls).toEqual([]);
+  });
+});
+
+// A daemon that speaks the protocol of this SDK (the default fake predates queueProtocol, i.e. it has no event catalog).
+function setupCatalog(options: HarnessOptions = {}): Promise<Harness> {
+  return setup({ ...options, daemon: options.daemon === false ? false : { queueProtocol: { version: PROTOCOL_VERSION, accepts: '^1.0.0' }, ...options.daemon } });
+}
+
+const DECLARED = [
+  { name: 'demo.started', description: 'A demo began.', correlationKey: 'payload.id' },
+  { name: 'demo.done', description: 'A demo ended.', terminal: true, outcome: 'success' as const },
+];
+
+describe('registerEvents (the event catalog, protocol 1.1.0)', () => {
+  it('sends source, events and protocol with the token and answers registered with the count', async () => {
+    const h = await setupCatalog();
+    const result = await h.publisher.registerEvents('demo', DECLARED);
+    expect(result).toEqual({ status: 'registered', count: 2 });
+    const [registration] = h.fake!.registrations();
+    expect(registration?.authorization).toBe(`Bearer ${h.fake!.token}`);
+    expect(JSON.parse(registration!.body)).toEqual({ protocol: PROTOCOL_VERSION, source: 'demo', events: DECLARED });
+    expect(h.fake!.pushes()).toEqual([]);
+    expect(h.failures).toEqual([]);
+  });
+
+  it('is idempotent on the wire: the same declaration twice is two registrations, both registered', async () => {
+    const h = await setupCatalog();
+    await h.publisher.registerEvents('demo', DECLARED);
+    expect((await h.publisher.registerEvents('demo', DECLARED)).status).toBe('registered');
+    expect(h.fake!.registrations()).toHaveLength(2);
+  });
+
+  it('starts the daemon on demand like a push', async () => {
+    const h = await setupCatalog({
+      writeFiles: false,
+      onRun: (harness) => {
+        harness.fake!.writeFiles();
+        return 0;
+      },
+    });
+    expect((await h.publisher.registerEvents('demo', DECLARED)).status).toBe('registered');
+    expect(h.runs).toHaveLength(1);
+  });
+
+  it('re-reads the token after a 401 and retries once', async () => {
+    const h = await setupCatalog();
+    const fake = h.fake!;
+    fake.acceptedToken = 'b'.repeat(32);
+    fake.onUnauthorized = () => writeFileSync(join(fake.configDir, 'health_token'), `${fake.acceptedToken}\n`);
+    expect((await h.publisher.registerEvents('demo', DECLARED)).status).toBe('registered');
+    expect(fake.registrations().map((request) => request.authorized)).toEqual([false, true]);
+    expect(h.failures).toEqual([]);
+  });
+
+  it('gives up after one retry on a persistent 401 without exposing the token', async () => {
+    const h = await setupCatalog();
+    h.fake!.acceptedToken = 'z'.repeat(32);
+    const result = await h.publisher.registerEvents('demo', DECLARED);
+    expect(result.status).toBe('dropped');
+    expect(h.fake!.registrations()).toHaveLength(2);
+    expect(h.failures[0]?.kind).toBe('unauthorized');
+    expect(JSON.stringify([result, h.failures])).not.toContain(h.fake!.token);
+  });
+
+  describe('a declaration the daemon rejects', () => {
+    const problems = [
+      { path: 'events[0].name', message: 'name must be dot-separated segments' },
+      { path: 'events[1].description', message: 'description is required: say when the event fires' },
+    ];
+
+    it('returns the problems verbatim, a reason listing each path and message, and reports rejected-declaration', async () => {
+      const h = await setupCatalog();
+      h.fake!.registerScript.push({ kind: 'answer', result: { status: 'rejected', reason: 'the declaration is invalid: ...', problems } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('rejected');
+      expect(result.problems).toEqual(problems);
+      expect(result.reason).toContain('events[0].name: name must be dot-separated segments');
+      expect(result.reason).toContain('events[1].description: description is required');
+      expect(h.failures).toHaveLength(1);
+      expect(h.failures[0]).toMatchObject({ kind: 'rejected-declaration', outcome: 'dropped', event: 'demo' });
+      expect(h.fake!.registrations()).toHaveLength(1);
+    });
+
+    it('a protocol rejection (no problems) keeps the daemon reason and the accepted range', async () => {
+      const h = await setupCatalog();
+      h.fake!.registerScript.push({ kind: 'answer', result: { status: 'rejected', reason: 'push protocol 2.0.0 is not accepted', supported: '^1.0.0' } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('rejected');
+      expect(result.problems).toBeUndefined();
+      expect(result.reason).toContain('push protocol 2.0.0 is not accepted');
+      expect(result.reason).toContain('^1.0.0');
+    });
+  });
+
+  describe('a daemon older than 1.1.0', () => {
+    it('is unsupported without sending anything when /version says 1.0.0, and says what to update', async () => {
+      const h = await setupCatalog({ daemon: { queueProtocol: { version: '1.0.0', accepts: '^1.0.0' } } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('unsupported');
+      expect(result.reason).toContain('update queue-cli');
+      expect(result.reason).toContain('push protocol 1.0.0');
+      expect(result.reason).toContain('needs 1.1.0');
+      expect(h.fake!.registrations()).toEqual([]);
+      expect(h.failures).toHaveLength(1);
+      expect(h.failures[0]).toMatchObject({ kind: 'unsupported', outcome: 'dropped' });
+    });
+
+    it('is unsupported when /version has no queueProtocol at all (legacy daemon)', async () => {
+      const h = await setup();
+      expect((await h.publisher.registerEvents('demo', DECLARED)).status).toBe('unsupported');
+      expect(h.fake!.registrations()).toEqual([]);
+    });
+
+    it('is unsupported on an HTTP 404 of the command, and nothing is retried', async () => {
+      const h = await setupCatalog({ daemon: { queueProtocol: { version: PROTOCOL_VERSION, accepts: '^1.0.0' }, supportsRegisterEvents: false } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('unsupported');
+      expect(result.reason).toContain('update queue-cli');
+      expect(h.fake!.registrations()).toHaveLength(1);
+      expect(h.failures[0]).toMatchObject({ kind: 'unsupported' });
+    });
+
+    it('does not stop publishing: pushes still work', async () => {
+      const h = await setup();
+      expect((await h.publisher.registerEvents('demo', DECLARED)).status).toBe('unsupported');
+      expect((await h.publisher.publishAndWait('demo.started', {})).status).toBe('queued');
+    });
+
+    it('reaches onError on every call but prints once per problem', async () => {
+      const lines: string[] = [];
+      const h = await setup({ publisher: { silent: false }, deps: { sink: (line) => lines.push(line) } });
+      await h.publisher.registerEvents('demo', DECLARED);
+      await h.publisher.registerEvents('demo', DECLARED);
+      expect(h.failures).toHaveLength(2);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('demo');
+      expect(lines[0]).toContain('update queue-cli');
+    });
+  });
+
+  describe('connection reset or timeout after sending', () => {
+    it('retries once after a reset (replacing a declaration is idempotent) and then succeeds', async () => {
+      const h = await setupCatalog();
+      h.fake!.registerScript.push({ kind: 'reset' });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result).toEqual({ status: 'registered', count: 2 });
+      expect(h.fake!.registrations()).toHaveLength(2);
+      expect(h.failures).toEqual([]);
+    });
+
+    it('retries once after a timeout and then succeeds', async () => {
+      let calls = 0;
+      const h = await setupCatalog({
+        deps: {
+          request: (call) => {
+            if (call.path === '/register-events') {
+              calls += 1;
+              if (calls === 1) {
+                return Promise.resolve({ kind: 'failure', connected: true, message: 'timeout', timedOut: true });
+              }
+            }
+            return loopbackRequest(call);
+          },
+        },
+      });
+      expect((await h.publisher.registerEvents('demo', DECLARED)).status).toBe('registered');
+      expect(calls).toBe(2);
+    });
+
+    it('answers unknown after the second reset, never retries a third time, and says it may have been stored', async () => {
+      const h = await setupCatalog();
+      h.fake!.registerScript.push({ kind: 'reset' }, { kind: 'reset' });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('unknown');
+      expect(result.reason).toContain('may have been stored');
+      expect(h.fake!.registrations()).toHaveLength(2);
+      expect(h.failures).toHaveLength(1);
+      expect(h.failures[0]).toMatchObject({ kind: 'unknown-outcome', outcome: 'unknown', event: 'demo' });
+    });
+  });
+
+  describe('failures shared with push', () => {
+    it('drops on a 500 with the daemon message and no retry', async () => {
+      const h = await setupCatalog();
+      h.fake!.registerScript.push({ kind: 'http', status: 500, body: '{"error":"disk full"}' });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('dropped');
+      expect(result.reason).toContain('disk full');
+      expect(h.fake!.registrations()).toHaveLength(1);
+      expect(h.failures[0]?.kind).toBe('http-error');
+    });
+
+    it('drops on an unknown status of the answer', async () => {
+      const h = await setupCatalog();
+      h.fake!.registerScript.push({ kind: 'answer', result: { status: 'exploded' } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('dropped');
+      expect(h.failures[0]?.kind).toBe('bad-answer');
+    });
+
+    it('drops with the reason when the daemon cannot be started', async () => {
+      const h = await setupCatalog({ daemon: false, queueInstalled: false });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('dropped');
+      expect(h.failures[0]?.kind).toBe('not-installed');
+    });
+
+    it('drops when the protocols of the SDK and the daemon do not overlap, sending nothing', async () => {
+      const h = await setupCatalog({ daemon: { queueProtocol: { version: '2.0.0', accepts: '^2.0.0' } } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('dropped');
+      expect(h.failures[0]?.kind).toBe('incompatible');
+      expect(h.fake!.registrations()).toEqual([]);
+    });
+  });
+
+  describe('client-side checks (only what cannot be sent; the rules belong to the daemon)', () => {
+    it('refuses what is not JSON-serialisable, naming the path, without contacting the daemon', async () => {
+      const h = await setupCatalog();
+      const result = await h.publisher.registerEvents('demo', [{ name: 'a', description: 'd', example: { big: 10n } }]);
+      expect(result.status).toBe('dropped');
+      expect(result.reason).toContain('events[0].example.big');
+      expect(h.failures[0]).toMatchObject({ kind: 'not-serialisable' });
+      expect(h.httpCalls).toEqual([]);
+    });
+
+    it.each([[''], ['   '], [undefined], [3], [null]])('refuses the source %j without contacting the daemon', async (source) => {
+      const h = await setupCatalog();
+      const result = await h.publisher.registerEvents(source as unknown as string, DECLARED);
+      expect(result.status).toBe('dropped');
+      expect(result.reason).toContain('source');
+      expect(h.failures[0]?.kind).toBe('invalid-argument');
+      expect(h.httpCalls).toEqual([]);
+    });
+
+    it('does not apply the daemon rules itself: an invalid name goes to the daemon, which decides', async () => {
+      const h = await setupCatalog();
+      await h.publisher.registerEvents('Demo Source', [{ name: 'bad name', description: '' }]);
+      expect(h.fake!.registrations()).toHaveLength(1);
+    });
+  });
+
+  describe('switched off', () => {
+    it('off: true sends nothing and answers dropped saying so', async () => {
+      const h = await setupCatalog({ publisher: { off: true } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result).toEqual({ status: 'dropped', reason: 'the publisher is switched off (option off: true): nothing was sent' });
+      expect(h.httpCalls).toEqual([]);
+      expect(h.failures).toEqual([]);
+    });
+
+    it('QUEUE_SDK_OFF=1 sends nothing and says so', async () => {
+      const h = await setupCatalog({ deps: { env: { QUEUE_SDK_OFF: '1' } } });
+      const result = await h.publisher.registerEvents('demo', DECLARED);
+      expect(result.status).toBe('dropped');
+      expect(result.reason).toContain('QUEUE_SDK_OFF=1');
+      expect(h.httpCalls).toEqual([]);
+    });
+  });
+
+  describe('maxPending and flush are shared with push', () => {
+    it('counts a registration among the work in flight: the overflow is dropped and reported', async () => {
+      const h = await setupCatalog({ publisher: { maxPending: 1 } });
+      h.fake!.registerScript.push({ kind: 'delay', ms: 100 });
+      const first = h.publisher.registerEvents('demo', DECLARED);
+      const second = await h.publisher.registerEvents('other', DECLARED);
+      expect(second.status).toBe('dropped');
+      expect(second.reason).toContain('maxPending');
+      expect(h.failures.filter((failure) => failure.kind === 'overflow')).toHaveLength(1);
+      expect((await first).status).toBe('registered');
+    });
+
+    it('a push in flight and a registration both count, and flush waits for both', async () => {
+      const h = await setupCatalog({ publisher: { maxPending: 2 } });
+      h.fake!.script.push({ kind: 'delay', ms: 100 });
+      h.fake!.registerScript.push({ kind: 'delay', ms: 100 });
+      h.publisher.publish('a', {});
+      const registration = h.publisher.registerEvents('demo', DECLARED);
+      expect((await h.publisher.registerEvents('x', DECLARED)).status).toBe('dropped');
+      await h.publisher.flush();
+      expect(h.fake!.pushes()).toHaveLength(1);
+      expect(h.fake!.registrations()).toHaveLength(1);
+      expect((await registration).status).toBe('registered');
+    });
+  });
+
+  it('never throws on bad input', async () => {
+    const h = await setupCatalog();
+    await expect(h.publisher.registerEvents('demo', undefined as unknown as [])).resolves.toBeDefined();
   });
 });

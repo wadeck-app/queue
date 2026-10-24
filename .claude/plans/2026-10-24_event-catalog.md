@@ -1,6 +1,6 @@
 # Event catalog: every CLI declares its events, the Events page documents them
 
-Status: draft for validation. Nothing is implemented.
+Status: implementation under way (the user asked for it on 2026-10-24). Done: protocol 1.1.0, validation and store, listing and detail read model, the register-events command (queue-core). In progress: SDK registerEvents and fake daemon, queue events commands and wait integration, dashboard Events page.
 
 ## Goal
 

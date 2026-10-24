@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +16,9 @@ import { fileURLToPath } from 'node:url';
  */
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const SERVER_START_TIMEOUT_MS = 30_000;
-const PACKAGE_TIMEOUT_MS = 60_000;
+// Guards against a child that HANGS, never performance limits: no test may fail because the machine is slow.
+const SERVER_START_TIMEOUT_MS = 300_000;
+const PACKAGE_TIMEOUT_MS = 300_000;
 
 const cliPackageJson = createRequire(import.meta.url).resolve('@wadeck-app/app-core-cli/package.json');
 const cliEntry = join(dirname(cliPackageJson), 'dist/cli.bundle.js');
@@ -35,7 +36,20 @@ function writeHistory(): void {
     { type: 'trigger', ts: '2026-01-01T00:00:01.000Z', eventId: 'evt-no-payload', event: 'onFoo', matchedCount: 0, totalCount: 0 },
   ];
   writeFileSync(join(configDir, 'history', '2026-01-01.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
-  // One event pushed just now: the activity counters count it in every window (the January ones are older than 24 h)
+}
+
+/**
+ * One event pushed just now: the activity counters count it in every window (the January ones are older than 24 h). Written by the
+ * tests that need it right before they ask, so the time between the write and the question is milliseconds, never the minutes a
+ * slow start-up could add.
+ */
+function writeRecent(): void {
+  // A previous call may have written it under the day before a midnight: keep exactly one recent record
+  for (const file of readdirSync(join(configDir, 'history'))) {
+    if (file !== '2026-01-01.ndjson') {
+      rmSync(join(configDir, 'history', file));
+    }
+  }
   const now = new Date();
   const recent = { type: 'trigger', ts: now.toISOString(), eventId: 'evt-recent', event: 'onFoo', matchedCount: 0, totalCount: 0 };
   writeFileSync(join(configDir, 'history', `${now.toISOString().slice(0, 10)}.ndjson`), JSON.stringify(recent) + '\n');
@@ -57,7 +71,7 @@ function startServer(builtModule: string): Promise<string> {
   return new Promise((resolve, reject) => {
     let output = '';
     const timer = setTimeout(
-      () => reject(new Error(`app-core-cli dev did not print its URL within ${SERVER_START_TIMEOUT_MS} ms. Output so far:\n${output}`)),
+      () => reject(new Error(`app-core-cli dev did not print its URL within ${SERVER_START_TIMEOUT_MS} ms (hung?). Output so far:\n${output}`)),
       SERVER_START_TIMEOUT_MS,
     );
     // node + the CLI file, no shell: child.kill() reaches the real server process
@@ -95,11 +109,11 @@ describe('the packaged module through a real app-core server', () => {
     writeHistory();
     packageModule(builtModule);
     baseUrl = await startServer(builtModule);
-  }, SERVER_START_TIMEOUT_MS + PACKAGE_TIMEOUT_MS + 5_000);
+  });
 
   afterAll(() => {
     child?.kill();
-    rmSync(workDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   async function call(method: string, path: string): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -121,12 +135,14 @@ describe('the packaged module through a real app-core server', () => {
   });
 
   it('GET /activity counts the events pushed in the last 5 min, 60 min and 24 h', async () => {
+    writeRecent();
     const { status, body } = await call('GET', '/activity');
     expect(status).toBe(200);
     expect(body).toEqual({ last5Min: 1, last60Min: 1, last24Hours: 1 });
   });
 
   it('GET /history (static) still wins over the parameterised route', async () => {
+    writeRecent();
     const { status, body } = await call('GET', '/history?limit=1');
     expect(status).toBe(200);
     // the two January events plus the recent one written for the activity counters

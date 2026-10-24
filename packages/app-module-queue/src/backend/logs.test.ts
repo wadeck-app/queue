@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -37,6 +37,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   rmSync(configDir, { recursive: true, force: true });
 });
 
@@ -93,8 +94,10 @@ describe('getLogs', () => {
   });
 
   it('defaults to today (UTC) when no date is given', () => {
-    const today = new Date().toISOString().slice(0, 10);
-    expect(getLogs(configDir, {}).date).toBe(today);
+    // Pinned clock: a run across midnight cannot make the test and the code under test disagree on the day
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-19T12:00:00.000Z'));
+    expect(getLogs(configDir, {}).date).toBe('2026-10-19');
   });
 
   it.each([

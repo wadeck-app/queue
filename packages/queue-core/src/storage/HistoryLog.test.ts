@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,12 +18,16 @@ describe('HistoryLog', () => {
   let history: HistoryLog;
 
   beforeEach(() => {
+    // The code under test reads the clock to name the day file: pin it so a run across midnight cannot split the day
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-19T12:00:00.000Z'));
     historyDir = join(tmpdir(), `queue-history-test-${crypto.randomUUID()}`);
     mkdirSync(historyDir, { recursive: true });
     history = new HistoryLog(historyDir);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(historyDir, { recursive: true, force: true });
   });
 

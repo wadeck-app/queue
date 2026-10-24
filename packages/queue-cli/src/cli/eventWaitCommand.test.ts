@@ -134,3 +134,47 @@ describe('eventWaitCommand beforeFirstWait hook (starts the relay only when ther
     expect(order[0]).toBe('hook');
   });
 });
+
+describe('eventWaitCommand declaration info (--json carries declared / suggestions, a timeout also lastSeenAt)', () => {
+  const undeclared = { declared: false, suggestions: ['job.completed'] };
+
+  it('the matched --json result gains declared and suggestions', async () => {
+    const h = harness(() => [entry({}, T0 + 10)]);
+    await eventWaitCommand({ ...base, json: true }, { ...h.deps, declaration: undeclared });
+    expect(JSON.parse(h.out.join(''))).toMatchObject({ matched: true, declared: false, suggestions: ['job.completed'] });
+  });
+
+  it('the timeout --json result gains declared, suggestions and lastSeenAt (null = never seen: a typo or a rename)', async () => {
+    const h = harness(() => []);
+    await eventWaitCommand({ ...base, json: true, timeoutMs: 1000 }, { ...h.deps, declaration: undeclared, lastSeenAt: () => null });
+    const parsed = JSON.parse(h.out.join('')) as { lastSeenAt?: string | null };
+    expect(parsed).toMatchObject({ matched: false, timedOut: true, declared: false, suggestions: ['job.completed'] });
+    expect(parsed.lastSeenAt).toBeNull();
+  });
+
+  it('on timeout lastSeenAt is the ISO time the history reports, so a slow producer is distinguishable', async () => {
+    const h = harness(() => []);
+    await eventWaitCommand({ ...base, json: true, timeoutMs: 1000 }, { ...h.deps, declaration: { declared: true, suggestions: [] }, lastSeenAt: () => '2026-10-18T11:59:00.000Z' });
+    expect(JSON.parse(h.out.join(''))).toMatchObject({ declared: true, suggestions: [], lastSeenAt: '2026-10-18T11:59:00.000Z' });
+  });
+
+  it('a matched result does not carry lastSeenAt', async () => {
+    const h = harness(() => [entry({}, T0 + 10)]);
+    await eventWaitCommand({ ...base, json: true }, { ...h.deps, declaration: undeclared, lastSeenAt: () => null });
+    expect(JSON.parse(h.out.join(''))).not.toHaveProperty('lastSeenAt');
+  });
+
+  it('without declaration info the result is unchanged', async () => {
+    const h = harness(() => []);
+    await eventWaitCommand({ ...base, json: true, timeoutMs: 1000 }, h.deps);
+    const parsed = JSON.parse(h.out.join('')) as { declared?: boolean; lastSeenAt?: string | null };
+    expect(parsed).not.toHaveProperty('declared');
+    expect(parsed).not.toHaveProperty('lastSeenAt');
+  });
+
+  it('the human timeout message says when the name was last seen', async () => {
+    const h = harness(() => []);
+    await eventWaitCommand({ ...base, timeoutMs: 1000 }, { ...h.deps, declaration: undeclared, lastSeenAt: () => null });
+    expect(h.err.join('')).toContain('never seen in the last 7 days');
+  });
+});

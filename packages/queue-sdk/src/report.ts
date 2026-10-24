@@ -12,6 +12,8 @@ export type FailureKind =
   | 'unauthorized'
   | 'incompatible'
   | 'rejected'
+  | 'rejected-declaration'
+  | 'unsupported'
   | 'aborted'
   | 'http-error'
   | 'bad-answer'
@@ -25,9 +27,12 @@ export interface QueueFailure {
   kind: FailureKind;
   /** What happened and what to do about it. */
   message: string;
+  /** The event name; for a declaration (`operation: 'register-events'`) the source. */
   event: string;
-  /** `dropped`: the event was not queued. `unknown`: it may have been (connection reset, timeout), and it is never retried. */
+  /** `dropped`: the event (or declaration) was not queued (stored). `unknown`: it may have been (connection reset, timeout). */
   outcome: 'dropped' | 'unknown';
+  /** `register-events` for the declaration of a source (`registerEvents`); absent for an event push. */
+  operation?: 'register-events';
 }
 
 export interface ReporterOptions {
@@ -70,6 +75,11 @@ export function createReporter(options: ReporterOptions): Reporter {
         return;
       }
       printed.add(key);
+      if (failure.operation === 'register-events') {
+        const stored = failure.outcome === 'unknown' ? 'may or may not have been stored' : 'was not stored';
+        print(`[queue-sdk] the declaration of the events of "${failure.event}" ${stored}: ${failure.message}`);
+        return;
+      }
       const effect = failure.outcome === 'unknown' ? 'may or may not have been queued' : 'was dropped';
       print(`[queue-sdk] event "${failure.event}" ${effect}: ${failure.message}`);
     },

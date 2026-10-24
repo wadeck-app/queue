@@ -1,4 +1,5 @@
 import type { DlqEntry } from '../storage/DlqStore.js';
+import type { CatalogProblem } from '../catalog/EventCatalog.js';
 import type { ResolvedSubscriber } from '../types.js';
 
 // The RPC contract between the queue daemon and its clients (queue-cli, app-module-queue,
@@ -8,6 +9,9 @@ import type { ResolvedSubscriber } from '../types.js';
 export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; replayOf?: string; protocol?: string; }
 // `rejected`: the push was not recorded because the client protocol is not accepted; `supported` is the range of accepted client versions
 export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted' | 'rejected'; result?: unknown; reason?: string; subscriberCount?: number; eventId?: string; supported?: string; }
+// Protocol 1.1.0: a program declares the events it pushes (see catalog/EventCatalog.ts). `events` is validated by the daemon.
+export interface RegisterEventsRequest { protocol?: string; source: string; events: unknown[]; }
+export interface RegisterEventsResponse { status: 'registered' | 'rejected'; source?: string; count?: number; reason?: string; problems?: CatalogProblem[]; supported?: string; }
 export interface RetryRequest { eventId: string; }
 export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; }
 export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }
@@ -21,6 +25,7 @@ export interface DlqClearResponse { cleared: number; }
 
 export type QueueCommands = {
   push: (payload?: unknown) => Promise<PushResponse>;
+  'register-events': (payload?: unknown) => RegisterEventsResponse;
   retry: (payload?: unknown) => Promise<RetryResponse>;
   status: (payload?: unknown) => StatusResponse;
   'list-subscribers': (payload?: unknown) => Promise<SubscriberListResponse>;

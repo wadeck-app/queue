@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { createDaemonClient, type DaemonClient } from '@wadeck-app/singleton-daemon-kit';
+import { waitFor } from './testing/waitFor.js';
 import { RELAY_DAEMON_PORT, startRelayDaemon, handleConnectionCrash, type RelayCommands } from './RelayDaemon.js';
+
+// stop() arms a forced process.exit 3 s later (real timer): on a slow machine the worker is still running tests by then and vitest
+// fails on "process.exit unexpectedly called". Tests that do not look at that safety net replace it with this no-op.
+const noForcedExit = { setTimeout: () => ({ unref: () => undefined }), exit: () => undefined, log: () => undefined };
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-relay-daemon-test-${crypto.randomUUID()}`);
@@ -29,7 +34,7 @@ describe('startRelayDaemon', () => {
     }
     // Clean up the temp directory
     if (configDir) {
-      rmSync(configDir, { recursive: true, force: true });
+      rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -41,7 +46,7 @@ describe('startRelayDaemon', () => {
     expect(existsSync(relayStateDir)).toBe(false);
 
     // Start the daemon
-    daemonHandle = await startRelayDaemon(configDir);
+    daemonHandle = await startRelayDaemon(configDir, noForcedExit);
 
     // Verify the directory was created
     expect(existsSync(relayStateDir)).toBe(true);
@@ -64,7 +69,7 @@ describe('RelayStatus with diagnostics', () => {
       tmpDaemonHandle = null;
     }
     if (tmpConfigDir) {
-      rmSync(tmpConfigDir, { recursive: true, force: true });
+      rmSync(tmpConfigDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -75,7 +80,7 @@ describe('RelayStatus with diagnostics', () => {
     const relayYml = join(tmpConfigDir, 'relay.yml');
     writeFileSync(relayYml, 'invalid: yaml: content:');
 
-    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir);
+    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit);
     client = createDaemonClient<RelayCommands>({
       configDir: join(tmpConfigDir, 'relay-daemon'),
       commands: {
@@ -83,8 +88,8 @@ describe('RelayStatus with diagnostics', () => {
       },
     });
 
-    // Wait a bit for the connection to attempt and fail
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Wait until the failed load of relay.yml shows up in the status
+    await waitFor(async () => (await client!.send('status')).lastError !== null, 'the status to report the relay.yml load error');
 
     const status = await client.send('status');
 
@@ -118,7 +123,7 @@ plugins:
 `
     );
 
-    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir);
+    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit);
     client = createDaemonClient<RelayCommands>({
       configDir: join(tmpConfigDir, 'relay-daemon'),
       commands: {
@@ -126,7 +131,8 @@ plugins:
       },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Wait until the connection attempt to the closed port failed and is reported in the status
+    await waitFor(async () => (await client!.send('status')).lastError !== null, 'the status to report the failed connection attempt');
 
     const status = await client.send('status');
 
@@ -232,8 +238,8 @@ describe('handleConnectionCrash', () => {
       exit: () => order.push('exit'),
     });
 
-    // stopDaemon is still pending: exit must not have been called yet
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // stopDaemon is still pending: exit must not have been called yet (let every already queued task run, no time involved)
+    await new Promise((resolve) => setImmediate(resolve));
     expect(order).toEqual(['stopConnection']);
 
     release();
@@ -254,6 +260,11 @@ describe('daemon stop command closes connection and prevents reconnect', () => {
   beforeEach(async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Counters are shared by the tests of this block
+    clientConnections = [];
+    authMessagesReceived = 0;
+    closedConnections = 0;
 
     // Create a test WebSocket server on ephemeral port
     wsServer = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -325,19 +336,15 @@ plugins:
 
     // Clean up temp dir
     if (tmpConfigDir) {
-      rmSync(tmpConfigDir, { recursive: true, force: true });
+      rmSync(tmpConfigDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
   it('stop("command") closes the relay connection and prevents reconnect', async () => {
-    daemonHandle = await startRelayDaemon(tmpConfigDir);
+    daemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit);
 
     // Wait for the daemon to connect and authenticate
-    let attempts = 0;
-    while (authMessagesReceived === 0 && attempts < 50) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      attempts++;
-    }
+    await waitFor(() => authMessagesReceived > 0, 'the daemon to connect and send its auth message');
 
     // Verify we got an auth message
     expect(authMessagesReceived).toBeGreaterThan(0);
@@ -348,12 +355,13 @@ plugins:
     await daemonHandle.stop('command');
 
     // Wait for the connection to close
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor(() => closedConnections > 0, 'the server to see the relay connection close');
 
     // Verify the socket was closed
     expect(closedConnections).toBeGreaterThan(0);
 
-    // Wait through a reconnect attempt (1s delay) and check no new connections
+    // Negative check, no positive barrier exists without a production seam (proposed: an observable "reconnect scheduled" state).
+    // A slow machine only makes it weaker, never failing: wait through a reconnect attempt (1s delay) and check no new connections
     const beforeWait = clientConnections.length;
     await new Promise((resolve) => setTimeout(resolve, 1500));
     const afterWait = clientConnections.length;
@@ -363,14 +371,14 @@ plugins:
   });
 
   it('safety timeout is armed and can force exit', async () => {
-    const timeouts: Array<{ fn: () => void; ms: number; unref: boolean }> = [];
+    const timeouts: Array<{ fn: () => void; ms: number; unref: boolean; timer: NodeJS.Timeout }> = [];
     const exits: Array<number> = [];
 
     // Mock setTimeout to capture the safety timeout
     const origSetTimeout = global.setTimeout;
     const mockSetTimeout = vi.fn((fn: () => void, ms: number) => {
       const timer = origSetTimeout(fn, ms);
-      timeouts.push({ fn, ms, unref: false });
+      timeouts.push({ fn, ms, unref: false, timer });
       const realUnref = timer.unref.bind(timer);
       timer.unref = () => {
         timeouts[timeouts.length - 1].unref = true;
@@ -409,10 +417,12 @@ plugins:
       daemonHandle = await startRelayDaemon(tmpConfigDir);
 
       // Wait for connection
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitFor(() => authMessagesReceived > 0, 'the daemon to connect and send its auth message');
 
-      // Stop via command
-      await daemonHandle.stop('command');
+      // Stop via command (stopped here, so afterEach must not stop it again and arm another real forced exit)
+      const stoppingHandle = daemonHandle;
+      daemonHandle = null;
+      await stoppingHandle.stop('command');
 
       // Verify a timeout was set with an unref()
       const shutdownTimeouts = timeouts.filter((t) => t.ms >= 2500 && t.ms <= 3500);
@@ -420,6 +430,10 @@ plugins:
       expect(shutdownTimeouts[0].unref).toBe(true);
     } finally {
       vi.unstubAllGlobals();
+      // The real forced process.exit this test armed must never fire in the test worker
+      for (const t of timeouts) {
+        clearTimeout(t.timer);
+      }
     }
   });
 });

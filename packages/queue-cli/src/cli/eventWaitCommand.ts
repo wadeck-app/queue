@@ -27,9 +27,15 @@ export interface EventWaitOptions {
   timeoutMs: number;
   pollMs: number;
   json: boolean;
+  /** An undeclared event name is refused at once (exit 4) instead of waited for. */
+  strict?: boolean;
 }
 
 export interface EventWaitDeps {
+  /** From the event catalog: when given, the --json result carries `declared` and `suggestions`. */
+  declaration?: { declared: boolean; suggestions: string[] };
+  /** ISO time that name was last pushed (null: not in the last 7 days), read at the moment of a timeout. */
+  lastSeenAt?: () => string | null;
   /** Entries of `options.event` recorded at or after `sinceMs`. */
   readEntries: (sinceMs: number) => HistoryEntry[];
   now: () => number;
@@ -69,12 +75,13 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
   const { io } = deps;
   const deadline = deps.now() + options.timeoutMs;
   let hookRan = false;
+  const declarationFields = deps.declaration === undefined ? {} : { declared: deps.declaration.declared, suggestions: deps.declaration.suggestions };
 
   for (;;) {
     const match = findMatch(deps.readEntries(options.sinceMs), options.whens);
     if (match) {
       if (options.json) {
-        io.stdout.write(JSON.stringify({ matched: true, entry: match }) + '\n');
+        io.stdout.write(JSON.stringify({ matched: true, entry: match, ...declarationFields }) + '\n');
       } else {
         io.stdout.write(`[ok] ${match.event} at ${match.ts} (eventId ${match.eventId})\n`);
         if (match.payload !== undefined) {
@@ -85,10 +92,16 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
     }
 
     if (deps.now() >= deadline) {
+      const lastSeenAt = deps.lastSeenAt?.();
       if (options.json) {
-        io.stdout.write(JSON.stringify({ matched: false, timedOut: true, event: options.event, whens: options.whens }) + '\n');
+        io.stdout.write(JSON.stringify({ matched: false, timedOut: true, event: options.event, whens: options.whens, ...declarationFields, ...(lastSeenAt !== undefined && { lastSeenAt }) }) + '\n');
       }
       io.stderr.write(`[timeout] No ${describeWait(options)} was recorded within ${Math.round(options.timeoutMs / 1000)}s.\n`);
+      if (lastSeenAt === null) {
+        io.stderr.write(`[timeout] "${options.event}" was never seen in the last 7 days: check the name (a typo or a rename?) or that its producer runs.\n`);
+      } else if (lastSeenAt !== undefined) {
+        io.stderr.write(`[timeout] "${options.event}" was last seen at ${lastSeenAt}: the name exists, the producer is slow or stopped.\n`);
+      }
       return WAIT_EXIT.TIMEOUT;
     }
     if (!hookRan) {

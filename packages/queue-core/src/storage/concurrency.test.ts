@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function walEntry(id: string) {
@@ -73,7 +73,7 @@ describe('Wal and DlqStore with several writer processes', () => {
     const entries = new Wal(join(dir, 'wal.ndjson')).readAll();
     expect(entries).toHaveLength(WRITERS * PER_WRITER);
     expect(entries.every((e) => e.status === 'acked' && e.attempts === 1)).toBe(true);
-  }, 60_000);
+  });
 
   it('keeps every DLQ entry when processes append and remove at once', async () => {
     const { codes, stderr } = await runWriters(
@@ -88,7 +88,7 @@ describe('Wal and DlqStore with several writer processes', () => {
     const ids = new DlqStore(join(dir, 'dlq.ndjson')).readAll().map((e) => e.id).sort();
     const expected = Array.from({ length: WRITERS }, (_, w) => Array.from({ length: PER_WRITER }, (_, i) => i).filter((i) => i % 2 === 1).map((i) => `w${w}-${i}`)).flat().sort();
     expect(ids).toEqual(expected);
-  }, 60_000);
+  });
 
   it('a single process still works as before (append, update, remove)', () => {
     const wal = new Wal(join(dir, 'wal.ndjson'));

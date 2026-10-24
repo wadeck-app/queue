@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { getQueueProtocolInfo } from '@wadeck-app/queue-core';
 import { startDaemon } from './QueueDaemon.js';
+import { waitFor } from '../testWaitFor.js';
+
+// Reads a file once the daemon wrote it
+const waitForFile = (path: string): Promise<string> => waitFor(() => (existsSync(path) ? readFileSync(path, 'utf8') : undefined), path + ' to appear');
 
 // The real daemon (kit + queue service) on a free port in a throwaway config dir: what an SDK or any HTTP client meets.
 
@@ -41,18 +45,6 @@ function call(port: number, method: string, path: string, options: { token?: str
   });
 }
 
-async function waitForFile(path: string, timeoutMs: number): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      return readFileSync(path, 'utf8');
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  throw new Error(`${path} did not appear within ${timeoutMs} ms`);
-}
-
 const RELEASE = '2026.10.24-test-1';
 
 describe('queue daemon over HTTP', () => {
@@ -65,16 +57,16 @@ describe('queue daemon over HTTP', () => {
     configDir = mkdtempSync(join(tmpdir(), 'queue-daemon-it-config-'));
     projectDir = mkdtempSync(join(tmpdir(), 'queue-daemon-it-project-'));
     await startDaemon(configDir, { port: 0, version: RELEASE });
-    port = (JSON.parse(await waitForFile(join(configDir, 'config.port'), 5000)) as { port: number }).port;
-    token = (await waitForFile(join(configDir, 'health_token'), 5000)).trim();
+    port = (JSON.parse(await waitForFile(join(configDir, 'config.port'))) as { port: number }).port;
+    token = (await waitForFile(join(configDir, 'health_token'))).trim();
   });
 
   afterAll(async () => {
     await call(port, 'POST', '/quit', { token });
     // the daemon removes its port file on a clean stop: wait for it before deleting the directory
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    rmSync(configDir, { recursive: true, force: true });
-    rmSync(projectDir, { recursive: true, force: true });
+    await waitFor(() => !existsSync(join(configDir, 'config.port')), 'the daemon to remove its port file after /quit');
+    rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('advertises its push protocol in GET /version, without a token', async () => {

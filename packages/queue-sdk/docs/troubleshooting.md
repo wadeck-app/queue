@@ -1,6 +1,6 @@
 # queue-sdk troubleshooting
 
-Every failure reaches `onError` as `{ kind, message, event, outcome }` and, unless `silent`, `console.warn` once per distinct problem until a push succeeds again. `outcome` is `dropped` (not recorded) or `unknown` (may be recorded). The token is never printed.
+Every failure reaches `onError` as `{ kind, message, event, outcome }` (a declaration failure also has `operation: 'register-events'` and `event` is the source) and, unless `silent`, `console.warn` once per distinct problem until a push succeeds again. `outcome` is `dropped` (not recorded) or `unknown` (may be recorded). The token is never printed.
 
 | `kind` | Cause | What to do |
 |---|---|---|
@@ -12,11 +12,13 @@ Every failure reaches `onError` as `{ kind, message, event, outcome }` and, unle
 | `unauthorized` | The token is still refused after one re-read | Another daemon (another config dir) answers on that port; check `configDir` |
 | `incompatible` | The daemon's protocol version and the SDK's do not overlap | Update the package named in the message (`@wadeck-app/queue-sdk` or `queue-cli`) |
 | `rejected` | The daemon refused the protocol version in the push | Same as `incompatible` |
+| `unsupported` | `registerEvents` on a daemon older than push protocol 1.1.0 (from `GET /version`, or HTTP 404 to the command). Pushes still work | Update `queue-cli`, then restart the daemon (`queue stop`, `queue start`); the message names the daemon's protocol |
+| `rejected-declaration` | The daemon refused the declaration of `registerEvents`; nothing was stored. `result.problems` lists `{ path, message }` | Fix each `path` (`events[3].name`) in the declaration; the rules are in "Declaring your events" of the reference |
 | `aborted` | A `before*` subscriber refused the event, or `subscribers.yml` is invalid | Read the reason; fix `subscribers.yml` (`queue sub list` shows what loads) |
-| `unknown-outcome` | The connection reset or timed out after sending | Check `queue history` before sending again; raise `timeoutMs` if the daemon is slow |
+| `unknown-outcome` | The connection reset or timed out after sending (for `registerEvents`: twice, it is retried once) | Push: check `queue history` before sending again. Declaration: call `registerEvents` again, it replaces the previous one. Raise `timeoutMs` if the daemon is slow |
 | `http-error`, `bad-answer`, `unexpected` | The daemon answered something unexpected | Report it with the full message |
-| `not-serialisable` | The payload cannot become JSON (BigInt, cycle, ...) | Send plain data |
-| `invalid-argument` | Empty event name, or a bad `timeoutMs` | Fix the call |
+| `not-serialisable` | The payload (or a declaration) cannot become JSON (BigInt, cycle, ...); the message names the path | Send plain data |
+| `invalid-argument` | Empty event name or source, or a bad `timeoutMs` | Fix the call |
 | `overflow` | More than `maxPending` pushes in flight | `await queue.flush()` between bursts, or raise `maxPending` |
 
 ## Nothing is sent and every result is `dropped` "switched off"

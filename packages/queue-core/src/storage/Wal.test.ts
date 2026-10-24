@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Wal } from './Wal.js';
@@ -24,8 +24,7 @@ describe('Wal', () => {
   let wal: Wal;
 
   beforeEach(() => {
-    tmpDir = join(tmpdir(), `wal-test-${Date.now()}`);
-    mkdirSync(tmpDir, { recursive: true });
+    tmpDir = mkdtempSync(join(tmpdir(), 'wal-test-'));
     wal = new Wal(join(tmpDir, 'wal.ndjson'));
   });
 
@@ -83,8 +82,7 @@ describe('Wal retention of acked entries', () => {
   const ago = (ms: number): string => new Date(NOW - ms).toISOString();
 
   beforeEach(() => {
-    tmpDir = join(tmpdir(), `wal-retention-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    mkdirSync(tmpDir, { recursive: true });
+    tmpDir = mkdtempSync(join(tmpdir(), 'wal-retention-'));
     wal = new Wal(join(tmpDir, 'wal.ndjson'), { now: () => NOW });
   });
 

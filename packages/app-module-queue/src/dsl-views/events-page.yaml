@@ -1,0 +1,70 @@
+# The event catalog: what each program declared about the events it pushes, joined with the history (24 h count, last push).
+# Needs dsl-ui >= 2026.10.19-117 (urlParam on SearchBar and CompactSelect).
+$sources:
+  events:
+    url: GET /api/modules/queue/events
+    params:
+      q: $urlParam.q
+      source: $urlParam.source
+      status: $urlParam.status
+
+# {name} is the event name of the clicked row (the renderer percent-encodes it). The route pushes the example the program declared.
+$actions:
+  pushTest:
+    url: POST /api/modules/queue/events/{name}/push-test
+    confirm: Push this event with its example payload? It runs the real subscribers of this event.
+    successMessage: Test event pushed
+    errorPrefix: Could not push the test event
+    reloadSources: true
+
+$type: PageContent
+sections:
+  - $type: PageHeader
+    title: Events
+    subtitle: What the programs declare they push, with what really happened in the last 24 hours.
+  # q searches the name and the description; the source options come from the declared sources of the answer.
+  - $type: HorizontalStack
+    gap: gap-3
+    align: items-center
+    items:
+      - $type: SearchBar
+        urlParam: q
+        placeholder: Name or description
+      - $type: CompactSelect
+        $if: $sources.events.sourceOptions.length
+        urlParam: source
+        ariaLabel: Source
+        placeholder: Any source
+        options: $sources.events.sourceOptions
+      - $type: CompactSelect
+        urlParam: status
+        ariaLabel: Status
+        placeholder: Declared or not
+        options:
+          - { value: declared, label: Declared }
+          - { value: undeclared, label: "Undeclared (seen, nobody declared it)" }
+  # One line per declaration file that could not be read, with its file name and what to do.
+  - $type: Badge
+    $if: $sources.events.problemsText
+    label: $sources.events.problemsText
+    variant: warning
+  # The details (description, flags, schema, example, filterable paths, a wait command) are in the expanded row.
+  # `row` is not injected into the expansion: pass it with $ctx.row.
+  - $type: DataTable
+    rows: $sources.events.events
+    expansion:
+      $type: JsonViewer
+      row: $ctx.row
+      field: detailsText
+      maxHeight: 24rem
+    emptyMessage: No event matches; a program declares its events with queue.registerEvents (@wadeck-app/queue-sdk) or with `queue events register`.
+    columns:
+      - { key: "name", label: "Name", mono: true, nowrap: true }
+      - { key: "source", label: "Source", nowrap: true }
+      - { key: "description", label: "Description" }
+      - { key: "count24h", label: "24 h" }
+      - { key: "lastSeenAt", label: "Last seen", format: "datetime" }
+      - { key: "status", label: "Status", nowrap: true, badge: { declared: success, undeclared: warning } }
+      - type: actions
+        items:
+          - { label: Push test event, action: pushTest, variant: primary, condition: canPushTest }

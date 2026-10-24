@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { existsSync } from 'node:fs';
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildLaunchScript, spawnDetachedProcess } from './spawnDetachedProcess';
+import { waitFor } from '../waitFor.testUtil.js';
 
 // violations-suppress: shared/no-out-of-repo-path fixture string for the VBScript builder, never touched on disk
 const NODE_PATH = 'C:\\Node\\node.exe';
@@ -75,15 +75,12 @@ describe('buildLaunchScript', () => {
     'should delete its own vbs file after execution',
     async () => {
       // Create a temp directory for this test
-      const testTmpDir = join(tmpdir(), `queue-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const testTmpDir = mkdtempSync(join(tmpdir(), 'queue-test-'));
       const testJsPath = join(testTmpDir, 'test-script.js');
       const vbsPath = join(testTmpDir, 'test-launch.vbs');
 
-      // Create test directory and a minimal JS file
+      // Write a minimal JS file in the test directory
       try {
-        if (!existsSync(testTmpDir)) {
-          require('node:fs').mkdirSync(testTmpDir, { recursive: true });
-        }
         writeFileSync(testJsPath, 'console.log("test");', 'utf-8');
 
         // Build the launch script
@@ -100,12 +97,12 @@ describe('buildLaunchScript', () => {
           windowsHide: true,
         });
 
-        // Wait for the process to complete (max 5 seconds)
+        // Wait for the process to complete (the watchdog only guards against a hang, never a performance limit)
         await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
             child.kill();
-            reject(new Error('Timeout waiting for wscript process'));
-          }, 5000);
+            reject(new Error('wscript did not exit within 5 minutes (hung?)'));
+          }, 300_000);
 
           child.on('exit', () => {
             clearTimeout(timeout);
@@ -118,26 +115,14 @@ describe('buildLaunchScript', () => {
           });
         });
 
-        // Give the VBS a bit more time to delete itself
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // The VBS deletes itself as its last line: wait for that to be visible instead of sleeping
+        await waitFor(`wscript deleting its own script ${vbsPath}`, () => !existsSync(vbsPath));
 
         // Assert that the VBS file no longer exists
         expect(existsSync(vbsPath)).toBe(false);
       } finally {
-        // Clean up test directory
-        try {
-          if (existsSync(testJsPath)) {
-            unlinkSync(testJsPath);
-          }
-          if (existsSync(vbsPath)) {
-            unlinkSync(vbsPath);
-          }
-          if (existsSync(testTmpDir)) {
-            require('node:fs').rmdirSync(testTmpDir);
-          }
-        } catch {
-          // Ignore cleanup errors
-        }
+        // Clean up test directory (Windows may hold a file for a moment after the process exited)
+        rmSync(testTmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }
     }
   );

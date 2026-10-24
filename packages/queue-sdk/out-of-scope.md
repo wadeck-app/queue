@@ -10,7 +10,7 @@ What the SDK deliberately does not do. A request for one of these is a decision 
 | Change `subscribers.yml`, start or stop the daemon or the relay | Routes that change what runs are a security decision (`.claude/threat-model.md`) | The CLI, by a person |
 | Idempotency keys or exactly-once delivery | Not in protocol 1; a reset after sending leaves the outcome `unknown` | Check `queue history` before sending again; an optional field can be added in a MINOR |
 | Retries with backoff, queues that survive the process | The SDK is a thin client; the daemon owns delivery to subscribers | `await queue.flush()` before exiting |
-| Event-name conventions or schemas | The queue does not know your events | Suggested form: `<source>.<verb>` such as `job.started` |
+| Validating a pushed payload against a declared schema | A declaration is documentation (`registerEvents`); checking it needs a validator dependency | Suggested name form: `<source>.<verb>` such as `job.started` |
 | Remote daemons, TLS, other hosts | The daemon binds `127.0.0.1` only | |
 | Clients in other languages | The contract is `docs/push-protocol.md` in the repository | Implement the contract |
 | Browsers | Node >= 22 only (files, `child_process`) | |

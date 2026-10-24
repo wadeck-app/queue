@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   rmSync(configDir, { recursive: true, force: true });
 });
 
@@ -37,6 +38,9 @@ describe('getActivity', () => {
   });
 
   it('uses the current time by default', () => {
+    // The code under test reads the clock itself: pin it, so the day file and the 5-minute window cannot move under the test
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
     writeDay(new Date().toISOString().slice(0, 10), [Date.now() - 1000]);
     expect(getActivity(configDir)).toEqual({ last5Min: 1, last60Min: 1, last24Hours: 1 });
   });

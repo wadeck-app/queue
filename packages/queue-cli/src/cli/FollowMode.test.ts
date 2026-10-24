@@ -1,6 +1,16 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runFollowMode } from './QueueIndex.js';
 import type { HistoryEntry } from '@wadeck-app/queue-core';
+import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
+
+// The poll interval runs on a fake clock: a test decides exactly how many polls fire, no real time passes
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // Helper to create a mock HistoryEntry
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -49,8 +59,8 @@ describe('follow mode with --limit', () => {
         }
       },
       poll: async (interval: NodeJS.Timeout) => {
-        // Run 2 polls (each separated by 500ms)
-        await new Promise(r => setTimeout(r, 1050));
+        // Let exactly 2 polls fire on the fake clock
+        await vi.advanceTimersByTimeAsync(FOLLOW_POLL_INTERVAL_MS * 2);
         clearInterval(interval);
       },
     });
@@ -98,8 +108,8 @@ describe('follow mode with --limit', () => {
         }
       },
       poll: async (interval: NodeJS.Timeout) => {
-        // Run 2 polls (1050ms total: initial + poll at 500ms + poll at 1000ms)
-        await new Promise(r => setTimeout(r, 1050));
+        // Let exactly 2 polls fire on the fake clock (the first read is the initial dump)
+        await vi.advanceTimersByTimeAsync(FOLLOW_POLL_INTERVAL_MS * 2);
         clearInterval(interval);
       },
     });
@@ -147,8 +157,8 @@ describe('follow mode with --limit', () => {
         }
       },
       poll: async (interval: NodeJS.Timeout) => {
-        // Wait for the first interval to fire (500ms)
-        await new Promise(r => setTimeout(r, 550));
+        // Let exactly the first interval fire on the fake clock
+        await vi.advanceTimersByTimeAsync(FOLLOW_POLL_INTERVAL_MS);
         clearInterval(interval);
       },
     });

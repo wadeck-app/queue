@@ -141,3 +141,108 @@ export function serializePushRequest(request: PushRequest): Serialized {
     return { ok: false, reason: `payload is not JSON-serialisable: ${culprit ?? getErrorMessage(error)}` };
   }
 }
+
+// The event catalog (protocol 1.1.0): POST /register-events. The SDK validates nothing of a declaration but what it cannot send;
+// the rules (names, limits) belong to the daemon and are reported back as `problems`.
+
+export interface EventDeclaration {
+  /** Dot-separated event name, as pushed (`job.completed`). */
+  name: string;
+  /** When the event fires, whether it can fire several times for one entity, and what does NOT fire it. */
+  description: string;
+  /** JSON Schema of the payload: documentation, the payload of a push is never checked against it. */
+  schema?: Record<string, unknown>;
+  /** A typical payload; prefills the "push a test event" form. */
+  example?: unknown;
+  /** Dotted payload path(s) that identify the entity the event is about (`payload.jobId`): what `queue wait --when` filters on. */
+  correlationKey?: string | string[];
+  /** This event ends the thing it is about (a job completed, failed, timed out...). */
+  terminal?: boolean;
+  outcome?: 'success' | 'failure' | 'info';
+}
+
+export interface RegisterRequest {
+  /** The push protocol SemVer the client speaks. */
+  protocol?: string;
+  source: string;
+  events: EventDeclaration[];
+}
+
+export type RegisterStatus = 'registered' | 'rejected';
+
+export interface RegisterProblem {
+  /** Where, in the declaration: `source`, `events[3].name`... */
+  path: string;
+  message: string;
+}
+
+export interface RegisterResponse {
+  status: RegisterStatus;
+  count?: number;
+  reason?: string;
+  problems?: RegisterProblem[];
+  /** For a protocol `rejected`: the range of client protocol versions the daemon accepts. */
+  supported?: string;
+}
+
+export interface RegisterResult {
+  /**
+   * `registered`: stored. `rejected`: the daemon refused the declaration, nothing was stored. `unsupported`: the daemon predates the
+   * event catalog. `dropped`: nothing was sent or stored. `unknown`: the connection broke or timed out twice, it may have been stored.
+   */
+  status: 'registered' | 'rejected' | 'unsupported' | 'dropped' | 'unknown';
+  /** Number of events the daemon stored. */
+  count?: number;
+  /** For `rejected`: what the daemon found wrong, verbatim. */
+  problems?: Array<{ path: string; message: string }>;
+  /** Why, and what to do, for every status but `registered`. */
+  reason?: string;
+}
+
+export type ParsedRegisterAnswer = { ok: true; response: RegisterResponse } | { ok: false; reason: string };
+
+const REGISTER_STATUSES: readonly string[] = ['registered', 'rejected'];
+
+/** Reads the `{ ok: true, result: RegisterResponse }` answer of POST /register-events. */
+export function parseRegisterAnswer(body: unknown): ParsedRegisterAnswer {
+  if (!isRecord(body) || body['ok'] !== true) {
+    return { ok: false, reason: `unexpected register-events answer ${excerpt(body)}, expected { ok: true, result }` };
+  }
+  const result = body['result'];
+  if (!isRecord(result)) {
+    return { ok: false, reason: `register-events answer has no usable result: ${excerpt(body)}` };
+  }
+  const status = result['status'];
+  if (typeof status !== 'string' || !REGISTER_STATUSES.includes(status)) {
+    return {
+      ok: false,
+      reason: `register-events answer has an unknown status ${excerpt(status)} (known: ${REGISTER_STATUSES.join(', ')}): the daemon is probably newer than this SDK, update @wadeck-app/queue-sdk`,
+    };
+  }
+  const response: RegisterResponse = { status: status as RegisterStatus };
+  if (typeof result['count'] === 'number') {
+    response.count = result['count'];
+  }
+  if (typeof result['reason'] === 'string') {
+    response.reason = result['reason'];
+  }
+  if (typeof result['supported'] === 'string') {
+    response.supported = result['supported'];
+  }
+  if (Array.isArray(result['problems'])) {
+    response.problems = result['problems'].flatMap((problem): RegisterProblem[] =>
+      isRecord(problem) && typeof problem['path'] === 'string' && typeof problem['message'] === 'string' ? [{ path: problem['path'], message: problem['message'] }] : [],
+    );
+  }
+  return { ok: true, response };
+}
+
+/** JSON body of a registration, or the reason it cannot be built (the path of the culprit is named). Never throws. */
+export function serializeRegisterRequest(request: RegisterRequest): Serialized {
+  try {
+    return { ok: true, body: JSON.stringify(request) };
+  } catch (error) {
+    const culprit = findUnserialisable(request.events, 'events', []);
+    return { ok: false, reason: `the declaration is not JSON-serialisable: ${culprit ?? getErrorMessage(error)}` };
+  }
+}

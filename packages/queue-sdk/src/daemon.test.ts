@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDaemonResolver, locateDaemon, readToken, sameDirectory, type DaemonDeps } from './daemon.js';
+import { PROTOCOL_VERSION } from './protocol.js';
 import type { HttpOutcome, LoopbackRequest } from './http.js';
 import { closedPort, makeTempDir, removeDir, startFakeDaemon, type FakeDaemon } from './testing/fakeDaemon.js';
 
@@ -149,7 +150,7 @@ describe('createDaemonResolver', () => {
     seedFiles();
     const { deps, calls } = scripted(versionAnswer());
     const result = await createDaemonResolver(dir, deps).resolve();
-    expect(result).toMatchObject({ state: 'ready', daemon: { port: 47910, pid: 4242, version: '1.2.3', protocol: { version: '1.0.0', accepts: '^1.0.0' }, negotiated: '1.0.0' } });
+    expect(result).toMatchObject({ state: 'ready', daemon: { port: 47910, pid: 4242, version: '1.2.3', protocol: { version: '1.0.0', accepts: '^1.0.0' }, negotiated: PROTOCOL_VERSION } });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ port: 47910, method: 'GET', path: '/version' });
     expect(calls[0]?.headers?.['Authorization']).toBeUndefined();
@@ -212,7 +213,7 @@ describe('createDaemonResolver', () => {
   it('accepts a newer MINOR and keeps the SDK version as the negotiated one', async () => {
     seedFiles();
     const { deps } = scripted(versionAnswer({ queueProtocol: { version: '1.4.0', accepts: '^1.0.0' } }));
-    expect(await createDaemonResolver(dir, deps).resolve()).toMatchObject({ state: 'ready', daemon: { negotiated: '1.0.0', protocol: { version: '1.4.0' } } });
+    expect(await createDaemonResolver(dir, deps).resolve()).toMatchObject({ state: 'ready', daemon: { negotiated: PROTOCOL_VERSION, protocol: { version: '1.4.0' } } });
   });
 
   it('caches by (port, pid): a second resolve sends no request', async () => {
