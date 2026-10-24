@@ -13,9 +13,12 @@ function maskValues(record: Record<string, string> | undefined): Record<string, 
  * CLI operation to avoid a second source of truth. An invalid subscribers.yml throws.
  * The values of `headers` and `env` are masked: they hold tokens, and this answer travels over HTTP to a browser.
  */
-export function listSubscribers(configDir: string, cwd: string, event?: string): ResolvedSubscriber[] {
+export type ListedSubscriber = ResolvedSubscriber & { /** The name, or "unnamed" so the table nudges to give one. */ nameText: string };
+
+export function listSubscribers(configDir: string, cwd: string, event?: string): ListedSubscriber[] {
   return listQueueSubscribers(configDir, { cwd, event }).map((subscriber) => ({
     ...subscriber,
+    nameText: subscriber.name ?? 'unnamed',
     ...(subscriber.headers === undefined ? {} : { headers: maskValues(subscriber.headers) }),
     ...(subscriber.env === undefined ? {} : { env: maskValues(subscriber.env) }),
   }));

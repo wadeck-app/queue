@@ -57,3 +57,11 @@ describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () 
     expect(() => listSubscribers(configDir, projectDir)).toThrow();
   });
 });
+
+describe('listSubscribers: names', () => {
+  it('shows the name, or "unnamed" as a nudge to give one (queue sub edit <event> --index <N> --name <name>)', () => {
+    writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: notify\n    - type: cli\n      command: echo b\n');
+    const result = listSubscribers(configDir, projectDir);
+    expect(result.map((s) => s.nameText)).toEqual(['notify', 'unnamed']);
+  });
+});
