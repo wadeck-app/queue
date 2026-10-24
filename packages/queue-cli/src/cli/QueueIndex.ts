@@ -26,7 +26,7 @@ import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
-import { parseSubFlags, buildSubscriberEntry } from './subscriberEntry.js';
+import { parseSubFlags, buildSubscriberEntry, locateSubscriber } from './subscriberEntry.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
 
@@ -88,8 +88,8 @@ Usage:
   queue sub list [event] [--json] [--scope global|project]
   queue sub add <event> --type cli --command "<cmd>" [options]
   queue sub add <event> --type http --url "<url>" [options]
-  queue sub remove <event> --index <N> [--scope global|project]
-  queue sub edit <event> --index <N> --type cli|http [options]
+  queue sub remove <event> --index <N>|--name <name> [--scope global|project]
+  queue sub edit <event> --index <N>|--name <name> --type cli|http [options]
 
 Options:
   --scope global|project   File target: global=$QUEUE_CONFIG_DIR/subscribers.yml (default)
@@ -101,7 +101,7 @@ Options:
   --header "key:value"     HTTP only; repeatable for multiple headers
   --method <verb>          HTTP only (default: POST)
   --name <name>            Who this subscriber is, e.g. notify (lowercase letters, digits, . _ -); it stays the same when the list is reordered. Kept by edit
-  --index <N>              0-based subscriber index (required for remove/edit)
+  --index <N>              0-based subscriber index (remove/edit take --index or --name; with both, edit renames)
 
 Aliases: queue subscribers
 `;
@@ -137,8 +137,8 @@ Usage:
   queue sub list [event] [--json] [--scope global|project]
   queue sub add <event> --type cli --command "<cmd>" [options] [--scope global|project]
   queue sub add <event> --type http --url "<url>" [options] [--scope global|project]
-  queue sub remove <event> --index <N> [--scope global|project]
-  queue sub edit <event> --index <N> --type cli|http [options] [--scope global|project]
+  queue sub remove <event> --index <N>|--name <name> [--scope global|project]
+  queue sub edit <event> --index <N>|--name <name> --type cli|http [options] [--scope global|project]
   queue start
   queue stop
   queue relay start|stop|status [--json]   Webhook relay client (reads relay.yml from QUEUE_CONFIG_DIR)
@@ -1288,17 +1288,6 @@ async function main(): Promise<void> {
     }
 
     if (sub === 'remove') {
-      const indexIdx = rest.indexOf('--index');
-      const indexStr = indexIdx !== -1 ? rest[indexIdx + 1] : undefined;
-      if (!indexStr) {
-        process.stderr.write(`[fail] --index <N> is required\n`);
-        process.exit(1);
-      }
-      const index = parseInt(indexStr, 10);
-      if (isNaN(index) || index < 0) {
-        process.stderr.write(`[fail] --index must be a non-negative integer\n`);
-        process.exit(1);
-      }
       const filePath = resolveSubsFile(configDir, scope);
       if (!existsSync(filePath)) {
         process.stderr.write(`[fail] No subscribers file at: ${filePath}\n`);
@@ -1306,10 +1295,12 @@ async function main(): Promise<void> {
       }
       const data = readSubsYmlOrExit(filePath);
       const subs = data.subscribers[event] ?? [];
-      if (index >= subs.length) {
-        process.stderr.write(`[fail] No subscriber at index ${index} for event '${event}' (found ${subs.length})\n`);
+      const located = locateSubscriber(subs, event, rest.slice(2));
+      if ('error' in located) {
+        process.stderr.write(`[fail] ${located.error}\n`);
         process.exit(1);
       }
+      const index = located.index;
       data.subscribers[event] = subs.filter((_, i) => i !== index);
       if (data.subscribers[event]!.length === 0) {
         delete data.subscribers[event];
@@ -1320,17 +1311,6 @@ async function main(): Promise<void> {
     }
 
     if (sub === 'edit') {
-      const indexIdx = rest.indexOf('--index');
-      const indexStr = indexIdx !== -1 ? rest[indexIdx + 1] : undefined;
-      if (!indexStr) {
-        process.stderr.write(`[fail] --index <N> is required\n`);
-        process.exit(1);
-      }
-      const index = parseInt(indexStr, 10);
-      if (isNaN(index) || index < 0) {
-        process.stderr.write(`[fail] --index must be a non-negative integer\n`);
-        process.exit(1);
-      }
       const filePath = resolveSubsFile(configDir, scope);
       if (!existsSync(filePath)) {
         process.stderr.write(`[fail] No subscribers file at: ${filePath}\n`);
@@ -1338,10 +1318,12 @@ async function main(): Promise<void> {
       }
       const data = readSubsYmlOrExit(filePath);
       const subs = data.subscribers[event] ?? [];
-      if (index >= subs.length) {
-        process.stderr.write(`[fail] No subscriber at index ${index} for event '${event}' (found ${subs.length})\n`);
+      const located = locateSubscriber(subs, event, rest.slice(2));
+      if ('error' in located) {
+        process.stderr.write(`[fail] ${located.error}\n`);
         process.exit(1);
       }
+      const index = located.index;
       const { config, errors } = parseSubFlags(rest.slice(2));
       if (errors.length > 0) {
         for (const e of errors) process.stderr.write(`[fail] ${e}\n`);

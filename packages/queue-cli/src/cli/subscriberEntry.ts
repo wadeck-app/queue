@@ -146,3 +146,33 @@ export function buildSubscriberEntry(config: Partial<SubscriberConfig>, previous
   }
   return entry;
 }
+
+/** Which subscriber of an event `queue sub remove|edit` targets: --index wins, else --name; an error says what to fix. */
+export function locateSubscriber(subs: SubscriberConfig[], event: string, args: string[]): { index: number } | { error: string } {
+  const flagValue = (flag: string): string | undefined => {
+    const at = args.indexOf(flag);
+    const value = at === -1 ? undefined : args[at + 1];
+    return value === undefined || value.startsWith('--') ? undefined : value;
+  };
+  const indexText = flagValue('--index');
+  if (indexText !== undefined) {
+    const index = Number(indexText);
+    if (!Number.isInteger(index) || index < 0) {
+      return { error: '--index must be a non-negative integer' };
+    }
+    if (index >= subs.length) {
+      return { error: `No subscriber at index ${index} for event '${event}' (found ${subs.length})` };
+    }
+    return { index };
+  }
+  const name = flagValue('--name');
+  if (name === undefined) {
+    return { error: '--index <N> or --name <name> is required' };
+  }
+  const index = subs.findIndex((s) => s.name === name);
+  if (index === -1) {
+    const names = subs.flatMap((s) => (s.name === undefined ? [] : [s.name]));
+    return { error: `No subscriber named '${name}' for event '${event}' (named: ${names.length === 0 ? 'none, use --index' : names.join(', ')})` };
+  }
+  return { index };
+}
