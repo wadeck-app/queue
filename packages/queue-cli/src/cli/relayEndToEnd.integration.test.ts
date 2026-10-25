@@ -8,12 +8,14 @@ import { dirname } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as net from 'node:net';
 import { spawnOwned, waitFor, withHangGuard } from '../testWaitFor.js';
+import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');
 const bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
 
 let tempConfigDir: string;
+let iso: IsolatedCliEnv | undefined;
 let portsBusy: boolean = false;
 
 // A removal that survives Windows holding a file for a moment after a child process exited (EPERM, EBUSY): Node retries it
@@ -57,7 +59,9 @@ beforeAll(async () => {
     windowsHide: true,
   });
 
-  tempConfigDir = mkdtempSync(join(tmpdir(), 'queue-relay-e2e-'));
+  // Throwaway config dir, home, npm prefix and unreachable registry: the spawned CLI must never touch the real machine state
+  iso = createIsolatedCliEnv();
+  tempConfigDir = iso.configDir;
 
   // Check if critical ports are already in use (MUST be done in beforeAll)
   const daemonInUse = await isPortListening(47910);
@@ -69,7 +73,15 @@ afterAll(() => {
   if (tempConfigDir && existsSync(tempConfigDir)) {
     removeDir(tempConfigDir);
   }
+  iso?.cleanup();
 });
+
+function isolatedEnv(): NodeJS.ProcessEnv {
+  if (!iso) {
+    throw new Error('isolated CLI environment not initialised: beforeAll did not run');
+  }
+  return iso.env;
+}
 
 function runCli(args: string[], extraEnv: Record<string, string> = {}): {
   stdout: string;
@@ -81,8 +93,7 @@ function runCli(args: string[], extraEnv: Record<string, string> = {}): {
     // Hang guard only, never a performance limit
     timeout: 300_000,
     env: {
-      ...process.env,
-      QUEUE_CONFIG_DIR: tempConfigDir,
+      ...isolatedEnv(),
       ...extraEnv,
     },
   });
@@ -360,7 +371,7 @@ describe('relay daemon bundle smoke test (integration)', () => {
 
       daemon = spawnOwned(process.execPath, [bundleCopy], {
         cwd: isolatedDir,
-        env: { ...process.env, QUEUE_CONFIG_DIR: configDir, NODE_PATH: '' },
+        env: { ...isolatedEnv(), QUEUE_CONFIG_DIR: configDir, NODE_PATH: '' },
       });
       void daemon.exited.then((code) => { exitCode = code; });
 

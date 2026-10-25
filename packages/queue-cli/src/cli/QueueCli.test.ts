@@ -19,6 +19,17 @@ vi.mock('@wadeck-app/shared-cli/CliMetaCommands', () => ({
 	warnUnknownArgs: vi.fn(),
 }));
 
+// UpdateManager lives in node_modules (externalised), so the node:child_process mock below does not reach its spawn:
+// replace it, otherwise a test could really spawn an updater and read the real update-state.json.
+const updateManagerMock = vi.hoisted(() => ({ scheduleBackgroundUpdate: vi.fn(), configDirs: [] as Array<string | undefined> }));
+vi.mock('@wadeck-app/shared-cli/UpdateManager', () => ({
+	UpdateManager: class {
+		constructor(_pkgName: string, configDir?: string) { updateManagerMock.configDirs.push(configDir); }
+		readAndClearState(): null { return null; }
+		scheduleBackgroundUpdate(bundlePath: string, updaterName: string): void { updateManagerMock.scheduleBackgroundUpdate(bundlePath, updaterName); }
+	},
+}));
+
 vi.mock('@wadeck-app/shared-cli/ChannelConfig', () => ({
 	readChannelFromConfig: vi.fn().mockReturnValue('latest'),
 }));
@@ -131,7 +142,47 @@ describe('queue cli history', () => {
 	});
 });
 
+describe('background update scheduling', () => {
+	afterEach(() => { vi.unstubAllGlobals(); });
+
+	it('never schedules the updater for a dev build', async () => {
+		await run(['cli', 'version']);
+		expect(updateManagerMock.scheduleBackgroundUpdate).not.toHaveBeenCalled();
+	});
+
+	it('schedules the updater next to the bundle for a release build', async () => {
+		vi.stubGlobal('__QUEUE_CLI_VERSION__', '2026.10.25-020-6cb52900');
+		await run(['cli', 'version']);
+		expect(updateManagerMock.scheduleBackgroundUpdate).toHaveBeenCalledTimes(1);
+		expect(updateManagerMock.scheduleBackgroundUpdate).toHaveBeenCalledWith(join(tmpDir, 'queue.cjs'), 'queue-updater.cjs');
+	});
+
+	it('reads the update state from QUEUE_CONFIG_DIR, never from the real config dir', async () => {
+		updateManagerMock.configDirs.length = 0;
+		await run(['cli', 'version']);
+		expect(updateManagerMock.configDirs).toEqual([tmpDir]);
+	});
+});
+
+describe('queue cli update from a dev build', () => {
+	// The test runner has no bundler define: the build version is the dev placeholder, not a CalVer release.
+	it('refuses with an actionable message and exits 1 without reaching the updater', async () => {
+		const { writeFileSync } = await import('node:fs');
+		writeFileSync(join(tmpDir, 'queue-updater.cjs'), '');
+		const { cliUpdateCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		const { stderr, exitCode } = await run(['cli', 'update']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toMatch(/refusing to update the global install of queue/);
+		expect(stderr).toContain('`queue cli update`');
+		expect(cliUpdateCommand).not.toHaveBeenCalled();
+	});
+});
+
 describe('queue cli update', () => {
+	// A release build (CalVer, as stamped by CI): the update path is open.
+	beforeEach(() => { vi.stubGlobal('__QUEUE_CLI_VERSION__', '2026.10.25-020-6cb52900'); });
+	afterEach(() => { vi.unstubAllGlobals(); });
+
 	it('exits 1 with error message when updater bundle not found', async () => {
 		const { stderr, exitCode } = await run(['cli', 'update']);
 		expect(exitCode).toBe(1);

@@ -26,6 +26,8 @@ import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, getQueueConfigDir, unnamedSubscriberAdvice, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
+import { isCalVer, devBuildRefusalMessage } from './devBuildGuard.js';
+import { createUpdateScheduler } from './updateScheduler.js';
 import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
@@ -34,7 +36,12 @@ declare const __QUEUE_CLI_VERSION__: string;
 
 const require = createRequire(import.meta.url);
 
-const VERSION = typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CLI_VERSION__ : '0.1.0-dev';
+// Read on each call (not frozen at import) so the update guard can be tested with a stubbed build version.
+function getVersion(): string {
+  return typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CLI_VERSION__ : '0.1.0-dev';
+}
+
+const VERSION = getVersion();
 
 const DLQ_GROUP_HELP = `queue dlq - Dead Letter Queue management
 Usage:
@@ -760,7 +767,14 @@ async function main(): Promise<void> {
   try { logCliInvocation(getConfigDir(), 'queue', args); } catch { /* never block the CLI on logging failure */ }
 
   // Read and display any pending update notification before command output.
-  const updateManager = new UpdateManager('@wadeck-app/queue-cli');
+  // The config dir is passed explicitly: UpdateManager would otherwise resolve ~/.config/queue and ignore QUEUE_CONFIG_DIR,
+  // so a test (or a relocated config) would read and clear the REAL update-state.json.
+  const updateManager = new UpdateManager('@wadeck-app/queue-cli', getConfigDir());
+  // A dev build (version not CalVer) never spawns the updater: it would run `npm install -g` from a repo build.
+  const scheduleUpdate = createUpdateScheduler({
+    version: getVersion(),
+    schedule: () => updateManager.scheduleBackgroundUpdate(bundlePath, 'queue-updater.cjs'),
+  });
   const updateState = updateManager.readAndClearState();
   if (updateState) {
     if (updateState.status === 'success') {
@@ -1167,6 +1181,11 @@ async function main(): Promise<void> {
     }
 
     if (sub === 'update') {
+      // Before anything with a side effect: a repo-built bundle must never run `npm install -g` (incident 2026-10-24/25).
+      if (!isCalVer(getVersion())) {
+        process.stderr.write(`[fail] ${devBuildRefusalMessage('queue', getVersion())}\n`);
+        process.exit(1);
+      }
       const { dirname } = await import('node:path');
       const { existsSync } = await import('node:fs');
       const updaterPath = pathJoin(dirname(bundlePath), 'queue-updater.cjs');
@@ -1382,7 +1401,7 @@ async function main(): Promise<void> {
   process.exit(1);
 
   } finally {
-    updateManager.scheduleBackgroundUpdate(bundlePath, 'queue-updater.cjs');
+    scheduleUpdate();
   }
 }
 

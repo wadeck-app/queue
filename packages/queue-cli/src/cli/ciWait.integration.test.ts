@@ -4,7 +4,8 @@
  * The live case (CI finishing while the command waits) is covered by the virtual-clock unit tests and by the manual end-to-end run.
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,8 +19,12 @@ const SHA = '9d9c4f7a36576a2c268e42d0c7b372e64b30ea19';
 describe('queue wait ci (bundled CLI)', () => {
   let bundlePath: string;
   let configDir: string;
+  let iso: IsolatedCliEnv;
+
+  afterAll(() => { iso?.cleanup(); });
 
   beforeAll(() => {
+    iso = createIsolatedCliEnv();
     execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
       cwd: rootDir,
       stdio: 'inherit',
@@ -62,7 +67,8 @@ describe('queue wait ci (bundled CLI)', () => {
 
   // Asynchronous spawn with a hang guard only (never a performance limit): a hang must fail the test, not freeze the suite
   function run(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    const env: NodeJS.ProcessEnv = { ...process.env, QUEUE_CONFIG_DIR: configDir };
+    // Isolated home / npm / registry; only the config dir is per test
+    const env: NodeJS.ProcessEnv = { ...iso.env, QUEUE_CONFIG_DIR: configDir };
     delete env['NODE_OPTIONS'];
     return new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [bundlePath, ...args], { cwd: configDir, env, stdio: ['ignore', 'pipe', 'pipe'] });

@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:
 import { tmpdir, platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');
@@ -34,8 +35,12 @@ describe('relayRead integration', () => {
   let requests: FakeRelayRequest[] = [];
   let tempDir: string;
   let bundlePath: string;
+  let iso: IsolatedCliEnv;
+
+  afterAll(() => { iso?.cleanup(); });
 
   beforeAll(async () => {
+    iso = createIsolatedCliEnv();
     // Build the CLI bundle exactly like the other integration tests (no shell, no hard-coded absolute path)
     execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
       cwd: rootDir,
@@ -203,7 +208,8 @@ describe('relayRead integration', () => {
     exitCode: number;
   }> {
     const fullEnv: NodeJS.ProcessEnv = {
-      ...process.env,
+      // Isolated home / npm / registry; only the config dir is per test
+      ...iso.env,
       QUEUE_CONFIG_DIR: tempDir,
       QUEUE_RELAY_TOKEN: 'test-relay-token',
       ...env,

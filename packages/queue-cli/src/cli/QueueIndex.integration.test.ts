@@ -7,12 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { spawnOwned, waitFor, removeDirWhenFree, withHangGuard } from '../testWaitFor.js';
+import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');
 const bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
 
 let tempConfigDir: string;
+let iso: IsolatedCliEnv | undefined;
 
 beforeAll(() => {
   // Build the bundle before running integration tests
@@ -23,14 +25,21 @@ beforeAll(() => {
     windowsHide: true,
   });
 
-  tempConfigDir = mkdtempSync(join(tmpdir(), 'queue-integration-'));
+  // Throwaway config dir, home, npm prefix and unreachable registry: the spawned CLI must never touch the real machine state
+  iso = createIsolatedCliEnv();
+  tempConfigDir = iso.configDir;
 });
 
 afterAll(() => {
-  if (tempConfigDir && existsSync(tempConfigDir)) {
-    rmSync(tempConfigDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  }
+  iso?.cleanup();
 });
+
+function isolatedEnv(): NodeJS.ProcessEnv {
+  if (!iso) {
+    throw new Error('isolated CLI environment not initialised: beforeAll did not run');
+  }
+  return iso.env;
+}
 
 function runCli(args: string[], extraEnv: Record<string, string> = {}): {
   stdout: string;
@@ -42,8 +51,7 @@ function runCli(args: string[], extraEnv: Record<string, string> = {}): {
     // Hang guard only, never a performance limit
     timeout: 300_000,
     env: {
-      ...process.env,
-      QUEUE_CONFIG_DIR: tempConfigDir,
+      ...isolatedEnv(),
       ...extraEnv,
     },
   });
@@ -122,19 +130,24 @@ describe('queue cli self-check (integration)', () => {
 });
 
 describe('queue cli update (integration)', () => {
-  it('produces at least one line of output', () => {
-    // Point LAUNCHER_BUNDLE_OVERRIDE to a temp dir where updater does NOT exist,
-    // so the command exits quickly without attempting a real npm install.
-    const fakeBundle = join(tempConfigDir, 'fake-queue.cjs');
-    const { stdout, stderr, exitCode } = runCli(['cli', 'update'], {
-      LAUNCHER_BUNDLE_OVERRIDE: fakeBundle,
-    });
+  it('refuses to update from the repo-built bundle: actionable message, exit 1, nothing journalled', () => {
+    // The bundle is built with BUNDLE_VERSION=0.0.0-test-integration (not CalVer): a dev build must never run npm install -g
+    const { stdout, stderr, exitCode } = runCli(['cli', 'update']);
 
-    const combined = stdout + stderr;
-    // Must produce at least one line (e.g. "[fail] updater not found at: ...")
-    expect(combined.trim().length).toBeGreaterThan(0);
-    // Should exit non-zero since updater is not present
+    expect(stdout + stderr).toMatch(/refusing to update the global install of queue/);
     expect(exitCode).toBe(1);
+    expect(existsSync(join(tempConfigDir, 'update-state.json'))).toBe(false);
+  });
+
+  it('the updater bundle itself refuses a dev build (exit 1 when forced, exit 0 in the background) and logs why', () => {
+    const updaterPath = join(rootDir, 'dist-bundle/queue-updater.cjs');
+    const forced = spawnSync(process.execPath, [updaterPath], { encoding: 'utf-8', timeout: 300_000, env: { ...isolatedEnv(), UPDATER_FORCE: '1' } });
+    expect(forced.status).toBe(1);
+    expect(forced.stderr).toMatch(/refusing to update the global install of queue/);
+    const background = spawnSync(process.execPath, [updaterPath], { encoding: 'utf-8', timeout: 300_000, env: isolatedEnv() });
+    expect(background.status).toBe(0);
+    expect(background.stderr).toMatch(/refusing to update the global install of queue/);
+    expect(existsSync(join(tempConfigDir, 'update-state.json'))).toBe(false);
   });
 });
 
@@ -281,7 +294,7 @@ describe('queue history (integration)', () => {
     // Run history --follow --limit 2 --event test.follow. --follow blocks until SIGINT: we own the process, wait for the output that
     // proves the initial dump happened (the newest entry is printed last), then kill it to simulate ^C
     const follower = spawnOwned(process.execPath, [bundlePath, 'history', '--follow', '--limit', '2', '--event', 'test.follow'], {
-      env: { ...process.env, QUEUE_CONFIG_DIR: tempConfigDir },
+      env: isolatedEnv(),
     });
     try {
       await waitFor(() => follower.stdout().includes('eventId ev-5') && follower.stderr().includes('Following'),
@@ -359,7 +372,7 @@ describe('queue replay (integration)', () => {
       // Set up a subscriber under projectA
       const resultSubA = spawnSync(process.execPath, [bundlePath, 'sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"'], {
         encoding: 'utf-8',
-        env: { ...process.env, QUEUE_CONFIG_DIR: tempConfigDir },
+        env: isolatedEnv(),
         cwd: projectA,
       });
       expect(resultSubA.status, `Failed to add subscriber: ${resultSubA.stderr}`).toBe(0);
@@ -370,7 +383,7 @@ describe('queue replay (integration)', () => {
       // Push from projectA (recorded in history with cwd = projectA)
       const pushResult = spawnSync(process.execPath, [bundlePath, 'push', event, JSON.stringify({ source: 'projectA' })], {
         encoding: 'utf-8',
-        env: { ...process.env, QUEUE_CONFIG_DIR: tempConfigDir },
+        env: isolatedEnv(),
         cwd: projectA,
       });
       expect(pushResult.status).toBe(0);
@@ -388,7 +401,7 @@ describe('queue replay (integration)', () => {
       // Replay from projectB (different cwd)
       const replayResult = spawnSync(process.execPath, [bundlePath, 'replay', original!.eventId], {
         encoding: 'utf-8',
-        env: { ...process.env, QUEUE_CONFIG_DIR: tempConfigDir },
+        env: isolatedEnv(),
         cwd: projectB, // Run from different directory
       });
       expect(replayResult.status, `Replay failed: ${replayResult.stderr}`).toBe(0);
