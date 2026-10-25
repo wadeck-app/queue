@@ -54,18 +54,20 @@ sections:
             label: Give up all the stuck events
             icon: archive
             variant: danger-outline
+  # The row actions come first: whatever the width of the screen or the length of a name, they are never pushed off it.
+  # The whole last error and the whole id are in the expanded row. `row` is not injected into the expansion: pass it with $ctx.row.
   - $type: DataTable
     rows: $sources.pending.entries
     emptyMessage: Nothing is waiting
+    expansion:
+      $type: Markdown
+      text: $ctx.row.detailsText
     columns:
-      - { key: "queuedAt", label: "Queued at", format: "datetime" }
-      - { key: "event", label: "Event", nowrap: true, href: "/modules/queue/history?event={event}" }
-      - { key: "subscriberId", label: "Subscriber", nowrap: true }
-      - { key: "status", label: "Status" }
-      - { key: "attempts", label: "Attempts" }
-      - { key: "lastError", label: "Last error", nowrap: true }
-      - { key: "idShort", label: "Id", mono: true, nowrap: true, title: "{id}" }
       - type: actions
         items:
           - { label: Retry now, action: retryPending, icon: rotate-ccw, variant: primary }
           - { label: Give up, action: giveUpPending, icon: archive, variant: danger-outline }
+      - { key: "queuedAt", label: "Queued at", format: "datetime" }
+      - { key: "event", label: "Event", nowrap: true, href: "/modules/queue/history?event={event}" }
+      - { key: "subscriberId", label: "Subscriber", nowrap: true }
+      - { key: "stateText", label: "State", nowrap: true, title: "{lastError}" }

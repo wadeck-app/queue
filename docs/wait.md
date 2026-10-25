@@ -50,6 +50,6 @@ A GitHub webhook only covers the repositories of its owner, and the relay is con
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---------|---|---|---|---|---|
 | `wait <event>` | matched | - | timeout (`--timeout`, default 30m) | - | invalid usage |
-| `wait ci` | all runs `success`, `skipped` or `neutral` | a run failed, was cancelled or timed out | `--timeout` (default 15m) | no run seen for the commit, or relay not running | invalid usage |
+| `wait ci` | all runs `success`, `skipped` or `neutral` | a run failed, was cancelled or timed out | `--timeout` (default 30m) | no run seen for the commit, or relay not running | invalid usage |
 
 Exit 2 and 3 print the likely causes and `gh run list --commit <sha>` as a cross-check; GitHub does not redeliver lost webhooks.

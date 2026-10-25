@@ -6,7 +6,8 @@ import type { EventWaitOptions, EventWaitTarget } from './eventWaitCommand.js';
 export const EVENT_WAIT_FLAGS_WITH_VALUE = new Set(['--when', '--since', '--timeout']);
 export const EVENT_WAIT_KNOWN_FLAGS = ['--when', '--since', '--timeout', '--json', '--strict', '--all', '--any', '--help', '-h'];
 
-export const EVENT_WAIT_DEFAULT_TIMEOUT = '30m';
+/** How long any `queue wait` (an event, the CI of a commit) waits by default. */
+export const WAIT_DEFAULT_TIMEOUT = '30m';
 
 const USAGE = 'queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--json] [--strict]';
 
@@ -65,7 +66,7 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
 
   let timeoutMs: number;
   try {
-    timeoutMs = parseDuration(singles['--timeout'] ?? EVENT_WAIT_DEFAULT_TIMEOUT);
+    timeoutMs = parseDuration(singles['--timeout'] ?? WAIT_DEFAULT_TIMEOUT);
   } catch (err) {
     return { ok: false, message: `${getErrorMessage(err)} (durations look like 30s, 15m, 1h).` };
   }

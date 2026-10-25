@@ -11,7 +11,7 @@ import { createGitPort, inspectRepository, type GitPort } from './ciGit.js';
 import { eventWaitCommand } from './eventWaitCommand.js';
 import { RelayOnDemand, isRelaySourcedEvent } from './relayOnDemand.js';
 import { checkDeclaration, lastSeenAtOf, refuseUndeclared, undeclaredWarning, type DeclarationCheck } from './eventWaitCatalog.js';
-import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE } from './eventWaitArgs.js';
+import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE, WAIT_DEFAULT_TIMEOUT } from './eventWaitArgs.js';
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
 Usage:
@@ -47,7 +47,7 @@ queue wait ci: blocks until the GitHub CI of a commit is done (events relayed as
   --workflow <name>  Exact workflow name that must complete (repeatable). Without it, the workflows are inferred from
                      .github/workflows (push trigger, branch and path filters); when that is undecidable, "done" means every run
                      seen for the commit is completed and nothing new happened for --settle
-  --timeout <d>      Give up after this long (default 15m)
+  --timeout <d>      Give up after this long (default 30m)
   --settle <d>       Quiet window before concluding with no --workflow (default 20s)
   --no-infer         Do not read git: no push check, no workflow inference
   --json             Machine-readable result on stdout
@@ -184,7 +184,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
   let timeoutMs: number;
   let settleMs: number;
   try {
-    timeoutMs = parseDuration(collectValues(rest, '--timeout')[0] ?? '15m');
+    timeoutMs = parseDuration(collectValues(rest, '--timeout')[0] ?? WAIT_DEFAULT_TIMEOUT);
     settleMs = parseDuration(collectValues(rest, '--settle')[0] ?? '20s');
   } catch (err) {
     return fail(`${getErrorMessage(err)} (durations look like 30s, 15m, 1h).`);

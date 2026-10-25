@@ -24,8 +24,8 @@ describe('listPending', () => {
     writeFileSync(join(configDir, 'wal.ndjson'), [walLine('p 1', 'pending'), walLine('a1', 'acked'), walLine('f1', 'failed', { lastError: 'exit code 1' })].join('\n') + '\n');
     const result = listPending(configDir);
     expect(result.entries).toEqual([
-      { id: 'p 1', idShort: 'p 1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'pending', attempts: 1, lastError: null, queuedAt: '2026-10-19T10:00:00.000Z' },
-      { id: 'f1', idShort: 'f1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'failed', attempts: 1, lastError: 'exit code 1', queuedAt: '2026-10-19T10:00:00.000Z' },
+      { id: 'p 1', idShort: 'p 1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'pending', stateText: 'pending, 1 attempt', attempts: 1, lastError: null, detailsText: '**Id** `p 1`', queuedAt: '2026-10-19T10:00:00.000Z' },
+      { id: 'f1', idShort: 'f1', event: 'onFoo', subscriberId: 'onFoo[0]', status: 'failed', stateText: 'failed, 1 attempt', attempts: 1, lastError: 'exit code 1', detailsText: '**Last error** `exit code 1`\n\n**Id** `f1`', queuedAt: '2026-10-19T10:00:00.000Z' },
     ]);
     expect(result.awaitingRetry).toBe(1);
     expect(JSON.stringify(result)).not.toContain('token-123');

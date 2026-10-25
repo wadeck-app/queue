@@ -82,13 +82,18 @@ describe('pending-page.yaml', () => {
     expect((row!['items'] as Node[]).map((item) => item['$type'])).toEqual(['Markdown', 'ActionButton']);
   });
 
-  it('keeps the cells of a row on one line: event, subscriber, last error and the (long) id', () => {
+  it('keeps the cells of a row on one line: event, subscriber, state and the (long) id', () => {
     const doc = load('pending-page.yaml');
     const columns = (find(doc, 'DataTable')[0]!['columns'] as Node[]).filter((column) => typeof column['key'] === 'string');
-    for (const key of ['event', 'subscriberId', 'lastError']) {
+    for (const key of ['event', 'subscriberId', 'stateText']) {
       expect(columns.find((column) => column['key'] === key)).toMatchObject({ nowrap: true });
     }
-    // 8 characters of the id in the cell, the whole id as its tooltip
-    expect(columns.find((column) => column['key'] === 'idShort')).toMatchObject({ mono: true, nowrap: true, title: '{id}' });
+  });
+
+  it('puts the row actions first so that no width pushes them off the screen, and the whole id in the expanded row', () => {
+    const doc = load('pending-page.yaml');
+    const table = find(doc, 'DataTable')[0]!;
+    expect((table['columns'] as Node[])[0]).toMatchObject({ type: 'actions' });
+    expect(table['expansion']).toEqual({ $type: 'Markdown', text: '$ctx.row.detailsText' });
   });
 });

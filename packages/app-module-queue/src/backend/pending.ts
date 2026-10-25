@@ -9,8 +9,12 @@ export interface PendingRow {
   event: string;
   subscriberId: string;
   status: 'pending' | 'failed';
+  /** "failed, 2 attempts": the state and the attempts in one cell, so the table fits a narrow screen. */
+  stateText: string;
   attempts: number;
   lastError: string | null;
+  /** Markdown for the expanded row: the whole last error and the whole id. */
+  detailsText: string;
   queuedAt: string;
 }
 
@@ -32,8 +36,10 @@ export function listPending(configDir: string): PendingList {
     event: entry.event,
     subscriberId: entry.subscriberId,
     status: entry.status === 'failed' ? 'failed' : 'pending',
+    stateText: `${entry.status === 'failed' ? 'failed' : 'pending'}, ${entry.attempts} ${entry.attempts === 1 ? 'attempt' : 'attempts'}`,
     attempts: entry.attempts,
     lastError: entry.lastError ?? null,
+    detailsText: `${entry.lastError === undefined ? '' : `**Last error** \`${entry.lastError}\`\n\n`}**Id** \`${entry.id}\``,
     queuedAt: entry.timestamp,
   }));
   const stuckCount = countStuckEntries(configDir);
