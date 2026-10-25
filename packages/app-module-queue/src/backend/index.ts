@@ -19,6 +19,7 @@ import { getDaemonState } from './daemon.js';
 import { getRelayInfo } from './relay.js';
 import { listWebhooks, listDeliveries } from './relayWebhooks.js';
 import { listSubscribers } from './subscribers.js';
+import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery, validateSingleString } from './historyQuery.js';
 import { getOverviewRange } from './overviewRange.js';
@@ -329,7 +330,7 @@ export default function (ctx: ModuleContext): void {
     const event = eventValue;
 
     try {
-      return reply.code(200).send({ subscribers: listSubscribers(configDir, cwd, event) });
+      return reply.code(200).send({ subscribers: listSubscribers(configDir, cwd, event, defaultRegistryDir(process.env)) });
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

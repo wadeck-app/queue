@@ -3,7 +3,8 @@ import { Wal } from './storage/Wal.js';
 import type { WalEntry } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
 import type { DlqEntry } from './storage/DlqStore.js';
-import { ConfigLoader } from './ConfigLoader.js';
+import { ConfigLoader, type ProjectConfigSource } from './ConfigLoader.js';
+import { ProjectResolver } from './project/ProjectResolver.js';
 import type { ResolvedSubscriber } from './types.js';
 
 /**
@@ -23,11 +24,11 @@ export function countQueue(wal: Wal, dlq: DlqStore): QueueCounts {
 }
 
 /** Subscribers for one event, or all of them. An invalid subscribers.yml throws: an empty list would hide the mistake. */
-export function subscribersFor(configLoader: ConfigLoader, req: { event?: string; cwd: string }): ResolvedSubscriber[] {
+export function subscribersFor(configLoader: ConfigLoader, req: { event?: string; cwd: string; project?: ProjectConfigSource }): ResolvedSubscriber[] {
   if (req.event) {
-    return configLoader.getSubscribers(req.event, req.cwd);
+    return configLoader.getSubscribers(req.event, req.cwd, req.project);
   }
-  return Array.from(configLoader.load(req.cwd).values()).flat();
+  return Array.from(configLoader.load(req.cwd, req.project).values()).flat();
 }
 
 /** Removes one DLQ entry, or all of them when `id` is omitted; returns how many were removed. */
@@ -109,6 +110,8 @@ export function clearDlqEntries(configDir: string, id?: string): number {
   return removeFromDlq(new DlqStore(join(configDir, 'dlq.ndjson')), id);
 }
 
-export function listQueueSubscribers(configDir: string, req: { event?: string; cwd: string }): ResolvedSubscriber[] {
-  return subscribersFor(new ConfigLoader(configDir), req);
+/** `registryDir`: the project registry that says which project `cwd` is in, hence where its subscribers are kept. */
+export function listQueueSubscribers(configDir: string, req: { event?: string; cwd: string; registryDir: string }): ResolvedSubscriber[] {
+  const { source } = new ProjectResolver(req.registryDir).resolve(req.cwd);
+  return subscribersFor(new ConfigLoader(configDir), { cwd: req.cwd, ...(req.event !== undefined && { event: req.event }), ...(source !== undefined && { project: source }) });
 }

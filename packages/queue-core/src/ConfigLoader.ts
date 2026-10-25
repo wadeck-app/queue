@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, basename, dirname, resolve, isAbsolute } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
+import { validateLayer, type ConfigSchema } from '@wadeck-app/project-sdk';
 import { z } from 'zod';
 import { EventMatcher } from './dispatch/EventMatcher.js';
 import type { ResolvedSubscriber } from './types.js';
 import { getErrorMessage } from './errors.js';
+import { isRecord } from './isRecord.js';
 
 const SubscriberConfigSchema = z.object({
   type: z.enum(['cli', 'http']),
@@ -122,6 +124,7 @@ interface ResolveContext {
   /** Prefix of the ids of this file's subscribers: empty for the global file, '<project folder>/' for a project file. */
   idPrefix: string;
   kind: 'global' | 'project';
+  via?: 'registry' | 'walk-up';
   globalCwd?: string;
   globalEnv?: Record<string, string>;
   eventCwd?: string;
@@ -194,6 +197,7 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
     name: raw.name,
     file: ctx.filePath,
     scope: ctx.kind,
+    ...(ctx.via !== undefined && { via: ctx.via }),
     event,
     type: raw.type,
     command: raw.command,
@@ -242,6 +246,38 @@ function assertUniqueNames(event: string, resolved: ResolvedSubscriber[], filePa
   }
 }
 
+/** One config folder of a registered project (the project itself or one of its ancestors) that may hold a subscribers.yml. */
+export interface ProjectConfigLayer {
+  dir: string;
+  /** Id of the project that owns the folder: it identifies the subscribers of the file. */
+  projectId: string;
+}
+
+/** The registered project of an event: where its subscribers are kept and the folder they run from. */
+export interface ProjectConfigSource {
+  projectId: string;
+  /** The registered path of the project the working directory is in (its main path for an explicit project): the default `cwd` of its subscribers, and what a relative `cwd` is resolved against. */
+  baseDir: string;
+  /** Config folders of the project and its ancestors, root first. */
+  layers: ProjectConfigLayer[];
+}
+
+// The top-level keys of a subscribers.yml (the file of a project is checked against them, nothing is ignored silently)
+const SUBSCRIBERS_FILE_SCHEMA: ConfigSchema = {
+  sections: { subscribers: { scope: 'inherit', merge: 'append' }, cwd: { scope: 'local' }, env: { scope: 'local' } },
+};
+
+function assertKnownKeys(filePath: string): void {
+  const raw: unknown = yamlLoad(readFileSync(filePath, 'utf-8'));
+  if (isRecord(raw)) {
+    try {
+      validateLayer(SUBSCRIBERS_FILE_SCHEMA, filePath, raw, 'project');
+    } catch (err) {
+      throw new Error(`[queue] Invalid subscribers.yml at ${filePath}: ${getErrorMessage(err)}\nFix: a subscribers.yml has the keys subscribers, cwd and env.`);
+    }
+  }
+}
+
 export class ConfigLoader {
   private readonly globalConfigDir: string;
 
@@ -249,23 +285,33 @@ export class ConfigLoader {
     this.globalConfigDir = globalConfigDir;
   }
 
-  load(cwd: string): Map<string, ResolvedSubscriber[]> {
+  /**
+   * `project`: the registered project of the event, when there is one. Its config folders are read first; a .queue/subscribers.yml found above
+   * the working directory is the fallback of a project that has no file yet (transition), and is not read once it has one.
+   */
+  load(cwd: string, project?: ProjectConfigSource): Map<string, ResolvedSubscriber[]> {
     const globalFile = join(this.globalConfigDir, 'subscribers.yml');
-    const projectFile = this.findProjectFile(cwd);
+    const registryFiles = (project?.layers ?? []).map((layer) => ({ layer, file: join(layer.dir, 'subscribers.yml') })).filter(({ file }) => existsSync(file));
+    const projectFile = registryFiles.length > 0 ? null : this.findProjectFile(cwd);
 
     const merged = new Map<string, ResolvedSubscriber[]>();
 
-    const addFromYml = (yml: SubscribersYml | null, filePath: string): void => {
+    const addFromYml = (yml: SubscribersYml | null, filePath: string, registry?: { projectId: string; baseDir: string }): void => {
       if (!yml) {
         return;
       }
-      const fileDir = dirname(filePath);
+      // A file of the registry is resolved against the project folder (its config folder says nothing about where to run)
+      const fileDir = registry === undefined ? dirname(filePath) : registry.baseDir;
       const kind = filePath === globalFile ? 'global' : 'project';
+      const via = registry !== undefined ? 'registry' : kind === 'project' ? 'walk-up' : undefined;
+      // A project subscriber is identified by the id of its project once the project is registered, wherever its file is
+      const projectPrefix = registry !== undefined ? `${registry.projectId}/` : project !== undefined ? `${project.projectId}/` : `${basename(defaultCwdForDir(fileDir))}/`;
       const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'idPrefix' | 'kind' | 'globalCwd' | 'globalEnv'> = {
         filePath,
         fileDir,
-        idPrefix: kind === 'global' ? '' : `${basename(defaultCwdForDir(fileDir))}/`,
+        idPrefix: kind === 'global' ? '' : projectPrefix,
         kind,
+        ...(via !== undefined && { via }),
         globalCwd: yml.cwd,
         globalEnv: yml.env,
       };
@@ -291,6 +337,10 @@ export class ConfigLoader {
     };
 
     addFromYml(loadYml(globalFile), globalFile);
+    for (const { layer, file } of registryFiles) {
+      assertKnownKeys(file);
+      addFromYml(loadYml(file), file, { projectId: layer.projectId, baseDir: project!.baseDir });
+    }
     if (projectFile) {
       addFromYml(loadYml(projectFile), projectFile);
     }
@@ -298,8 +348,8 @@ export class ConfigLoader {
     return merged;
   }
 
-  getSubscribers(event: string, cwd: string): ResolvedSubscriber[] {
-    const all = this.load(cwd);
+  getSubscribers(event: string, cwd: string, project?: ProjectConfigSource): ResolvedSubscriber[] {
+    const all = this.load(cwd, project);
     const result: ResolvedSubscriber[] = [];
     for (const [pattern, subs] of all) {
       if (EventMatcher.matches(pattern, event)) {
@@ -309,7 +359,8 @@ export class ConfigLoader {
     return result;
   }
 
-  private findProjectFile(cwd: string): string | null {
+  /** The .queue/subscribers.yml found above `cwd`, if any (the lookup that is being replaced by the config folder of the registered project). */
+  findProjectFile(cwd: string): string | null {
     let current = cwd;
     for (let i = 0; i < 20; i++) {
       const candidate = join(current, '.queue', 'subscribers.yml');

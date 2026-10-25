@@ -1,4 +1,5 @@
-import { findProjectForPath, loadRegistry } from '@wadeck-app/project-sdk';
+import { findProjectForPath, getConfigLayers, loadRegistry } from '@wadeck-app/project-sdk';
+import type { ProjectConfigSource } from '../ConfigLoader.js';
 import { getErrorMessage } from '../errors.js';
 
 export interface EventProject {
@@ -23,6 +24,27 @@ export class ProjectResolver {
 
   constructor(registryDir: string) {
     this.registryDir = registryDir;
+  }
+
+  /** The project of a working directory (or of an explicit id) and, when it is registered, where its subscribers are kept. */
+  resolve(cwd: string, projectId?: string): { lookup: ProjectLookup; source?: ProjectConfigSource } {
+    const lookup = projectId !== undefined ? this.lookupId(projectId) : this.lookup(cwd);
+    if (lookup.kind !== 'registered') {
+      return { lookup };
+    }
+    const source = this.configSource(lookup.project.id, lookup.path !== '' ? lookup.path : cwd);
+    return { lookup, ...(source !== undefined && { source }) };
+  }
+
+  /** Where the subscribers of a registered project are kept: the config folders of the project and its ancestors, root first. `baseDir` is where its subscribers run from. */
+  configSource(projectId: string, baseDir: string): ProjectConfigSource | undefined {
+    const registry = loadRegistry(this.registryDir);
+    const project = registry.projects.find((candidate) => candidate.id === projectId);
+    if (project === undefined) {
+      return undefined;
+    }
+    const layers = getConfigLayers(registry, this.registryDir, project, 'queue').map((layer) => ({ dir: layer.dir, projectId: layer.project.id }));
+    return { projectId, baseDir, layers };
   }
 
   /** A project named by its id (the explicit `project` of a push). `unregistered` here means: no project of that id. */

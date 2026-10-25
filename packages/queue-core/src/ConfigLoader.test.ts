@@ -493,3 +493,89 @@ describe('ConfigLoader - unnamed subscribers', () => {
     expect(advice).not.toContain('--scope');
   });
 });
+
+describe('ConfigLoader - subscribers kept in the config folder of a registered project', () => {
+  let projectDir: string;
+  let globalDir: string;
+  let configRoot: string;
+  let loader: ConfigLoader;
+
+  beforeEach(() => {
+    projectDir = makeTmpDir();
+    globalDir = makeTmpDir();
+    configRoot = makeTmpDir();
+    loader = new ConfigLoader(globalDir);
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(configRoot, { recursive: true, force: true });
+  });
+
+  /** A config folder of the registry with this subscribers.yml in it. */
+  function layerDir(name: string, yml: string | null): string {
+    const dir = join(configRoot, name);
+    mkdirSync(dir, { recursive: true });
+    if (yml !== null) {
+      writeFileSync(join(dir, 'subscribers.yml'), yml, 'utf-8');
+    }
+    return dir;
+  }
+
+  const FOO = (command: string, name = 'n'): string => `subscribers:\n  onFoo:\n    - type: cli\n      command: ${command}\n      name: ${name}\n`;
+
+  it('reads the file of the project, identifies its subscribers by the project id, and runs them from the project folder', () => {
+    const dir = layerDir('64f4ae91', FOO('echo reg'));
+    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+    expect(sub).toMatchObject({ subscriberId: '64f4ae91/n', command: 'echo reg', scope: 'project', via: 'registry', file: join(dir, 'subscribers.yml'), cwd: projectDir });
+  });
+
+  it('resolves a relative cwd of the file from the project folder, not from the config folder', () => {
+    const dir = layerDir('64f4ae91', 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: n\n      cwd: tools\n');
+    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+    expect(sub!.cwd).toBe(resolve(projectDir, 'tools'));
+  });
+
+  it('applies the subscribers of the parent projects too, root first, each identified by the project that defines it', () => {
+    const parent = layerDir('aaaaaaaa', FOO('echo parent', 'p'));
+    const child = layerDir('bbbbbbbb', FOO('echo child', 'c'));
+    const subs = loader.getSubscribers('onFoo', projectDir, {
+      projectId: 'bbbbbbbb',
+      baseDir: projectDir,
+      layers: [
+        { dir: parent, projectId: 'aaaaaaaa' },
+        { dir: child, projectId: 'bbbbbbbb' },
+      ],
+    });
+    expect(subs.map((sub) => [sub.subscriberId, sub.command])).toEqual([
+      ['aaaaaaaa/p', 'echo parent'],
+      ['bbbbbbbb/c', 'echo child'],
+    ]);
+  });
+
+  it('does not read the .queue/subscribers.yml found above the working directory once the project has a file of its own', () => {
+    writeSubscribersYml(projectDir, FOO('echo walk-up', 'old'));
+    const dir = layerDir('64f4ae91', FOO('echo reg'));
+    const subs = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+    expect(subs.map((sub) => sub.command)).toEqual(['echo reg']);
+  });
+
+  it('falls back to the .queue/subscribers.yml found above, as a transition, when the project has no file yet; its subscribers already carry the project id', () => {
+    const file = writeSubscribersYml(projectDir, FOO('echo walk-up', 'old'));
+    const dir = layerDir('64f4ae91', null);
+    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+    expect(sub).toMatchObject({ subscriberId: '64f4ae91/old', via: 'walk-up', file });
+  });
+
+  it('refuses a key that is not one of a subscribers file, naming the file and the key, instead of ignoring it', () => {
+    const dir = layerDir('64f4ae91', 'subscribers: {}\nsubscriber:\n  onFoo: []\n');
+    expect(() => loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] })).toThrow(/subscribers\.yml[\s\S]*subscriber/);
+  });
+
+  it('without a project, nothing changes: the global file, then the .queue/subscribers.yml found above', () => {
+    writeSubscribersYml(projectDir, FOO('echo walk-up', 'old'));
+    const [sub] = loader.getSubscribers('onFoo', projectDir);
+    expect(sub).toMatchObject({ subscriberId: `${basename(projectDir)}/old`, via: 'walk-up' });
+  });
+});

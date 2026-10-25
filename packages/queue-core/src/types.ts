@@ -23,6 +23,8 @@ export interface ResolvedSubscriber {
   /** The subscribers.yml it comes from, and whether that is the global one or the one of a project. */
   file: string;
   scope: 'global' | 'project';
+  /** Where a project subscriber was found: the config folder of its registered project, or a .queue/subscribers.yml found above the working directory (transition). */
+  via?: 'registry' | 'walk-up';
   event: string;
   type: 'cli' | 'http';
   command?: string;

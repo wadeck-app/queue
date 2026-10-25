@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
 import { Wal } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
 import { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries } from './operations.js';
@@ -67,6 +68,8 @@ describe('listDlqEntries / clearDlqEntries', () => {
 });
 
 describe('listQueueSubscribers', () => {
+  // no registry yet (the first-use state): the project is found by walking up
+  const noRegistry = (): string => join(configDir, 'no-registry');
   function writeProjectSubscribers(content: string): void {
     mkdirSync(join(projectDir, '.queue'), { recursive: true });
     writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), content);
@@ -74,17 +77,26 @@ describe('listQueueSubscribers', () => {
 
   it('lists every subscriber configured for the project', () => {
     writeProjectSubscribers('subscribers:\n  onA:\n    - type: cli\n      command: echo a\n  onB:\n    - type: cli\n      command: echo b\n');
-    expect(listQueueSubscribers(configDir, { cwd: projectDir }).map(s => s.event).sort()).toEqual(['onA', 'onB']);
+    expect(listQueueSubscribers(configDir, { cwd: projectDir, registryDir: noRegistry() }).map(s => s.event).sort()).toEqual(['onA', 'onB']);
   });
 
   it('filters to the subscribers matching one event', () => {
     writeProjectSubscribers('subscribers:\n  onA:\n    - type: cli\n      command: echo a\n  onB:\n    - type: cli\n      command: echo b\n');
-    expect(listQueueSubscribers(configDir, { cwd: projectDir, event: 'onB' }).map(s => s.event)).toEqual(['onB']);
+    expect(listQueueSubscribers(configDir, { cwd: projectDir, event: 'onB', registryDir: noRegistry() }).map(s => s.event)).toEqual(['onB']);
+  });
+
+  it('reads the subscribers kept in the config folder of the registered project', async () => {
+    const registryDir = join(configDir, 'registry');
+    mkdirSync(registryDir, { recursive: true });
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    const dir = projectToolDir(registryDir, project.id, 'queue', 'config', { ensure: true });
+    writeFileSync(join(dir, 'subscribers.yml'), 'subscribers:\n  onC:\n    - type: cli\n      command: echo c\n      name: reg\n');
+    expect(listQueueSubscribers(configDir, { cwd: projectDir, registryDir }).map((s) => [s.event, s.subscriberId])).toEqual([['onC', `${project.id}/reg`]]);
   });
 
   it('lets an invalid subscribers.yml surface as an error (never an empty list)', () => {
     writeProjectSubscribers('subscribers: [this is not valid\n');
-    expect(() => listQueueSubscribers(configDir, { cwd: projectDir })).toThrow();
+    expect(() => listQueueSubscribers(configDir, { cwd: projectDir, registryDir: noRegistry() })).toThrow();
   });
 });
 

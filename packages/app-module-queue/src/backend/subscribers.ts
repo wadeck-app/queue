@@ -15,8 +15,8 @@ function maskValues(record: Record<string, string> | undefined): Record<string, 
  */
 export type ListedSubscriber = ResolvedSubscriber & { /** The name, or "unnamed" so the table nudges to give one. */ nameText: string };
 
-export function listSubscribers(configDir: string, cwd: string, event?: string): ListedSubscriber[] {
-  return listQueueSubscribers(configDir, { cwd, event }).map((subscriber) => ({
+export function listSubscribers(configDir: string, cwd: string, event: string | undefined, registryDir: string): ListedSubscriber[] {
+  return listQueueSubscribers(configDir, { cwd, event, registryDir }).map((subscriber) => ({
     ...subscriber,
     nameText: subscriber.name ?? 'unnamed',
     ...(subscriber.headers === undefined ? {} : { headers: maskValues(subscriber.headers) }),

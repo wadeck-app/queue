@@ -1153,7 +1153,7 @@ describe('backend', () => {
     mockListSubscribers.mockResolvedValue([]);
     const reply = fakeReply();
     await routes.get('GET /subscribers')!(fakeReq({ query: {} }), asReply(reply));
-    expect(mockListSubscribers).toHaveBeenCalledWith(expect.any(String), process.cwd(), undefined);
+    expect(mockListSubscribers).toHaveBeenCalledWith(expect.any(String), process.cwd(), undefined, expect.any(String));
     expect(reply.code).toHaveBeenCalledWith(200);
   });
 
@@ -1163,7 +1163,7 @@ describe('backend', () => {
     mockListSubscribers.mockResolvedValue([]);
     const reply = fakeReply();
     await routes.get('GET /subscribers')!(fakeReq({ query: { cwd: '/custom/path' } }), asReply(reply));
-    expect(mockListSubscribers).toHaveBeenCalledWith(expect.any(String), '/custom/path', undefined);
+    expect(mockListSubscribers).toHaveBeenCalledWith(expect.any(String), '/custom/path', undefined, expect.any(String));
     expect(reply.code).toHaveBeenCalledWith(200);
   });
 

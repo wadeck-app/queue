@@ -6,7 +6,7 @@ import { createQueueService } from './QueueService.js';
 import { readCatalog } from '../catalog/EventCatalog.js';
 import { Wal } from '../storage/Wal.js';
 import { waitFor } from '../waitFor.testUtil.js';
-import { addProject } from '@wadeck-app/project-sdk';
+import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
 import { isRecord } from '../isRecord.js';
 import { listDlqEntries } from '../operations.js';
 
@@ -334,5 +334,84 @@ describe('the project of a push follows the event into the WAL and the DLQ (meta
     } finally {
       rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
+  });
+});
+
+describe('subscribers kept in the config folder of the registered project', () => {
+  let registryDir: string;
+  const YML = (name: string): string => `subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: ${name}\n      when: payload.never=1\n`;
+
+  beforeEach(() => {
+    registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+  });
+
+  afterEach(() => {
+    rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  const logMessages = (): string[] => {
+    const logsDir = join(configDir, 'logs');
+    return existsSync(logsDir)
+      ? readdirSync(logsDir)
+          .flatMap((file) => readFileSync(join(logsDir, file), 'utf-8').split('\n'))
+          .filter((line) => line !== '')
+          .map((line) => {
+            const record: unknown = JSON.parse(line);
+            return isRecord(record) ? String(record['message'] ?? '') : '';
+          })
+      : [];
+  };
+
+  const triggerCounts = (): number[] => {
+    const dir = join(configDir, 'history');
+    return readdirSync(dir)
+      .flatMap((file) => readFileSync(join(dir, file), 'utf-8').split('\n'))
+      .filter((line) => line !== '')
+      .map((line): unknown => JSON.parse(line))
+      .filter(isRecord)
+      // a subscriber whose filter did not match leaves a 'filtered' record next to the trigger
+      .filter((record) => record['type'] === 'trigger')
+      .map((record) => Number(record['totalCount']));
+  };
+
+  async function registerWithFile(yml: string): Promise<string> {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    const dir = projectToolDir(registryDir, project.id, 'queue', 'config', { ensure: true });
+    writeFileSync(join(dir, 'subscribers.yml'), yml);
+    return project.id;
+  }
+
+  it('loads the subscribers of the file of the project, wherever the push comes from inside the project', async () => {
+    await registerWithFile(YML('reg'));
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: join(projectDir, 'src') });
+    expect(triggerCounts()).toEqual([1]);
+    expect(logMessages().filter((line) => line.includes('transition'))).toEqual([]);
+  });
+
+  it('loads them for an explicit project too, whatever the working directory of the push', async () => {
+    const id = await registerWithFile(YML('reg'));
+    const elsewhere = mkdtempSync(join(tmpdir(), 'queue-service-elsewhere-'));
+    try {
+      const service = createQueueService(configDir, { registryDir });
+      await service.commands.push({ event: 'onFoo', payload: {}, cwd: elsewhere, project: id, protocol: '1.2.0' });
+      expect(triggerCounts()).toEqual([1]);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it('ignores a .queue/subscribers.yml found above once the project has its file, and says so once, naming the file to delete', async () => {
+    await registerWithFile(YML('reg'));
+    mkdirSync(join(projectDir, '.queue'), { recursive: true });
+    const legacy = join(projectDir, '.queue', 'subscribers.yml');
+    writeFileSync(legacy, YML('legacy1').replace('legacy1', 'legacy1') + '    - type: cli\n      command: echo y\n      name: legacy2\n      when: payload.never=1\n');
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    expect(triggerCounts()).toEqual([1, 1]);
+    const notes = logMessages().filter((line) => line.includes('is ignored'));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain(legacy);
   });
 });

@@ -66,6 +66,26 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   // What was already said, once per daemon run: a push happens many times and the same sentence each time would hide the others
   const saidOnce = new Set<string>();
   const projectResolver = options.registryDir === undefined ? undefined : new ProjectResolver(options.registryDir);
+
+  /**
+   * The subscribers of an event: the global file, then those of the registered project (its config folders), else the .queue/subscribers.yml
+   * found above `cwd` as a transition. `lookup` is the project already found by the caller; `projectId` names it explicitly (a stored entry).
+   */
+  function loadSubscribers(event: string, cwd: string, lookup?: ProjectLookup, projectId?: string): ResolvedSubscriber[] {
+    const known = lookup ?? (projectResolver === undefined ? undefined : projectId !== undefined ? projectResolver.lookupId(projectId) : projectResolver.lookup(cwd));
+    const source = known?.kind === 'registered' ? projectResolver?.configSource(known.project.id, known.path !== '' ? known.path : cwd) : undefined;
+    const subscribers = configLoader.getSubscribers(event, cwd, source);
+    const registryFile = subscribers.find((sub) => sub.via === 'registry')?.file;
+    if (registryFile !== undefined) {
+      const legacy = configLoader.findProjectFile(cwd);
+      const note = `${legacy} is ignored: the subscribers of this project are in ${registryFile}. Delete the old file once its content is there`;
+      if (legacy !== null && !saidOnce.has(note)) {
+        saidOnce.add(note);
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: note });
+      }
+    }
+    return subscribers;
+  }
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
@@ -138,7 +158,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
         let subscribers: ResolvedSubscriber[];
         try {
-          subscribers = configLoader.getSubscribers(req.event, cwd);
+          subscribers = loadSubscribers(req.event, cwd, lookup);
         } catch (err) {
           // Invalid subscribers.yml: surface it to the caller AND to the log file
           const reason = getErrorMessage(err);
@@ -147,7 +167,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         }
 
         // A subscribers.yml found by walking up is a transition: the subscribers of a project will live in its config folder of the registry
-        for (const file of new Set(subscribers.filter((sub) => sub.scope === 'project').map((sub) => sub.file))) {
+        for (const file of new Set(subscribers.filter((sub) => sub.via === 'walk-up').map((sub) => sub.file))) {
           const note = `${file} is used because it was found above ${cwd} (transition: the subscribers of a project will live in the config folder of its project-sdk registry entry, and this lookup will go once they are moved)`;
           if (!saidOnce.has(note)) {
             saidOnce.add(note);
@@ -252,7 +272,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       const cwd = entry.meta.cwd;
       let subscribers: ResolvedSubscriber[];
       try {
-        subscribers = configLoader.getSubscribers(entry.event, cwd);
+        subscribers = loadSubscribers(entry.event, cwd, undefined, entry.meta.projectId);
       } catch (err) {
         eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
         return { status: 'error' };
@@ -297,7 +317,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       const cwd = req.cwd;
       let subscribers: ResolvedSubscriber[];
       try {
-        subscribers = subscribersFor(configLoader, { event: req?.event, cwd });
+        subscribers = subscribersFor(configLoader, { event: req?.event, cwd, ...(projectResolver !== undefined && { project: projectResolver.resolve(cwd).source }) });
       } catch (err) {
         // Rethrow so the client reports it, but leave a durable trace first
         eventLogger.logDiagnostic({ source: 'QueueDaemon.list-subscribers', message: `config error: ${getErrorMessage(err)}` });
@@ -333,7 +353,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
       let subscribers: ResolvedSubscriber[];
       try {
-        subscribers = configLoader.getSubscribers(entry.event, entry.meta.cwd);
+        subscribers = loadSubscribers(entry.event, entry.meta.cwd, undefined, entry.meta.projectId);
       } catch (err) {
         eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
         return { status: 'ok' };

@@ -3,7 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync, openSync, readSync, closeSync, statSync } from 'node:fs';
-import { join as pathJoin } from 'node:path';
+import { join as pathJoin, dirname as pathDirname } from 'node:path';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { UpdateManager } from '@wadeck-app/shared-cli/UpdateManager';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
@@ -30,6 +30,7 @@ import { isCalVer, devBuildRefusalMessage } from './devBuildGuard.js';
 import { createUpdateScheduler } from './updateScheduler.js';
 import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
 import { parseProjectFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
+import { subscribersFileFor } from './subscribersFile.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
@@ -102,7 +103,7 @@ Usage:
 
 Options:
   --scope global|project   File target: global=$QUEUE_CONFIG_DIR/subscribers.yml (default)
-                           project=.queue/subscribers.yml in cwd
+                           project=the config folder of the registered project of the cwd (project add; .queue/subscribers.yml in cwd until it is registered)
   --timeout <duration>     30s, 5m, 1h - dispatch timeout (default: 30s)
   --retries <n>            Max retries before DLQ (default: 5)
   --backoff <strategy>     exponential|linear (default: exponential)
@@ -727,10 +728,17 @@ Both commands make exactly one HTTP request to the relay, using the relay token 
 }
 
 function resolveSubsFile(configDir: string, scope: string): string {
-  if (scope === 'project') {
-    return pathJoin(process.cwd(), '.queue', 'subscribers.yml');
+  const target = subscribersFileFor(scope === 'project' ? 'project' : 'global', { configDir, cwd: process.cwd(), registryDir: defaultRegistryDir(process.env) });
+  if ('error' in target) {
+    process.stderr.write(`[fail] ${target.error}
+`);
+    process.exit(1);
   }
-  return pathJoin(configDir, 'subscribers.yml');
+  if (target.warning !== undefined) {
+    process.stderr.write(`[warn] ${target.warning}
+`);
+  }
+  return target.file;
 }
 
 function readSubsYmlOrExit(filePath: string): { subscribers: Record<string, SubscriberConfig[]> } {
@@ -1354,7 +1362,7 @@ async function main(): Promise<void> {
 
       const filePath = resolveSubsFile(configDir, scope);
       if (scope === 'project') {
-        mkdirSync(pathJoin(process.cwd(), '.queue'), { recursive: true });
+        mkdirSync(pathDirname(filePath), { recursive: true });
       }
       const data = readSubsYmlOrExit(filePath);
       const existing = data.subscribers[event] ?? [];
