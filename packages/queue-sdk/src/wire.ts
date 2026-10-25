@@ -11,6 +11,8 @@ export interface PushRequest {
   timeout?: number;
   /** The push protocol SemVer the client speaks. */
   protocol?: string;
+  /** Since 1.2.0: id of the project of the project registry the event belongs to. */
+  project?: string;
 }
 
 export type PushStatus = 'dispatched' | 'queued' | 'aborted' | 'rejected';

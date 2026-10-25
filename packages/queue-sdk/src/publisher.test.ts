@@ -953,3 +953,52 @@ describe('registerEvents (the event catalog, protocol 1.1.0)', () => {
     await expect(h.publisher.registerEvents('demo', undefined as unknown as [])).resolves.toBeDefined();
   });
 });
+
+describe('publishing on behalf of a project (push protocol 1.2.0)', () => {
+  const ID = '569c412d';
+  // setup() starts a daemon that predates queueProtocol (1.0.0) unless told otherwise
+  const current = { queueProtocol: { version: PROTOCOL_VERSION, accepts: '^1.0.0' } };
+
+  it('sends the project id of the publisher with every event, and a per-call project overrides it', async () => {
+    const h = await setup({ daemon: current, publisher: { project: ID } });
+    await h.publisher.publishAndWait('app.thing', {});
+    await h.publisher.publishAndWait('app.thing', {}, { project: 'deadbeef' });
+    const bodies = h.fake!.pushes().map((request) => JSON.parse(request.body) as { project?: string });
+    expect(bodies.map((body) => body.project)).toEqual([ID, 'deadbeef']);
+  });
+
+  it('sends no project field when none was given: the daemon derives it from the cwd', async () => {
+    const h = await setup();
+    await h.publisher.publishAndWait('app.thing', {});
+    expect(JSON.parse(h.fake!.pushes()[0]!.body)).not.toHaveProperty('project');
+  });
+
+  it('refuses a project that is not the 8-hex id (a name must be resolved with the project CLI first), sending nothing', async () => {
+    const h = await setup({ publisher: { project: 'my-app' } });
+    const result = await h.publisher.publishAndWait('app.thing', {});
+    expect(result.status).toBe('dropped');
+    expect(h.failures[0]?.kind).toBe('invalid-argument');
+    expect(h.failures[0]?.message).toContain('my-app');
+    expect(h.failures[0]?.message).toContain('8 hexadecimal');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
+  it('drops the event and says to update queue-cli when the daemon is older than protocol 1.2.0: it would ignore the project and file the event under another', async () => {
+    const h = await setup({ daemon: { queueProtocol: { version: '1.1.0', accepts: '^1.0.0' } }, publisher: { project: ID } });
+    const result = await h.publisher.publishAndWait('app.thing', {});
+    expect(result.status).toBe('dropped');
+    expect(h.failures[0]?.kind).toBe('unsupported');
+    expect(h.failures[0]?.message).toContain('1.2.0');
+    expect(h.failures[0]?.message).toContain('queue-cli');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
+  it('a project the daemon refuses is reported with the daemon reason, not as a protocol mismatch', async () => {
+    const h = await setup({ daemon: current, publisher: { project: ID } });
+    h.fake!.script.push({ kind: 'answer', result: { status: 'rejected', reason: "no registered project has the id '569c412d'. Fix: project list shows the registered projects and their ids; the event was not recorded" } });
+    const result = await h.publisher.publishAndWait('app.thing', {});
+    expect(result.status).toBe('dropped');
+    expect(h.failures[0]?.message).toContain('project list');
+    expect(h.failures[0]?.message).not.toContain('update @wadeck-app/queue-sdk');
+  });
+});

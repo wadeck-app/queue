@@ -130,3 +130,16 @@ describe('startFakeQueueDaemon: breaking the connection on a registration', () =
     await expect(queue.registerEvents('demo', [{ name: 'demo.a', description: 'd' }])).resolves.toMatchObject({ status: 'unknown' });
   });
 });
+
+describe('the fake daemon records the project of a push', () => {
+  it('RecordedPush carries the project id when the SDK sent one', async () => {
+    const daemon = await startFakeQueueDaemon();
+    try {
+      const publisher = createQueuePublisher({ configDir: daemon.configDir, silent: true, project: '569c412d' });
+      await publisher.publishAndWait('app.thing', { n: 1 });
+      expect(daemon.pushes()[0]).toMatchObject({ event: 'app.thing', project: '569c412d' });
+    } finally {
+      await daemon.close();
+    }
+  });
+});

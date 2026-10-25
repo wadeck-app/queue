@@ -15,6 +15,8 @@ export interface RecordedPush {
   protocol?: string;
   /** Request timeout of a before* event, when one was given. */
   timeout?: number;
+  /** The project id the SDK sent (push protocol 1.2.0), when it sent one. */
+  project?: string;
 }
 
 export interface RecordedRegistration {
@@ -84,6 +86,7 @@ export async function startFakeQueueDaemon(options: FakeQueueDaemonOptions = {})
           cwd: body['cwd'],
           ...(typeof body['protocol'] === 'string' && { protocol: body['protocol'] }),
           ...(typeof body['timeout'] === 'number' && { timeout: body['timeout'] }),
+          ...(typeof body['project'] === 'string' && { project: body['project'] }),
         };
       }),
     registrations: () =>

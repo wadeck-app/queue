@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { createDaemonResolver, isPidAlive, type DaemonInfo, type Resolution } from './daemon.js';
 import { loopbackRequest, type HttpOutcome, type LoopbackRequest } from './http.js';
 import { resolveConfigDir } from './configDir.js';
-import { daemonSupportsEventCatalog, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION } from './protocol.js';
+import { daemonSupportsEventCatalog, daemonSupportsPushProject, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION, PUSH_PROJECT_MIN_VERSION } from './protocol.js';
 import { createReporter, describeHttpError, type FailureKind, type QueueFailure, type Reporter } from './report.js';
 import { defaultStartDeps, startDaemon, type RunOutcome, type StartDeps, type StartResult } from './start.js';
 import {
@@ -20,9 +20,17 @@ import {
   type Serialized,
 } from './wire.js';
 
+/** A project id of the project registry: 8 lowercase hexadecimal characters. */
+const PROJECT_ID = /^[0-9a-f]{8}$/;
+
 export interface QueuePublisherOptions {
   /** Project directory sent with every event (selects `.queue/subscribers.yml`). Default `process.cwd()`. */
   cwd?: string;
+  /**
+   * Id of the project (8 hexadecimal characters, see `project list`) every event is pushed on behalf of. Absent: the daemon finds the
+   * project from `cwd`. The SDK does not resolve names: resolve a name or an alias to its id first. Needs queue-cli >= push protocol 1.2.0.
+   */
+  project?: string;
   /** Queue config dir. Default: QUEUE_CONFIG_DIR, else $XDG_CONFIG_HOME/queue, else ~/.config/queue. */
   configDir?: string;
   /** HTTP timeout in ms of a fire-and-forget push. Default 5000. */
@@ -45,6 +53,8 @@ export interface QueuePublisherOptions {
 export interface PublishOptions {
   /** Overrides the publisher's `cwd` for this event. */
   cwd?: string;
+  /** Overrides the publisher's `project` for this event. */
+  project?: string;
   /** Overrides the HTTP timeout. For `before*` events it is the request timeout sent to the daemon and 5000 ms more are waited. */
   timeoutMs?: number;
 }
@@ -326,10 +336,17 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
     if (call.timeoutMs !== undefined && !isPositiveNumber(call.timeoutMs)) {
       return fail('invalid-argument', `timeoutMs must be a positive number of milliseconds, got ${String(call.timeoutMs)}`);
     }
+    const project = call.project ?? options.project;
+    if (project !== undefined && !PROJECT_ID.test(project)) {
+      return fail(
+        'invalid-argument',
+        `project must be the id of a registered project (8 hexadecimal characters, \`project list\` shows them), got ${JSON.stringify(project)}: resolve a name or an alias to its id first`,
+      );
+    }
     const isBefore = event.startsWith('before');
     const requestTimeout = isBefore ? call.timeoutMs : undefined;
     const httpTimeout = isBefore ? (requestTimeout ?? DAEMON_BEFORE_TIMEOUT_MS) + BEFORE_MARGIN_MS : (call.timeoutMs ?? timeoutMs);
-    const wire: PushRequest = { event, payload, cwd: resolve(call.cwd ?? defaultCwd), protocol: PROTOCOL_VERSION, ...(requestTimeout !== undefined && { timeout: requestTimeout }) };
+    const wire: PushRequest = { event, payload, cwd: resolve(call.cwd ?? defaultCwd), protocol: PROTOCOL_VERSION, ...(requestTimeout !== undefined && { timeout: requestTimeout }), ...(project !== undefined && { project }) };
     return exchange<PublishResult>({
       path: '/push',
       httpTimeout,
@@ -337,6 +354,13 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
       retryAmbiguous: false,
       body: (protocol) => serializePushRequest({ ...wire, protocol }),
       fail,
+      // An older daemon would ignore the project and file the event under the project of the cwd: drop it instead, and say why
+      ...(project !== undefined && {
+        precheck: (daemon: DaemonInfo): PublishResult | undefined =>
+          daemonSupportsPushProject(daemon.protocol.version)
+            ? undefined
+            : fail('unsupported', `the daemon speaks push protocol ${daemon.protocol.version} and the project of an event needs ${PUSH_PROJECT_MIN_VERSION}: it would ignore the project and file the event under another. Update queue-cli (\`queue cli update\`), or publish without a project`),
+      }),
       ambiguous: (cause) => `${cause}: the event may have been queued, it is not retried (raise timeoutMs if the daemon is slow)`,
       interpret: (daemon, text) => interpret(daemon, text, fail),
     });
@@ -359,6 +383,10 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
       return fail('aborted', `the daemon aborted the event: ${response.reason ?? 'a before* subscriber refused it'}`);
     }
     if (response.status === 'rejected') {
+      // `supported` is the accepted range of a protocol refusal; without it the daemon refused something else (an unknown project)
+      if (response.supported === undefined) {
+        return fail('rejected', `the daemon rejected the event: ${response.reason ?? 'no reason given'}`);
+      }
       const accepted = response.supported ?? daemon.protocol.accepts;
       return fail(
         'rejected',

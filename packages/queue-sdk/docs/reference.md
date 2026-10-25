@@ -5,6 +5,7 @@
 | Option | Default | Meaning |
 |---|---|---|
 | `cwd` | `process.cwd()` | Project directory sent with every event; selects the project's `.queue/subscribers.yml` and the project name in the history |
+| `project` | - | Id of a registered project (8 hexadecimal characters, `project list`) the events are pushed on behalf of, since push protocol 1.2.0. The SDK resolves nothing: give the id, not a name. Absent: the daemon finds the project from `cwd`. On an older daemon the event is dropped (`unsupported`), never filed under another project |
 | `configDir` | `QUEUE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/queue`, else `~/.config/queue` | Where the queue keeps its files |
 | `timeoutMs` | `5000` | HTTP timeout of one push |
 | `maxPending` | `100` | Pushes in flight at once; the overflow is dropped and reported |
@@ -25,7 +26,7 @@ An invalid option falls back to its default and is reported through `onError`.
 | `flush()` | `Promise<void>` | Resolves when every push and declaration in flight has settled. Call it before `process.exit()`. It takes no timeout argument: each push is bounded by `timeoutMs` (plus up to 5 s when the daemon has to be started), so `flush()` is bounded too. In a synchronous shutdown hook, start it without awaiting it: pushes still in flight at exit are lost |
 | `status()` | `Promise<QueueStatus>` | `{ available, via?, daemonVersion?, protocol?, reason? }`; `via` is `daemon` (running, verified) or `queue-start` (stopped, `queue` found, it will be run on the first event) |
 
-Per-call `options`: `cwd` (overrides the publisher's) and `timeoutMs`.
+Per-call `options`: `cwd` and `project` (override the publisher's) and `timeoutMs`.
 
 ## `PublishResult.status`
 
@@ -85,7 +86,7 @@ Why `correlationKey`, `terminal` and `outcome` matter: `queue wait` matches an e
 |---|---|---|
 | `registered` | Stored; `count` is the number of events | |
 | `rejected` | The daemon refused the declaration and stored nothing. `problems` is the daemon's list `[{ path, message }]` (`events[3].name`), `reason` lists each `path: message` | `rejected-declaration` |
-| `unsupported` | The daemon is older than protocol 1.1.0 (from `GET /version`, or HTTP 404 to the command). Nothing is retried; pushes keep working. Update `queue-cli` | `unsupported` |
+| `unsupported` | The daemon is older than protocol 1.1.0 (from `GET /version`, or HTTP 404 to the command), or than 1.2.0 for a push with a `project`. Nothing is retried; pushes without a project keep working. Update `queue-cli` | `unsupported` |
 | `dropped` | Nothing was stored: switched off, daemon unreachable, source empty, declaration not JSON-serialisable (`events[0].example.n is a BigInt`), `maxPending` reached | the usual kinds |
 | `unknown` | The connection broke or timed out after sending, twice: the declaration may be stored. Call it again | `unknown-outcome` |
 
