@@ -74,6 +74,9 @@ update-notifier=false
     NPM_CONFIG_USERCONFIG: npmUserConfig,
     NPM_CONFIG_GLOBALCONFIG: npmGlobalConfig,
     NPM_CONFIG_REGISTRY: registry,
+    // A project-level .npmrc naming the @wadeck-app registry outranks the userconfig file;
+    // only this env variable beats it (otherwise `npm view` from a test reaches npm.pkg.github.com).
+    'npm_config_@wadeck-app:registry': registry,
   }, opts.extra);
 
   return {
