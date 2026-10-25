@@ -203,8 +203,8 @@ describe('queue history (integration)', () => {
   const event = 'onHistoryIntegration.test';
 
   beforeAll(() => {
-    runCli(['sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"']);
-    runCli(['sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"', '--when', 'payload.skip=true']);
+    runCli(['sub', 'add', event, '--name', 'matched', '--type', 'cli', '--command', 'node -e "process.exit(0)"']);
+    runCli(['sub', 'add', event, '--name', 'filtered', '--type', 'cli', '--command', 'node -e "process.exit(0)"', '--when', 'payload.skip=true']);
     runCli(['start']);
   });
 
@@ -326,7 +326,7 @@ describe('queue replay (integration)', () => {
   const event = 'onReplayIntegration.test';
 
   beforeAll(() => {
-    runCli(['sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"']);
+    runCli(['sub', 'add', event, '--name', 'notify', '--type', 'cli', '--command', 'node -e "process.exit(0)"']);
     runCli(['start']);
   });
 
@@ -370,7 +370,7 @@ describe('queue replay (integration)', () => {
       expect(normalizedA).not.toBe(normalizedB);
 
       // Set up a subscriber under projectA
-      const resultSubA = spawnSync(process.execPath, [bundlePath, 'sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"'], {
+      const resultSubA = spawnSync(process.execPath, [bundlePath, 'sub', 'add', event, '--name', 'from-project-a', '--type', 'cli', '--command', 'node -e "process.exit(0)"'], {
         encoding: 'utf-8',
         env: isolatedEnv(),
         cwd: projectA,
@@ -460,3 +460,24 @@ describe('queue relay stop (integration)', () => {
   });
 });
 
+
+describe('queue sub add (integration): the name is mandatory and unique per event', () => {
+  const event = 'onSubAddName.test';
+
+  it('fails with exit 1 when --name is missing, saying how to give one', () => {
+    const result = runCli(['sub', 'add', event, '--type', 'cli', '--command', 'node -e "process.exit(0)"']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('--name is required');
+    expect(result.stderr).toContain('--name notify');
+  });
+
+  it('fails with exit 1 when the name is already used on that event, naming the file and the way to edit that subscriber', () => {
+    const add = ['sub', 'add', event, '--name', 'dup', '--type', 'cli', '--command', 'node -e "process.exit(0)"'];
+    expect(runCli(add).exitCode).toBe(0);
+    const again = runCli(add);
+    expect(again.exitCode).toBe(1);
+    expect(again.stderr).toContain(`already has a subscriber named 'dup'`);
+    expect(again.stderr).toContain('subscribers.yml');
+    expect(again.stderr).toContain(`queue sub edit ${event} --name dup`);
+  });
+});

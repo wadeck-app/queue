@@ -193,10 +193,10 @@ export function renameSubscriber(subs: SubscriberConfig[], index: number, config
   return { subs: subs.map((s, i) => (i === index ? { ...s, name: config.name } : s)) };
 }
 
-/** The warning for a subscriber of a subscribers.yml without a name (names will become mandatory), with the command that fixes it. */
+/** The warning for a subscriber of a subscribers.yml without a name (the file will not load), with the command that fixes it. */
 export function unnamedLine(event: string, index: number, scope: 'global' | 'project'): string {
   return (
-    `[warn] subscriber ${event}[${index}] has no name: names tell the dashboard, the history and the DLQ who listens and will become mandatory. ` +
+    `[warn] subscriber ${event}[${index}] has no name: a name is required, so the daemon refuses to load this file. ` +
     `Fix: queue sub edit ${event} --index ${index} --name <name>${scope === 'project' ? ' --scope project' : ''}`
   );
 }

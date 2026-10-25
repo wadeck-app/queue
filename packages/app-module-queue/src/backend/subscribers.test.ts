@@ -31,20 +31,20 @@ async function writeProjectSubscribers(yml: string): Promise<void> {
 
 describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () => {
   it('lists the resolved subscribers of the project', async () => {
-    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo foo\n');
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
     const result = listSubscribers(configDir, projectDir, undefined, registryDir);
     expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ subscriberId: `${projectId}/onFoo[0]`, legacyId: 'onFoo[0]', event: 'onFoo', type: 'cli', command: 'echo foo' });
+    expect(result[0]).toMatchObject({ subscriberId: `${projectId}/a`, name: 'a', event: 'onFoo', type: 'cli', command: 'echo foo' });
   });
 
   it('filters to one event', async () => {
-    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo foo\n  onBar:\n    - type: cli\n      command: echo bar\n');
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n  onBar:\n    - type: cli\n      name: b\n      command: echo bar\n');
     expect(listSubscribers(configDir, projectDir, 'onBar', registryDir).map(s => s.event)).toEqual(['onBar']);
   });
 
   it('masks the values of headers and env (tokens) but keeps their names', async () => {
     await writeProjectSubscribers(
-      'subscribers:\n  onFoo:\n    - type: http\n      url: https://example.test/hook\n      headers:\n        Authorization: Bearer secret-token\n      env:\n        API_KEY: secret-key\n',
+      'subscribers:\n  onFoo:\n    - type: http\n      name: a\n      url: https://example.test/hook\n      headers:\n        Authorization: Bearer secret-token\n      env:\n        API_KEY: secret-key\n',
     );
     const [subscriber] = listSubscribers(configDir, projectDir, undefined, registryDir);
     expect(subscriber?.headers).toEqual({ Authorization: '***' });
@@ -53,7 +53,7 @@ describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () 
   });
 
   it('has no headers or env in the answer when the subscriber has none', async () => {
-    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo foo\n');
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
     const [subscriber] = listSubscribers(configDir, projectDir, undefined, registryDir);
     expect(subscriber?.headers).toBeUndefined();
     expect(subscriber?.env).toBeUndefined();
@@ -66,9 +66,14 @@ describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () 
 });
 
 describe('listSubscribers: names', () => {
-  it('shows the name, or "unnamed" as a nudge to give one (queue sub edit <event> --index <N> --name <name>)', async () => {
-    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: notify\n    - type: cli\n      command: echo b\n');
+  it('lists the name of each subscriber', async () => {
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: notify\n    - type: cli\n      command: echo b\n      name: audit\n');
     const result = listSubscribers(configDir, projectDir, undefined, registryDir);
-    expect(result.map((s) => s.nameText)).toEqual(['notify', 'unnamed']);
+    expect(result.map((s) => s.name)).toEqual(['notify', 'audit']);
+  });
+
+  it('throws on an unnamed subscriber, naming the event, the index and the fix, instead of listing it as "unnamed"', async () => {
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: notify\n    - type: cli\n      command: echo b\n');
+    expect(() => listSubscribers(configDir, projectDir, undefined, registryDir)).toThrow(/Subscriber 'onFoo' index 1.*has no name[\s\S]*queue sub edit onFoo --index 1 --name <name> --scope project/);
   });
 });

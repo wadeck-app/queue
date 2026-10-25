@@ -23,7 +23,7 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, unnamedSubscriberAdvice, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -96,8 +96,8 @@ history is a domain concept, not CLI tooling -- use 'queue history' (top-level o
 const SUB_GROUP_HELP = `queue sub - Subscriber management
 Usage:
   queue sub list [event] [--json] [--scope global|project]
-  queue sub add <event> --type cli --command "<cmd>" [options]
-  queue sub add <event> --type http --url "<url>" [options]
+  queue sub add <event> --name <name> --type cli --command "<cmd>" [options]
+  queue sub add <event> --name <name> --type http --url "<url>" [options]
   queue sub remove <event> --index <N>|--name <name> [--scope global|project]
   queue sub edit <event> --index <N>|--name <name> --type cli|http [options]
 
@@ -145,8 +145,8 @@ Usage:
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
   queue sub list [event] [--json] [--scope global|project]
-  queue sub add <event> --type cli --command "<cmd>" [options] [--scope global|project]
-  queue sub add <event> --type http --url "<url>" [options] [--scope global|project]
+  queue sub add <event> --name <name> --type cli --command "<cmd>" [options] [--scope global|project]
+  queue sub add <event> --name <name> --type http --url "<url>" [options] [--scope global|project]
   queue sub remove <event> --index <N>|--name <name> [--scope global|project]
   queue sub edit <event> --index <N>|--name <name> --type cli|http [options] [--scope global|project]
   queue start
@@ -1041,11 +1041,6 @@ async function main(): Promise<void> {
     } else {
       process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
     }
-    for (const advice of response.subscribers.map(unnamedSubscriberAdvice)) {
-      if (advice !== undefined) {
-        process.stderr.write(`[warn] ${advice}\n`);
-      }
-    }
     return;
   }
 
@@ -1315,11 +1310,6 @@ async function main(): Promise<void> {
         } else {
           process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
         }
-        for (const advice of response.subscribers.map(unnamedSubscriberAdvice)) {
-          if (advice !== undefined) {
-            process.stderr.write(`[warn] ${advice}\n`);
-          }
-        }
         return;
       }
 
@@ -1333,7 +1323,7 @@ async function main(): Promise<void> {
         }
         for (let i = 0; i < subs.length; i++) {
           const s = subs[i]!;
-          entries.push({ subscriberId: s.name ?? `${evtPattern}[${i}]`, event: evtPattern, type: s.type, command: s.command, url: s.url });
+          entries.push({ subscriberId: s.name ?? `(unnamed: ${evtPattern} index ${i})`, event: evtPattern, type: s.type, command: s.command, url: s.url });
           if (s.name === undefined) {
             process.stderr.write(`${unnamedLine(evtPattern, i, scope)}\n`);
           }
@@ -1375,6 +1365,10 @@ async function main(): Promise<void> {
         process.stderr.write(`[fail] --type cli|http is required\nUsage: queue sub add <event> --type cli|http ...\n`);
         process.exit(1);
       }
+      if (config.name === undefined) {
+        process.stderr.write(`[fail] --name is required: it tells the dashboard, the history, the DLQ and the logs who listens, e.g. --name notify\n`);
+        process.exit(1);
+      }
       if (config.type === 'cli' && !config.command) {
         process.stderr.write(`[fail] --command is required for type: cli\n`);
         process.exit(1);
@@ -1390,13 +1384,14 @@ async function main(): Promise<void> {
       }
       const data = readSubsYmlOrExit(filePath);
       const existing = data.subscribers[event] ?? [];
+      if (existing.some((entry) => entry.name === config.name)) {
+        process.stderr.write(`[fail] '${event}' already has a subscriber named '${config.name}' in ${filePath}: a name identifies one subscriber of an event. Choose another --name, or edit that one: queue sub edit ${event} --name ${config.name} ...\n`);
+        process.exit(1);
+      }
       const newEntry = buildSubscriberEntry(config);
       data.subscribers[event] = [...existing, newEntry];
       writeSubsYmlOrExit(filePath, data);
-      process.stdout.write(`[ok] Added subscriber to '${event}' (index ${existing.length}) in ${filePath}\n`);
-      if (newEntry.name === undefined) {
-        process.stderr.write(`${unnamedLine(event, existing.length, scope)}\n`);
-      }
+      process.stdout.write(`[ok] Added subscriber '${config.name}' to '${event}' (index ${existing.length}) in ${filePath}\n`);
       return;
     }
 

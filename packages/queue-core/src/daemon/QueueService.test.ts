@@ -143,7 +143,7 @@ describe('register-events (the event catalog, protocol 1.1.0)', () => {
   });
 });
 
-describe('push: warning for a subscriber without a name', () => {
+describe('push: a subscriber without a name', () => {
   let registryDir: string | undefined;
 
   afterEach(() => {
@@ -155,52 +155,23 @@ describe('push: warning for a subscriber without a name', () => {
   // when never matches: nothing is dispatched, the subscriber is only loaded
   const yml = (name: string): string => `subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      when: payload.never=1\n${name}`;
 
-  const warnings = (): string[] => {
-    const logsDir = join(configDir, 'logs');
-    return readdirSync(logsDir)
-      .flatMap((file) => readFileSync(join(logsDir, file), 'utf-8').split('\n'))
-      .filter((line) => line.includes('has no name'));
-  };
-
-  it('logs one actionable diagnostic per unnamed subscriber, not one per push', async () => {
-    registryDir = (await registerProjectWithSubscribers(yml(''))).registryDir;
+  it('answers aborted with the reason naming the file, the event, the index and the command that names it', async () => {
+    const registered = await registerProjectWithSubscribers(yml(''));
+    registryDir = registered.registryDir;
     const service = createQueueService(configDir, { registryDir });
-    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
-    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
-    const lines = warnings();
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('queue sub edit onFoo --index 0 --name <name>');
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    expect(response.status).toBe('aborted');
+    expect(response.reason).toContain("Subscriber 'onFoo' index 0");
+    expect(response.reason).toContain('subscribers.yml');
+    expect(response.reason).toContain('has no name');
+    expect(response.reason).toContain('queue sub edit onFoo --index 0 --name <name> --scope project');
   });
 
-  it('logs nothing for a named subscriber', async () => {
+  it('does not abort a push whose subscribers all have a name', async () => {
     registryDir = (await registerProjectWithSubscribers(yml('      name: notify\n'))).registryDir;
     const service = createQueueService(configDir, { registryDir });
-    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
-    expect(existsSync(join(configDir, 'logs')) ? warnings() : []).toEqual([]);
-  });
-});
-
-describe('retry of an entry written before subscriber names and scopes', () => {
-  it('finds the subscriber again through its legacy position id', async () => {
-    const { registryDir } = await registerProjectWithSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: node -e ""\n');
-    new Wal(join(configDir, 'wal.ndjson')).append({
-      id: 'evt-legacy',
-      timestamp: new Date().toISOString(),
-      event: 'onFoo',
-      payload: {},
-      meta: { cwd: projectDir },
-      subscriberId: 'onFoo[0]',
-      status: 'failed',
-      attempts: 1,
-    });
-    const service = createQueueService(configDir, { registryDir });
-    try {
-      expect(await service.commands.retry({ eventId: 'evt-legacy' })).toEqual({ status: 'ok' });
-      // the retry runs the subscriber: its process must be gone before the afterEach removes the directory it runs in
-      await waitFor('the retry to finish', () => service.isIdle());
-    } finally {
-      rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    }
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    expect(response.status).not.toBe('aborted');
   });
 });
 

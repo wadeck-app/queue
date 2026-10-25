@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ConfigLoader, unnamedSubscriberAdvice, type ProjectConfigSource } from './ConfigLoader.js';
+import { ConfigLoader, type ProjectConfigSource } from './ConfigLoader.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-test-${crypto.randomUUID()}`);
@@ -56,6 +56,7 @@ describe('ConfigLoader - cwd resolution', () => {
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo hi
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -69,6 +70,7 @@ cwd: ..
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo hi
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -83,6 +85,7 @@ cwd: ${forwardSlashDir}
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo hi
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -100,6 +103,7 @@ subscribers:
     cwd: ./flows
     commands:
       - type: cli
+        name: a
         command: echo hi
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -115,6 +119,7 @@ subscribers:
     cwd: ./flows
     commands:
       - type: cli
+        name: a
         command: echo hi
         cwd: ./special
 `);
@@ -127,6 +132,7 @@ subscribers:
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo legacy
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -140,6 +146,7 @@ subscribers:
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo global
 `, 'utf-8');
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -170,6 +177,7 @@ describe('ConfigLoader - env resolution', () => {
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo hi
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -183,6 +191,7 @@ env:
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo hi
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -201,6 +210,7 @@ subscribers:
       SHARED: from-event
     commands:
       - type: cli
+        name: a
         command: echo hi
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -221,6 +231,7 @@ subscribers:
       EVENT_VAR: event
     commands:
       - type: cli
+        name: a
         command: echo hi
         env:
           SUB_VAR: sub
@@ -239,6 +250,7 @@ subscribers:
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo hi
       env:
         ONLY_SUB: value
@@ -257,8 +269,10 @@ subscribers:
       EVENT: e
     commands:
       - type: cli
+        name: a
         command: echo first
       - type: cli
+        name: b
         command: echo second
         env:
           SUB_ONLY: s
@@ -323,12 +337,14 @@ describe('ConfigLoader - global + project merge', () => {
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo global
 `, 'utf-8');
     writeSubscribersYml(projectDir, `
 subscribers:
   onTest:
     - type: cli
+      name: b
       command: echo project
 `);
     const subs = loader.getSubscribers('onTest', projectDir, sourceOf(projectDir));
@@ -359,8 +375,10 @@ describe('ConfigLoader - subscriber validation', () => {
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo ok
     - type: cli
+      name: b
       when: payload.exitCode=1
 `);
     expect(() => loader.getSubscribers('onTest', projectDir, sourceOf(projectDir))).toThrow(/subscriber 'onTest' index 1/);
@@ -375,6 +393,7 @@ subscribers:
 subscribers:
   onTest:
     - type: http
+      name: a
       method: POST
 `);
     expect(() => loader.getSubscribers('onTest', projectDir, sourceOf(projectDir))).toThrow(/type 'http' requires a 'url' field/);
@@ -385,8 +404,10 @@ subscribers:
 subscribers:
   onTest:
     - type: cli
+      name: a
       command: echo ok
     - type: http
+      name: b
       url: http://localhost:1234/hook
 `);
     expect(loader.getSubscribers('onTest', projectDir, sourceOf(projectDir))).toHaveLength(2);
@@ -409,30 +430,21 @@ describe('ConfigLoader - subscriber ids', () => {
     rmSync(globalDir, { recursive: true, force: true });
   });
 
-  it('a global and a project subscriber on the same event get distinct ids (the daemon keys its WAL entries by id)', () => {
-    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo global\n', 'utf-8');
-    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo project\n');
+  it('a global and a project subscriber with the same name on the same event get distinct ids (the daemon keys its WAL entries by id)', () => {
+    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo global\n      name: notify\n', 'utf-8');
+    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo project\n      name: notify\n');
     const ids = loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir)).map((s) => s.subscriberId);
     expect(ids).toHaveLength(2);
     expect(new Set(ids).size).toBe(2);
   });
 
-  it('keeps the legacy <event>[<index>] id for the global file and scopes the project ones with the project id', () => {
-    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo global\n', 'utf-8');
-    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo project\n');
-    const [global, project] = loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir));
-    expect(global!.subscriberId).toBe('onFoo[0]');
-    expect(global!.legacyId).toBe('onFoo[0]');
-    expect(project!.subscriberId).toBe(`${TEST_PROJECT_ID}/onFoo[0]`);
-    expect(project!.legacyId).toBe('onFoo[0]');
-  });
 
-  it('uses the name as id when there is one: <name> in the global file, <project>/<name> in a project file; legacyId stays the position', () => {
+  it('uses the name as id: <name> in the global file, <project>/<name> in a project file', () => {
     writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo g\n      name: notify\n', 'utf-8');
     writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo p\n      name: notify\n');
     const [global, project] = loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir));
-    expect(global).toMatchObject({ subscriberId: 'notify', name: 'notify', legacyId: 'onFoo[0]' });
-    expect(project).toMatchObject({ subscriberId: `${TEST_PROJECT_ID}/notify`, name: 'notify', legacyId: 'onFoo[0]' });
+    expect(global).toMatchObject({ subscriberId: 'notify', name: 'notify' });
+    expect(project).toMatchObject({ subscriberId: `${TEST_PROJECT_ID}/notify`, name: 'notify' });
   });
 
   it('a name survives a reorder of the list, a position does not', () => {
@@ -480,32 +492,41 @@ describe('ConfigLoader - unnamed subscribers', () => {
   });
 
   it('says which file a subscriber comes from and whether it is global or project', () => {
-    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo g\n', 'utf-8');
-    const projectFile = writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo p\n');
+    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo g\n      name: g\n', 'utf-8');
+    const projectFile = writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo p\n      name: p\n');
     const [global, project] = loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir));
     expect(global).toMatchObject({ scope: 'global', file: join(globalDir, 'subscribers.yml') });
     expect(project).toMatchObject({ scope: 'project', file: projectFile });
   });
 
-  it('gives no advice to a subscriber that has a name', () => {
-    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo p\n      name: notify\n');
-    expect(unnamedSubscriberAdvice(loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir))[0]!)).toBeUndefined();
-  });
 
-  it('tells an unnamed project subscriber the file, why, and the exact command that names it', () => {
+  it('refuses an unnamed project subscriber, naming the file, the event, the index and the exact command that names it', () => {
     const file = writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: a\n    - type: cli\n      command: echo p\n');
-    const advice = unnamedSubscriberAdvice(loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir))[1]!)!;
-    expect(advice).toContain('onFoo');
-    expect(advice).toContain(file);
-    expect(advice).toContain('mandatory');
-    expect(advice).toContain('queue sub edit onFoo --index 1 --name <name> --scope project');
+    let message = '';
+    try {
+      loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("Subscriber 'onFoo' index 1");
+    expect(message).toContain(file);
+    expect(message).toContain('has no name');
+    expect(message).toContain('queue sub edit onFoo --index 1 --name <name> --scope project');
   });
 
-  it('names no scope for a global subscriber, the default scope of queue sub', () => {
-    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: http\n      url: http://localhost/x\n', 'utf-8');
-    const advice = unnamedSubscriberAdvice(loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir))[0]!)!;
-    expect(advice).toContain('queue sub edit onFoo --index 0 --name <name>');
-    expect(advice).not.toContain('--scope');
+  it('refuses an unnamed global subscriber, naming the file, the event, the index and the fix without a scope (the default scope of queue sub)', () => {
+    const file = join(globalDir, 'subscribers.yml');
+    writeFileSync(file, 'subscribers:\n  onFoo:\n    - type: http\n      url: http://localhost/x\n', 'utf-8');
+    let message = '';
+    try {
+      loader.getSubscribers('onFoo', projectDir, sourceOf(projectDir));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("Subscriber 'onFoo' index 0");
+    expect(message).toContain(file);
+    expect(message).toContain('queue sub edit onFoo --index 0 --name <name>');
+    expect(message).not.toContain('--scope');
   });
 });
 

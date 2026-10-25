@@ -20,7 +20,7 @@ State: `queue-cli@2026.10.25-227-4d63406d` installed, CI green up to `4d63406`. 
 
 ## Waiting for the user
 
-- Name the subscribers of the real config by hand (`queue sub edit <event> --index N --name <name>`; today `test.event[0]` and `test.event[1]` in `~/.config/queue/subscribers.yml` and others are unnamed). Then: an unnamed subscriber fails to load with the file, the entry and the `queue sub edit` command; drop `legacyId` and the legacy-id lookup of retry.
+Nothing. Subscriber names are required: the real config was cleaned (test subscribers removed, backups `*.bak-2026-10-25` next to each file) and named; an unnamed subscriber fails to load with the file, the entry and the fix; `legacyId` and the legacy-id lookup of retry are gone.
 
 ## Working notes (what cost time)
 

@@ -26,7 +26,7 @@ function makeEnvelope(): EventEnvelope {
 function makeSub(id: string, command = 'echo ok'): ResolvedSubscriber {
   return {
     subscriberId: id,
-    legacyId: id,
+    name: id,
     file: "subscribers.yml",
     scope: "global",
     event: 'beforeTicket.create',

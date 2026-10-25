@@ -14,12 +14,10 @@ export interface EventEnvelope {
 }
 
 export interface ResolvedSubscriber {
-  /** Stable identity stored in the WAL, DLQ, history and logs: '<name>' (global file) or '<project>/<name>' when named, else the position-based id, scoped with '<project>/' in a project file. */
+  /** Stable identity stored in the WAL, DLQ, history and logs: '<name>' (global file) or '<project id>/<name>' (project file). */
   subscriberId: string;
-  /** Position-based id ('<event>[<index>]') that entries written before names and scopes carry. */
-  legacyId: string;
-  /** The optional 'name' of the subscriber in subscribers.yml. */
-  name?: string;
+  /** The 'name' of the subscriber in subscribers.yml (required). */
+  name: string;
   /** The subscribers.yml it comes from, and whether that is the global one or the one of a project. */
   file: string;
   scope: 'global' | 'project';

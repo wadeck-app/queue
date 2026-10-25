@@ -3,7 +3,7 @@ import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
 import { HistoryLog } from '../storage/HistoryLog.js';
-import { ConfigLoader, resolveProjectName, unnamedSubscriberAdvice } from '../ConfigLoader.js';
+import { ConfigLoader, resolveProjectName } from '../ConfigLoader.js';
 import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
 import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
@@ -47,22 +47,12 @@ export interface QueueService {
   eventLogger: EventLogger;
 }
 
-/**
- * The subscriber a WAL or DLQ entry was written for: the exact id, else (entries written before names and project scopes)
- * the one subscriber whose position id matches. Two matches are ambiguous (a global and a project subscriber at the
- * same position): none is picked, the caller reports "no longer exists" rather than running the wrong command.
- */
+/** The subscriber a WAL or DLQ entry was written for, by its id; none when it was renamed or removed (the caller reports "no longer exists"). */
 function findSubscriber(subscribers: ResolvedSubscriber[], entrySubscriberId: string): ResolvedSubscriber | undefined {
-  const exact = subscribers.find((s) => s.subscriberId === entrySubscriberId);
-  if (exact !== undefined) {
-    return exact;
-  }
-  const legacy = subscribers.filter((s) => s.legacyId === entrySubscriberId);
-  return legacy.length === 1 ? legacy[0] : undefined;
+  return subscribers.find((s) => s.subscriberId === entrySubscriberId);
 }
 
 export function createQueueService(configDir: string, options: QueueServiceOptions = {}): QueueService {
-  const warnedUnnamed = new Set<string>();
   // What was already said, once per daemon run: a push happens many times and the same sentence each time would hide the others
   const saidOnce = new Set<string>();
   const projectResolver = options.registryDir === undefined ? undefined : new ProjectResolver(options.registryDir);
@@ -164,15 +154,6 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           const reason = getErrorMessage(err);
           eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `config error for event ${req.event}: ${reason}` });
           return { status: 'aborted', reason, eventId: envelope.id };
-        }
-
-        // Once per subscriber and per daemon run, before the filter (a subscriber whose `when` never matches is still unnamed)
-        for (const sub of subscribers) {
-          const advice = unnamedSubscriberAdvice(sub);
-          if (advice !== undefined && !warnedUnnamed.has(sub.subscriberId)) {
-            warnedUnnamed.add(sub.subscriberId);
-            eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: advice });
-          }
         }
 
         const filtered = subscribers.filter(sub => {

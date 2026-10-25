@@ -28,7 +28,7 @@ function makeEnvelope(): EventEnvelope {
 function makeSub(id: string): ResolvedSubscriber {
   return {
     subscriberId: id,
-    legacyId: id,
+    name: id,
     file: "subscribers.yml",
     scope: "global",
     event: 'onTicket.created',

@@ -164,10 +164,14 @@ function assertValidName(event: string, index: number, name: string, filePath: s
 
 function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: ResolveContext): ResolvedSubscriber {
   assertDispatchable(event, index, raw, ctx.filePath);
-  if (raw.name !== undefined) {
-    assertValidName(event, index, raw.name, ctx.filePath);
+  const name = raw.name;
+  if (name === undefined) {
+    throw new Error(
+      `[queue] Subscriber '${event}' index ${index} in ${ctx.filePath} has no name: a name tells the dashboard, the history, the DLQ and the logs who listens, and survives a reorder of the list.\n` +
+      `Fix: add 'name: <name>' to the entry (${SUBSCRIBER_NAME_FORMAT}), or run: queue sub edit ${event} --index ${index} --name <name>${ctx.kind === 'project' ? ' --scope project' : ''}`
+    );
   }
-  const legacyId = `${event}[${index}]`;
+  assertValidName(event, index, name, ctx.filePath);
 
   // cwd resolution: subscriber > event > global > file default (project root)
   const fileDefaultCwd = ctx.fileDir;
@@ -187,9 +191,8 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   })();
 
   return {
-    subscriberId: `${ctx.idPrefix}${raw.name ?? legacyId}`,
-    legacyId,
-    name: raw.name,
+    subscriberId: `${ctx.idPrefix}${name}`,
+    name,
     file: ctx.filePath,
     scope: ctx.kind,
     ...(ctx.via !== undefined && { via: ctx.via }),
@@ -208,29 +211,9 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   };
 }
 
-/**
- * What to tell the owner of a subscriber that has no name (names will become mandatory), or undefined when it has one.
- * The fix is one command: `queue sub edit` with only --name keeps the rest of the entry.
- */
-export function unnamedSubscriberAdvice(sub: ResolvedSubscriber): string | undefined {
-  if (sub.name !== undefined) {
-    return undefined;
-  }
-  const position = /^(.*)\[(\d+)\]$/.exec(sub.legacyId);
-  const event = position?.[1] ?? sub.event;
-  const index = position?.[2] ?? '0';
-  return (
-    `subscriber ${sub.subscriberId} (event '${event}', ${sub.file}) has no name: a name tells the dashboard, the history, the DLQ and the logs who listens, ` +
-    `survives a reorder of the list, and will become mandatory. Fix: queue sub edit ${event} --index ${index} --name <name>${sub.scope === 'project' ? ' --scope project' : ''}`
-  );
-}
-
 function assertUniqueNames(event: string, resolved: ResolvedSubscriber[], filePath: string): void {
   const seen = new Set<string>();
   for (const sub of resolved) {
-    if (sub.name === undefined) {
-      continue;
-    }
     if (seen.has(sub.name)) {
       throw new Error(
         `[queue] Duplicate subscriber name '${sub.name}' on event '${event}' in ${filePath}: a name identifies one subscriber of an event within its file.\n` +

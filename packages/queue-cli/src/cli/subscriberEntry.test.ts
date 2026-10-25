@@ -103,7 +103,7 @@ describe('renameSubscriber (queue sub edit with --name only)', () => {
 describe('unnamedLine', () => {
   it('warns about a subscriber without a name and gives the one command that names it', () => {
     expect(unnamedLine('onFoo', 2, 'global')).toBe(
-      "[warn] subscriber onFoo[2] has no name: names tell the dashboard, the history and the DLQ who listens and will become mandatory. Fix: queue sub edit onFoo --index 2 --name <name>",
+      "[warn] subscriber onFoo[2] has no name: a name is required, so the daemon refuses to load this file. Fix: queue sub edit onFoo --index 2 --name <name>",
     );
   });
 

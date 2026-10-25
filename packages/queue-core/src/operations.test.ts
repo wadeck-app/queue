@@ -93,12 +93,12 @@ describe('listQueueSubscribers', () => {
   }
 
   it('lists every subscriber configured for the project', async () => {
-    const registryDir = await registerWithSubscribers('subscribers:\n  onA:\n    - type: cli\n      command: echo a\n  onB:\n    - type: cli\n      command: echo b\n');
+    const registryDir = await registerWithSubscribers('subscribers:\n  onA:\n    - type: cli\n      name: a\n      command: echo a\n  onB:\n    - type: cli\n      name: b\n      command: echo b\n');
     expect(listQueueSubscribers(configDir, { cwd: projectDir, registryDir }).map(s => s.event).sort()).toEqual(['onA', 'onB']);
   });
 
   it('filters to the subscribers matching one event', async () => {
-    const registryDir = await registerWithSubscribers('subscribers:\n  onA:\n    - type: cli\n      command: echo a\n  onB:\n    - type: cli\n      command: echo b\n');
+    const registryDir = await registerWithSubscribers('subscribers:\n  onA:\n    - type: cli\n      name: a\n      command: echo a\n  onB:\n    - type: cli\n      name: b\n      command: echo b\n');
     expect(listQueueSubscribers(configDir, { cwd: projectDir, event: 'onB', registryDir }).map(s => s.event)).toEqual(['onB']);
   });
 
@@ -118,7 +118,7 @@ describe('listQueueSubscribers', () => {
 
   it('refuses a .queue/subscribers.yml found above the working directory instead of listing nothing', () => {
     mkdirSync(join(projectDir, '.queue'), { recursive: true });
-    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), 'subscribers:\n  onA:\n    - type: cli\n      command: echo a\n');
+    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), 'subscribers:\n  onA:\n    - type: cli\n      name: a\n      command: echo a\n');
     expect(() => listQueueSubscribers(configDir, { cwd: projectDir, registryDir: join(configDir, 'no-registry') })).toThrow(/no longer read/);
   });
 });
