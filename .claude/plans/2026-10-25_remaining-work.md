@@ -1,44 +1,36 @@
-# Queue: remaining work after 2026-10-25
+# Queue: remaining work after 2026-10-25 (second session)
 
-State at the end of the session: `queue-cli@2026.10.25-221-3efae3a2` installed, commit `57ba756` pushed (CI not yet read). The WAL and the DLQ of the real queue were emptied on request (69 stale test entries moved to the DLQ and cleared; 3 layout fixtures given up and cleared). The running daemon is pid 7912 on release 221.
+State: `queue-cli@2026.10.25-227-4d63406d` installed, CI green up to `4d63406`. Daemon stopped after the update (starts on the next push).
 
-## Done and verified live (do not redo)
+## Done and verified (do not redo)
 
-- Event page `/modules/queue/events/:name`: description, facts badges, source badge, editable payload with Validate (ajv, problems table) and a rocket enabled only for the validated current text, schema, filterable fields, wait command. Seen working at `http://localhost:5173/modules/queue/events/onTaskCreated`.
-- Pending page: stuck warning in a card with its action, row actions first, state+attempts in one cell, last error and whole id in the expanded row (checked at 1400, 1000 and 800 px).
-- `queue wait`: several events (`--all`/`--any`), 30m default for events AND for `wait ci` (one constant `WAIT_DEFAULT_TIMEOUT`).
-- Subscriber names (optional `name`, ids `<name>` global / `<project id>/<name>` project, `legacyId`, warnings, `sub edit --name` alone). No migration command, by the user's decision.
-- project-sdk: registry lookup per push, `projectId` in history/WAL/DLQ meta, protocol 1.2.0 `project`, `queue push --project|-p`, `QUEUE_PROJECT`, SDK `project` option, `--project` on `queue history` and `queue dlq list`, subscribers read from `projectToolDir(...,'queue','config')` (parents too), `--scope project` writes there.
-- Daemon/CLI version mismatch warning; dev-build guard from shared-cli; `wait ci` exit-3 diagnostic; docs note that the personal GitHub account is deliberately not relayed.
+- Event page, Pending page, `queue wait` (several events, 30m default), subscriber names, project-sdk integration (registry lookup, `projectId` everywhere, protocol 1.2.0 `project`), version-mismatch warning, `wait ci` diagnostics: see git log.
+- A `.queue/subscribers.yml` above the cwd is no longer read: `ConfigLoader` throws an error naming the file and its destination; `queue sub --scope project` outside a registered project refuses (`71bd3b5`).
+- `queue status --project`; project selector on the History and DLQ pages (`GET /projects`) (`058603c`).
+- Push contract fixture covers `project` (`8f33fc1`).
+- Top Events shows 10 events and fills its tile (`4d63406`). With fewer events the blank under the table returns: a DataTable does not stretch.
 
-## To do, in this order
+## Decisions taken (do not reopen)
 
-1. Read the CI of `57ba756`, then `queue cli update`.
-2. Remove the walk-up of `.queue/subscribers.yml` for good: make it a loud error naming the file and its destination (condition: no legacy file in use; project-owner already moved the two known ones). Remove `meta.projectName`-from-folder only if the user decides (users write `when: meta.projectName=...`).
-3. `--project` on `queue status` (counts filtered by `meta.projectId`); project selector in the History/DLQ dashboard pages (today only the URL parameter).
-4. queue-sdk contract fixture for `project` (the contract harness has no registry; add one).
-5. Step 2 of the subscriber names, once the user has named the subscribers of the real config by hand: unnamed subscriber fails to load with the file, the entry and `queue sub edit <event> --index N --name <name>`; then drop `legacyId` and the legacy-id lookup of retry.
-6. Entries written with the old `<folder>/` id prefix are no longer found after the switch to `<project id>/`: nothing planned (only stale test entries); decide if that is acceptable.
-7. Dashboard: Top Events keeps ~100 px of blank under its table (a DataTable never stretches); other widgets fill their tile.
+- Entries written with the old `<folder>/` id prefix are no longer found: accepted, only stale test entries existed.
+- `meta.projectName` (folder name) stays: `when: meta.projectName=...` is in use.
+- After an update the daemon is not stopped automatically: `queue status` and every command warn; `queue stop` is manual.
+- The personal GitHub account stays unrelayed: poll with `gh run list`.
+- The bulk "Give up all the stuck events" button is not clicked on real data (nothing stuck now).
 
-## Decisions waiting for the user
+## Waiting for the user
 
-- Stop the running daemon after an update automatically? Today only a warning (`queue stop` is manual).
-- A webhook for the personal GitHub account, or keep polling with `gh run list` (current choice: not relayed on purpose).
-- Click the "Give up all the stuck events" bulk button on real data (it works; the stale data is gone).
+- Name the subscribers of the real config by hand (`queue sub edit <event> --index N --name <name>`; today `test.event[0]` and `test.event[1]` in `~/.config/queue/subscribers.yml` and others are unnamed). Then: an unnamed subscriber fails to load with the file, the entry and the `queue sub edit` command; drop `legacyId` and the legacy-id lookup of retry.
 
 ## Working notes (what cost time)
 
-- Hooks: no `node -e` (blocked), no `rm` of files not created in the session (move them), no inline `eval`; write scripts with the Write tool, not heredocs containing `\\n` (the shell layer turns it into a real newline); sed with `\n` has the same problem, use the Edit tool.
-- Never chain `git commit && git push` after a test run with `;` (it pushed a red test once); use `&&`.
-- `git-commit-push` needs the user to run `/w-guardrails:request-bypass-gcp4h` when it expires (4 h).
+- Hooks: no `node -e` (blocked, and a blocked command runs nothing), no `rm` of files not created in the session, no inline `eval`; write scripts with the Write tool, not heredocs; a `\\n` in a bash command becomes a real newline, and so does `\n` written through a generated script: edit the final file with the Edit tool.
+- Never chain `git commit && git push` after a test run with `;`; use `&&`.
+- `git-commit-push` needs `/w-guardrails:request-bypass-gcp4h` when it expires (4 h).
 - Lockfile pins win over `latest`: bump one entry with `npm install <pkg>@latest -w <workspace>`, then restore `"latest"` in `package.json` and the lock spec.
-- Visual checks: register the WIP module with `curl -X POST http://127.0.0.1:4850/api/modules/register` right before the screenshot (a daemon restart or `queue cli update` re-registers the published one); agent-browser needs a `snapshot -i` before refs exist; wait ~10 s after `open`.
+- Visual checks: `BUNDLE_VERSION=0.0.0-wip npm run bundle` in `packages/app-module-queue`, then `POST http://127.0.0.1:4850/api/modules/register` with `{"id":"queue","source":{"type":"file","path":"<abs>/dist-module/manifest.json"}}`; `queue cli update` re-registers the published one. agent-browser needs a `snapshot -i` before refs exist; wait ~10 s after `open`; always `close` the session.
+- `queue cli update`, `queue --version` and `queue wait ci` need `--cli-foreground` to print anything when stdin is not a TTY. `queue wait` takes durations like `15m`, not bare numbers.
+- The registry CLI is `project` (not `queue project`); `project show` lists a project's tool folders.
+- Tests of the CLI that read the registry set `XDG_CONFIG_HOME` to a temp dir.
 - A daemon stops itself when the WAL is empty; after a CLI update the running daemon keeps the old code until `queue stop`.
 - Do not run `queue wait ci` for the personal account repositories (exit 3 is expected).
-
-## Prompt to paste after /clear
-
-```
-Tu reprends le travail du repo queue (C:\Workspace_Tooling\queue), session précédente: queue-owner. Lis d'abord .claude/plans/2026-10-25_remaining-work.md (état, ordre des tâches, décisions en attente, pièges de l'environnement), puis CLAUDE.md du projet et celui de l'utilisateur. Réponds en français avec accents; code et docs en anglais. Travaille en TDD, vérifie chaque changement d'interface dans le navigateur avec agent-browser (réenregistre le module WIP juste avant), lance npm test et violations check avant chaque commit, enchaîne commit/push avec &&, puis attends la CI avec queue wait ci <sha> --cli-foreground en arrière-plan et fais queue cli update quand elle est verte. Commence par la tâche 1 de la liste, puis continue dans l'ordre sans demander mon accord sauf pour les décisions listées comme en attente. Si la dérogation git-commit-push a expiré, dis-le moi: je lance /w-guardrails:request-bypass-gcp4h.
-```
