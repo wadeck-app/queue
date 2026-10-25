@@ -24,6 +24,8 @@ export interface QueueBreakdown {
   topEvents: EventCount[];
   /** Pushes of the events that did not make the top. */
   otherEvents: number;
+  /** A line for the page under the top ("5 more pushes of other events"; it links to the Events page), empty when there is none. */
+  otherText: string;
   /** The busiest subscribers of the period (most dispatches first), with how their dispatches ended. */
   subscribers: SubscriberStats[];
 }
@@ -53,5 +55,7 @@ export function getBreakdown(configDir: string, nowMs: number = Date.now(), wind
     .sort((a, b) => b.delivered + b.failedAttempts + b.givenUp - (a.delivered + a.failedAttempts + a.givenUp) || a.subscriberId.localeCompare(b.subscriberId))
     .slice(0, TOP_SUBSCRIBERS);
 
-  return { topEvents, otherEvents: byEvent.slice(TOP_EVENTS).reduce((total, e) => total + e.count, 0), subscribers };
+  const otherEvents = byEvent.slice(TOP_EVENTS).reduce((total, e) => total + e.count, 0);
+  const otherText = otherEvents === 0 ? '' : `${otherEvents} more ${otherEvents === 1 ? 'push' : 'pushes'} of other events`;
+  return { topEvents, otherEvents, otherText, subscribers };
 }

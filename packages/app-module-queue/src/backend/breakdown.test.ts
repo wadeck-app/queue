@@ -53,6 +53,13 @@ describe('getBreakdown', () => {
     expect(otherEvents).toBe(3);
   });
 
+  it('says what the top leaves out in one line, and nothing when there is nothing', () => {
+    writeHistory('2026-01-02', Array.from({ length: TOP_EVENTS + 1 }, (_, i) => trigger(`on${String(i).padStart(2, '0')}`)));
+    expect(getBreakdown(configDir, NOW).otherText).toBe('1 more push of other events');
+    writeHistory('2026-01-02', Array.from({ length: TOP_EVENTS + 4 }, (_, i) => trigger(`on${String(i).padStart(2, '0')}`)));
+    expect(getBreakdown(configDir, NOW).otherText).toBe('4 more pushes of other events');
+  });
+
   it('gives each subscriber its outcomes and, from the dispatch log, its average and slowest run', () => {
     writeHistory('2026-01-02', [outcome('a[0]', 'success'), outcome('a[0]', 'success'), outcome('a[0]', 'failed'), outcome('b[0]', 'dlq')]);
     writeLog('2026-01-02', [dispatch('a[0]', 100), dispatch('a[0]', 301)]);
@@ -75,7 +82,7 @@ describe('getBreakdown', () => {
   });
 
   it('is empty when nothing was recorded, whether the folders are empty or missing', () => {
-    expect(getBreakdown(configDir, NOW)).toEqual({ topEvents: [], otherEvents: 0, subscribers: [] });
-    expect(getBreakdown(join(configDir, 'nowhere'), NOW)).toEqual({ topEvents: [], otherEvents: 0, subscribers: [] });
+    expect(getBreakdown(configDir, NOW)).toEqual({ topEvents: [], otherEvents: 0, otherText: '', subscribers: [] });
+    expect(getBreakdown(join(configDir, 'nowhere'), NOW)).toEqual({ topEvents: [], otherEvents: 0, otherText: '', subscribers: [] });
   });
 });

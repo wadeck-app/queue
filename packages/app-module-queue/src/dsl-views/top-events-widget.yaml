@@ -2,9 +2,21 @@ $sources:
   breakdown:
     url: GET /api/modules/queue/breakdown
 
-$type: DataTable
-rows: $sources.breakdown.topEvents
-emptyMessage: No event in the last 24 h
-columns:
-  - { key: "event", label: "Top events, last 24 h", href: "/modules/queue/history?event={event}" }
-  - { key: "count", label: "Pushed" }
+# The table fills the tile and scrolls inside it (fill); under it, what the top leaves out, with the way to all of it.
+$type: VerticalStack
+gap: gap-2
+fill: true
+items:
+  - $type: DataTable
+    fill: true
+    rows: $sources.breakdown.topEvents
+    emptyMessage: No event in the last 24 h
+    columns:
+      - { key: "event", label: "Top events, last 24 h", href: "/modules/queue/history?event={event}" }
+      - { key: "count", label: "Pushed" }
+  - $type: Badge
+    $if: $sources.breakdown.otherText
+    label: $sources.breakdown.otherText
+    href: "/modules/queue/events"
+    tone: subtle
+    size: sm

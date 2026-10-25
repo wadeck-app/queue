@@ -84,8 +84,8 @@ describe('where the numbers lead', () => {
     expect(hrefsOf('activity-widget.yaml')).toEqual(['/modules/queue/?range=1h', '/modules/queue/?range=1h', '/modules/queue/?range=24h']);
   });
 
-  it('the top events lead to the history of that event', () => {
-    expect(hrefsOf('top-events-widget.yaml')).toEqual(['/modules/queue/history?event={event}']);
+  it('the top events lead to the history of that event, and what they leave out to the events', () => {
+    expect(hrefsOf('top-events-widget.yaml')).toEqual(['/modules/queue/history?event={event}', '/modules/queue/events']);
   });
 
   it('the relay badge in the navbar leads to the webhooks page', () => {

@@ -15,9 +15,11 @@ describe('top-events-widget.yaml', () => {
 
   it('is a table of the events pushed most in the last 24 h, from the breakdown route', () => {
     expect((doc['$sources'] as Record<string, Node>)['breakdown']?.['url']).toBe('GET /api/modules/queue/breakdown');
-    expect(doc['$type']).toBe('DataTable');
-    expect(doc['rows']).toBe('$sources.breakdown.topEvents');
-    expect(columnKeys(doc)).toEqual(['event', 'count']);
+    const [table, other] = doc['items'] as Node[];
+    expect(table).toMatchObject({ $type: 'DataTable', fill: true, rows: '$sources.breakdown.topEvents' });
+    expect(columnKeys(table!)).toEqual(['event', 'count']);
+    // what the top leaves out, under the table
+    expect(other).toMatchObject({ $type: 'Badge', $if: '$sources.breakdown.otherText', label: '$sources.breakdown.otherText', href: '/modules/queue/events' });
   });
 });
 
