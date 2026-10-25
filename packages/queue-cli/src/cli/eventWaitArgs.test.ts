@@ -4,16 +4,16 @@ import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS } from './eventWaitArgs.js';
 const NOW = Date.parse('2026-10-18T12:00:00.000Z');
 
 describe('parseEventWaitArgs', () => {
-  it('defaults: only events after now, 15 minutes, human output', () => {
+  it('defaults: only events after now, 30 minutes, the first event that happens, human output', () => {
     expect(parseEventWaitArgs(['onStatusChange'], NOW)).toEqual({
       ok: true,
-      options: { event: 'onStatusChange', whens: [], sinceMs: NOW, timeoutMs: 15 * 60_000, pollMs: 500, json: false },
+      options: { targets: [{ event: 'onStatusChange', whens: [] }], mode: 'any', sinceMs: NOW, timeoutMs: 30 * 60_000, pollMs: 500, json: false },
     });
   });
 
   it('collects every repeated --when', () => {
     const result = parseEventWaitArgs(['onStatusChange', '--when', 'payload.taskId=abc', '--when', 'payload.newStatus=done'], NOW);
-    expect(result).toMatchObject({ ok: true, options: { whens: ['payload.taskId=abc', 'payload.newStatus=done'] } });
+    expect(result).toMatchObject({ ok: true, options: { targets: [{ event: 'onStatusChange', whens: ['payload.taskId=abc', 'payload.newStatus=done'] }] } });
   });
 
   it('--timeout and --json', () => {
@@ -65,10 +65,51 @@ describe('parseEventWaitArgs --strict', () => {
   });
 
   it('--strict turns it on and is not taken for the event name', () => {
-    expect(parseEventWaitArgs(['--strict', 'onFoo'], NOW)).toMatchObject({ ok: true, options: { event: 'onFoo', strict: true } });
+    expect(parseEventWaitArgs(['--strict', 'onFoo'], NOW)).toMatchObject({ ok: true, options: { targets: [{ event: 'onFoo' }], strict: true } });
   });
 
   it('is a known flag', () => {
     expect(EVENT_WAIT_KNOWN_FLAGS).toContain('--strict');
+  });
+});
+
+describe('parseEventWaitArgs: several events at once', () => {
+  it('every name starts a wait, and a --when belongs to the event written before it', () => {
+    const result = parseEventWaitArgs(['onTaskDone', '--when', 'payload.taskId=abc', 'onTaskFailed', '--when', 'payload.taskId=abc', '--when', 'payload.code=1'], NOW);
+    expect(result).toMatchObject({
+      ok: true,
+      options: {
+        mode: 'any',
+        targets: [
+          { event: 'onTaskDone', whens: ['payload.taskId=abc'] },
+          { event: 'onTaskFailed', whens: ['payload.taskId=abc', 'payload.code=1'] },
+        ],
+      },
+    });
+  });
+
+  it('the same event can be waited for twice with different filters', () => {
+    const result = parseEventWaitArgs(['onStatusChange', '--when', 'payload.newStatus=done', 'onStatusChange', '--when', 'payload.newStatus=blocked'], NOW);
+    expect(result).toMatchObject({ ok: true, options: { targets: [{ whens: ['payload.newStatus=done'] }, { whens: ['payload.newStatus=blocked'] }] } });
+  });
+
+  it('flags for the whole wait can come anywhere and are not taken for events', () => {
+    const result = parseEventWaitArgs(['--timeout', '1h', 'onA', '--json', 'onB', '--all'], NOW);
+    expect(result).toMatchObject({ ok: true, options: { mode: 'all', timeoutMs: 3_600_000, json: true, targets: [{ event: 'onA' }, { event: 'onB' }] } });
+  });
+
+  it('refuses a --when written before any event, saying that a filter belongs to the event before it', () => {
+    const result = parseEventWaitArgs(['--when', 'payload.a=1', 'onFoo'], NOW);
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { message: string }).message).toContain('belongs to the event written before it');
+  });
+
+  it('refuses --all together with --any', () => {
+    const result = parseEventWaitArgs(['onA', 'onB', '--all', '--any'], NOW);
+    expect((result as { message: string }).message).toContain('exclude each other');
+  });
+
+  it('knows --all and --any', () => {
+    expect(EVENT_WAIT_KNOWN_FLAGS).toEqual(expect.arrayContaining(['--all', '--any']));
   });
 });

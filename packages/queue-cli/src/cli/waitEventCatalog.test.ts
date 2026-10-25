@@ -95,4 +95,19 @@ describe('queue wait <event> and the event catalog', () => {
     expect(stderr).not.toContain('not declared');
     expect(stderr).not.toContain('No program declared');
   });
+
+  it('waits for several events at once with the real history: the one that happened ends the wait, each name is checked against the catalog', async () => {
+    declare('job.completed');
+    recordPush('job.completed');
+    expect(await wait('job.failed', 'job.completed')).toBe(0);
+    expect(stdout).toContain('job.completed');
+    expect(stderr).toContain('"job.failed" is not declared by any program');
+    expect(stderr).toContain('wait 2 of 2 matched: job.completed');
+  });
+
+  it('--strict refuses the whole wait when one of several names is undeclared', async () => {
+    declare('job.completed');
+    recordPush('job.completed');
+    expect(await wait('job.completed', 'job.faild', '--strict')).toBe(4);
+  });
 });

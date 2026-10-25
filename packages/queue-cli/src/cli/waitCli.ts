@@ -10,12 +10,12 @@ import { ciWaitCommand, parseGithubRepo, type CiWaitCommandOptions } from './ciW
 import { createGitPort, inspectRepository, type GitPort } from './ciGit.js';
 import { eventWaitCommand } from './eventWaitCommand.js';
 import { RelayOnDemand, isRelaySourcedEvent } from './relayOnDemand.js';
-import { checkDeclaration, lastSeenAtOf, refuseUndeclared, undeclaredWarning } from './eventWaitCatalog.js';
+import { checkDeclaration, lastSeenAtOf, refuseUndeclared, undeclaredWarning, type DeclarationCheck } from './eventWaitCatalog.js';
 import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE } from './eventWaitArgs.js';
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
 Usage:
-  queue wait <event> [--when <expr>]... [--since <duration|time>] [--timeout <duration>] [--json] [--strict]
+  queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--json] [--strict]
   queue wait ci [<sha>] [--repo <owner/name>] [--workflow <name>]... [--timeout <duration>] [--settle <duration>] [--no-infer] [--json]
 
 queue wait <event>: blocks until a queue event of that name is recorded (any "queue push" is, even with no subscriber).
@@ -23,7 +23,8 @@ queue wait <event>: blocks until a queue event of that name is recorded (any "qu
                      "payload.taskId=abc" or a JSONPath such as "$.payload.newStatus". Repeatable: all must hold
   --since <d|time>   Count events recorded since then: a duration back from now (10m, 2h) or a time (2026-10-18T11:00:00Z).
                      Default: only events recorded after the command started
-  --timeout <d>      Give up after this long (default 15m)
+  --timeout <d>      Give up after this long (default 30m)
+  --all              With several events: wait until every one has happened. Default (--any): the first one ends the wait
   --json             Machine-readable result on stdout ({"matched":true,"entry":{...}} or {"matched":false,"timedOut":true,...}),
                      plus "declared" (is the name in the event catalog), "suggestions" (nearest declared names) and, on a
                      timeout, "lastSeenAt" (last push of that name in the last 7 days, null = none: a typo or a rename,
@@ -31,6 +32,11 @@ queue wait <event>: blocks until a queue event of that name is recorded (any "qu
   --strict           An event name that no program declared exits 4 at once, with the nearest declared names. Without it the
                      wait goes on (old and undeclared producers exist) and warns on stderr with the same suggestions
   Example: queue wait onStatusChange --when "payload.taskId=abc" --when "payload.newStatus=done" --since 5m
+  Several events at once: write them one after the other; a --when belongs to the event written before it, so each event has its own
+  filters. The first that happens ends the wait and says which one ("target" in --json, the position of the wait):
+    queue wait onTaskDone --when "payload.taskId=abc" onTaskFailed --when "payload.taskId=abc" --timeout 1h
+  With --all the result is every match ({"matched":true,"mode":"all","entries":[{"target":0,"entry":{...}},...]}), and a timeout lists
+  the waits that were not satisfied.
   It answers at once when a matching event was recorded since --since, so there is no race with the thing you waited for.
   Find the names, the payload paths for --when and a ready command with "queue events list" and "queue events show <name>".
   Exit codes: 0 matched | 2 timeout | 4 invalid usage / --strict on an undeclared name. "ci" is reserved for the command below.
@@ -70,7 +76,7 @@ function fail(message: string): number {
   return CI_EXIT.USAGE;
 }
 
-/** `queue wait <event> ...`: any target other than "ci" is the name of a queue event. */
+/** `queue wait <event> ...`: any target other than "ci" is the name of a queue event (or of several). */
 async function eventWait(configDir: string, args: string[], startRelay: StartRelay): Promise<number> {
   warnUnknownArgs(args.filter((arg) => arg.startsWith('-')), EVENT_WAIT_KNOWN_FLAGS, 'queue wait', EVENT_WAIT_FLAGS_WITH_VALUE);
   const parsed = parseEventWaitArgs(args, Date.now());
@@ -82,20 +88,28 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
 
   // The catalog is read-only help: an undeclared name still waits (old and undeclared producers exist) unless --strict.
   // The events of the relay (on.<source>.<type>) are produced by the relay, nobody declares them: they are not checked.
-  const relaySourced = isRelaySourcedEvent(options.event);
-  const declaration = checkDeclaration(configDir, options.event, Date.now());
-  if (!relaySourced && !declaration.declared) {
-    if (options.strict) {
-      return refuseUndeclared(options.event, declaration, options.json, { stdout: process.stdout, stderr: process.stderr });
+  const declarations: Record<string, DeclarationCheck> = {};
+  for (const { event } of options.targets) {
+    if (isRelaySourcedEvent(event) || event in declarations) {
+      continue;
     }
-    process.stderr.write(`${undeclaredWarning(options.event, declaration)}\n`);
+    const declaration = checkDeclaration(configDir, event, Date.now());
+    declarations[event] = declaration;
+    if (!declaration.declared) {
+      if (options.strict) {
+        return refuseUndeclared(event, declaration, options.json, { stdout: process.stdout, stderr: process.stderr });
+      }
+      process.stderr.write(`${undeclaredWarning(event, declaration)}\n`);
+    }
   }
-  process.stderr.write(`[info] waiting for ${options.event}${options.whens.length ? ` where ${options.whens.join(' and ')}` : ''} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
+  const what = options.targets.map((target) => (target.whens.length ? `${target.event} where ${target.whens.join(' and ')}` : target.event));
+  const joined = options.targets.length > 1 ? `${options.mode === 'all' ? 'all of' : 'any of'}: ${what.join('; ')}` : what[0]!;
+  process.stderr.write(`[info] waiting for ${joined} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
 
   // An event named on.<source>.<type> only arrives through the relay: make sure it runs while we wait for it
   let beforeFirstWait: (() => Promise<void>) | undefined;
-  if (isRelaySourcedEvent(options.event)) {
+  if (options.targets.some((target) => isRelaySourcedEvent(target.event))) {
     const onDemand = relayOnDemandFor(configDir, startRelay);
     onDemand.begin();
     beforeFirstWait = async () => {
@@ -106,13 +120,13 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
   }
 
   return eventWaitCommand(options, {
-    readEntries: (sinceMs) => reader.read({ event: options.event, sinceMs }),
+    readEntries: (event, sinceMs) => reader.read({ event, sinceMs }),
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     io: { stdout: process.stdout, stderr: process.stderr },
     beforeFirstWait,
-    ...(!relaySourced && { declaration: { declared: declaration.declared, suggestions: declaration.suggestions } }),
-    lastSeenAt: () => lastSeenAtOf(configDir, options.event, Date.now()),
+    declaration: Object.fromEntries(Object.entries(declarations).map(([event, check]) => [event, { declared: check.declared, suggestions: check.suggestions }])),
+    lastSeenAt: (event) => lastSeenAtOf(configDir, event, Date.now()),
   });
 }
 

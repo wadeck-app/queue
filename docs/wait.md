@@ -8,7 +8,21 @@ Blocks until a queue event of that name is recorded (any `queue push`, even with
 
 - `--when <expr>` (repeatable) keeps events whose payload satisfies the expression, same syntax as a subscriber's `when:`.
 - `--since <duration|time>` also counts events recorded earlier, so there is no race with the thing you waited for. Default: events recorded after the command started.
+- `--timeout <duration>` gives up after that long (default 30m; `30s`, `15m`, `2h`).
 - A name like `on.github.workflow_run` is a relayed event and needs the relay (see below).
+
+### Several events at once
+
+Write the events one after the other; a `--when` belongs to the event written before it, so each has its own filters (the same event may appear twice with different filters).
+
+```
+queue wait onTaskDone --when "payload.taskId=abc" onTaskFailed --when "payload.taskId=abc" --timeout 1h
+```
+
+- Default (`--any`): the first event that happens ends the wait and says which one (`wait 2 of 2 matched: ...` on stderr, `"target": 1` in `--json`, the position of the wait). When several already happened, the oldest wins.
+- `--all`: ends when every event has happened; `--json` gives `{"matched":true,"mode":"all","entries":[{"target":0,"entry":{...}},...]}`.
+- A timeout lists the waits that stayed open (in `--json`, `targets` with `matched` and, for the open ones, `lastSeenAt`).
+- `--strict` refuses the whole wait if one of the names is undeclared.
 
 ## `queue wait ci [<sha>]`
 
@@ -31,7 +45,7 @@ The relay does not replay events missed while it was down: a wait only sees even
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---------|---|---|---|---|---|
-| `wait <event>` | matched | - | timeout | - | invalid usage |
+| `wait <event>` | matched | - | timeout (`--timeout`, default 30m) | - | invalid usage |
 | `wait ci` | all runs `success`, `skipped` or `neutral` | a run failed, was cancelled or timed out | `--timeout` (default 15m) | no run seen for the commit, or relay not running | invalid usage |
 
 Exit 2 and 3 print the likely causes and `gh run list --commit <sha>` as a cross-check; GitHub does not redeliver lost webhooks.

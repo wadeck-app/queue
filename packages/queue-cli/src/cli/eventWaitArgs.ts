@@ -1,29 +1,16 @@
 import { PayloadFilter, getErrorMessage } from '@wadeck-app/queue-core';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
-import type { EventWaitOptions } from './eventWaitCommand.js';
+import type { EventWaitOptions, EventWaitTarget } from './eventWaitCommand.js';
 
 export const EVENT_WAIT_FLAGS_WITH_VALUE = new Set(['--when', '--since', '--timeout']);
-export const EVENT_WAIT_KNOWN_FLAGS = ['--when', '--since', '--timeout', '--json', '--strict', '--help', '-h'];
+export const EVENT_WAIT_KNOWN_FLAGS = ['--when', '--since', '--timeout', '--json', '--strict', '--all', '--any', '--help', '-h'];
 
-const DEFAULT_TIMEOUT = '15m';
+export const EVENT_WAIT_DEFAULT_TIMEOUT = '30m';
+
+const USAGE = 'queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--json] [--strict]';
 
 export type EventWaitArgs = { ok: true; options: EventWaitOptions } | { ok: false; message: string };
-
-function valuesOf(args: string[], flag: string): string[] | { missing: true } {
-  const values: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] !== flag) {
-      continue;
-    }
-    const value = args[i + 1];
-    if (value === undefined || value.startsWith('--')) {
-      return { missing: true };
-    }
-    values.push(value);
-  }
-  return values;
-}
 
 /** `--since`: a duration counted back from now ("10m"), or an absolute time ("2026-10-18T11:00:00Z"). */
 function parseSince(raw: string, nowMs: number): number | null {
@@ -35,38 +22,55 @@ function parseSince(raw: string, nowMs: number): number | null {
   }
 }
 
-/** `args` is everything after `queue wait`: the event name, then flags. */
+/**
+ * `args` is everything after `queue wait`: one or more events, each followed by its own `--when` filters, then the flags that
+ * apply to the whole wait. A `--when` belongs to the event written before it.
+ */
 export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs {
-  const event = args.find((arg, i) => !arg.startsWith('-') && !EVENT_WAIT_FLAGS_WITH_VALUE.has(args[i - 1] ?? ''));
-  if (!event) {
-    return { ok: false, message: 'No event name given. Usage: queue wait <event> [--when <expr>]... [--since <duration|time>] [--timeout <duration>] [--json] [--strict]' };
+  const targets: EventWaitTarget[] = [];
+  const singles: Record<string, string | undefined> = {};
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (EVENT_WAIT_FLAGS_WITH_VALUE.has(arg)) {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        return { ok: false, message: `${arg} needs a value.` };
+      }
+      i++;
+      if (arg === '--when') {
+        const current = targets[targets.length - 1];
+        if (current === undefined) {
+          return { ok: false, message: `--when "${value}" comes before any event: a filter belongs to the event written before it (queue wait <event> --when <expr>).` };
+        }
+        const problem = PayloadFilter.validate(value);
+        if (problem) {
+          return { ok: false, message: `--when: ${problem}` };
+        }
+        current.whens.push(value);
+      } else if (singles[arg] === undefined) {
+        singles[arg] = value;
+      }
+    } else if (!arg.startsWith('-')) {
+      targets.push({ event: arg, whens: [] });
+    }
   }
 
-  const collected: Record<string, string[]> = {};
-  for (const flag of EVENT_WAIT_FLAGS_WITH_VALUE) {
-    const values = valuesOf(args, flag);
-    if ('missing' in values) {
-      return { ok: false, message: `${flag} needs a value.` };
-    }
-    collected[flag] = values;
+  if (targets.length === 0) {
+    return { ok: false, message: `No event name given. Usage: ${USAGE}` };
   }
-
-  const whens = collected['--when']!;
-  for (const when of whens) {
-    const problem = PayloadFilter.validate(when);
-    if (problem) {
-      return { ok: false, message: `--when: ${problem}` };
-    }
+  if (args.includes('--all') && args.includes('--any')) {
+    return { ok: false, message: '--all and --any exclude each other: --any (the default) ends at the first event that happens, --all waits for every one.' };
   }
 
   let timeoutMs: number;
   try {
-    timeoutMs = parseDuration(collected['--timeout']![0] ?? DEFAULT_TIMEOUT);
+    timeoutMs = parseDuration(singles['--timeout'] ?? EVENT_WAIT_DEFAULT_TIMEOUT);
   } catch (err) {
     return { ok: false, message: `${getErrorMessage(err)} (durations look like 30s, 15m, 1h).` };
   }
 
-  const rawSince = collected['--since']![0];
+  const rawSince = singles['--since'];
   let sinceMs = nowMs;
   if (rawSince !== undefined) {
     const parsed = parseSince(rawSince, nowMs);
@@ -76,5 +80,16 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
     sinceMs = parsed;
   }
 
-  return { ok: true, options: { event, whens, sinceMs, timeoutMs, pollMs: FOLLOW_POLL_INTERVAL_MS, json: args.includes('--json'), ...(args.includes('--strict') && { strict: true }) } };
+  return {
+    ok: true,
+    options: {
+      targets,
+      mode: args.includes('--all') ? 'all' : 'any',
+      sinceMs,
+      timeoutMs,
+      pollMs: FOLLOW_POLL_INTERVAL_MS,
+      json: args.includes('--json'),
+      ...(args.includes('--strict') && { strict: true }),
+    },
+  };
 }
