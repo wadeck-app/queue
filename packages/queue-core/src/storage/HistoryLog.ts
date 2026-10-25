@@ -7,6 +7,8 @@ export interface TriggerHistoryEntry {
   eventId: string;
   event: string;
   project?: string;
+  /** Id of the registered project (project-sdk) of the working directory; absent for a directory in no registered project. */
+  projectId?: string;
   matchedCount: number;
   totalCount: number;
   /** Original push payload, so `queue replay <eventId>` can resubmit it unchanged. */

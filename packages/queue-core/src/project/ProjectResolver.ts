@@ -1,0 +1,45 @@
+import { findProjectForPath, loadRegistry } from '@wadeck-app/project-sdk';
+import { getErrorMessage } from '../errors.js';
+
+export interface EventProject {
+  /** 8 lowercase hex characters, immutable: the key records carry. */
+  id: string;
+  name: string;
+}
+
+export type ProjectLookup =
+  | { kind: 'registered'; project: EventProject; path: string }
+  /** The cwd lies in no registered project: what applies (and what to do) is in `warning`. */
+  | { kind: 'unregistered'; warning: string }
+  /** The registry could not be read: `problem` says why and where. */
+  | { kind: 'unavailable'; problem: string };
+
+/**
+ * Which registered project (project-sdk registry) a working directory belongs to. The registry is read at each lookup: the daemon
+ * outlives `project add`, and a stale answer would keep warning about a project that is registered now.
+ */
+export class ProjectResolver {
+  private readonly registryDir: string;
+
+  constructor(registryDir: string) {
+    this.registryDir = registryDir;
+  }
+
+  lookup(cwd: string): ProjectLookup {
+    let match;
+    try {
+      match = findProjectForPath(loadRegistry(this.registryDir), cwd);
+    } catch (err) {
+      return { kind: 'unavailable', problem: `the project registry in ${this.registryDir} could not be read: ${getErrorMessage(err)}` };
+    }
+    if (match === undefined) {
+      return {
+        kind: 'unregistered',
+        warning:
+          `the working directory ${cwd} is not inside any registered project: only the global subscribers apply ` +
+          `(and a .queue/subscribers.yml found above it, as a transition). Fix: project add "${cwd}"`,
+      };
+    }
+    return { kind: 'registered', project: { id: match.project.id, name: match.project.name }, path: match.path };
+  }
+}

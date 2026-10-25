@@ -6,6 +6,8 @@ import { createQueueService } from './QueueService.js';
 import { readCatalog } from '../catalog/EventCatalog.js';
 import { Wal } from '../storage/Wal.js';
 import { waitFor } from '../waitFor.testUtil.js';
+import { addProject } from '@wadeck-app/project-sdk';
+import { isRecord } from '../isRecord.js';
 
 let configDir: string;
 let projectDir: string;
@@ -181,5 +183,82 @@ describe('retry of an entry written before subscriber names and scopes', () => {
     expect(await service.commands.retry({ eventId: 'evt-legacy' })).toEqual({ status: 'ok' });
     // the retry runs the subscriber: its process must be gone before the afterEach removes the directory it runs in
     await waitFor('the retry to finish', () => service.isIdle());
+  });
+});
+
+describe('push: the project of the working directory (project-sdk registry)', () => {
+  let registryDir: string;
+
+  beforeEach(() => {
+    registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+  });
+
+  afterEach(() => {
+    rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  // the messages of the log records (the lines are JSON: quotes and backslashes of a message are escaped there)
+  const logLines = (): string[] => {
+    const logsDir = join(configDir, 'logs');
+    return existsSync(logsDir)
+      ? readdirSync(logsDir)
+          .flatMap((file) => readFileSync(join(logsDir, file), 'utf-8').split('\n'))
+          .filter((line) => line !== '')
+          .map((line) => {
+            const record: unknown = JSON.parse(line);
+            return isRecord(record) ? String(record['message'] ?? '') : '';
+          })
+      : [];
+  };
+
+  const historyEntries = (): Array<Record<string, unknown>> => {
+    const dir = join(configDir, 'history');
+    return readdirSync(dir)
+      .flatMap((file) => readFileSync(join(dir, file), 'utf-8').split('\n'))
+      .filter((line) => line !== '')
+      .map((line) => {
+        const record: unknown = JSON.parse(line);
+        return isRecord(record) ? record : {};
+      });
+  };
+
+  it('records the id of the registered project the working directory belongs to in the history of the push', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir });
+    expect(historyEntries()[0]).toMatchObject({ event: 'onNobodyListens', projectId: project.id });
+    expect(logLines().filter((line) => line.includes('not inside any registered project'))).toEqual([]);
+  });
+
+  it('warns once per working directory, with the command that registers it, when no registered project contains it; the history has no project id', async () => {
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir });
+    await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir });
+    const warnings = logLines().filter((line) => line.includes('not inside any registered project'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(`project add "${projectDir}"`);
+    expect(historyEntries()[0]?.['projectId']).toBeUndefined();
+  });
+
+  it('logs an unreadable registry with its reason (once), and still delivers: the push does not fail because of the registry', async () => {
+    writeFileSync(join(registryDir, 'registry.json'), '{ not json');
+    const service = createQueueService(configDir, { registryDir });
+    const first = await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir });
+    await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir });
+    expect(first).toMatchObject({ status: 'queued' });
+    expect(logLines().filter((line) => line.includes('could not be read'))).toHaveLength(1);
+  });
+
+  it('logs, once per file, that a subscribers.yml found by walking up is used as a transition, naming the file and what replaces it', async () => {
+    mkdirSync(join(projectDir, '.queue'), { recursive: true });
+    const file = join(projectDir, '.queue', 'subscribers.yml');
+    writeFileSync(file, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: n\n      when: payload.never=1\n');
+    await addProject(registryDir, { name: 'app', path: projectDir });
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    const lines = logLines().filter((line) => line.includes('transition'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(file);
   });
 });

@@ -1,6 +1,8 @@
 export interface EventMeta {
   cwd: string;
   projectName?: string;
+  /** Id of the registered project (project-sdk) the working directory belongs to; absent when it belongs to none. */
+  projectId?: string;
 }
 
 export interface EventEnvelope {

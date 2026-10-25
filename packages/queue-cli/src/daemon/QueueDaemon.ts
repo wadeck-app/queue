@@ -1,5 +1,6 @@
 import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import type { ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
+import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { createQueueService, getErrorMessage, getQueueProtocolInfo } from '@wadeck-app/queue-core';
 import { registerWithAppCore } from './AppCoreRegistration.js';
 
@@ -17,7 +18,7 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
   let idleCountdown: ReturnType<typeof setTimeout> | null = null;
   let daemonHandle: Awaited<ReturnType<typeof createDaemon>> | null = null;
 
-  const service = createQueueService(configDir, { onActivity: resetIdleCountdown });
+  const service = createQueueService(configDir, { onActivity: resetIdleCountdown, registryDir: defaultRegistryDir(process.env) });
 
   function resetIdleCountdown(): void {
     if (idleCountdown) {

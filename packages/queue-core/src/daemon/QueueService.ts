@@ -4,6 +4,7 @@ import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
 import { HistoryLog } from '../storage/HistoryLog.js';
 import { ConfigLoader, resolveProjectName, unnamedSubscriberAdvice } from '../ConfigLoader.js';
+import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
 import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
 import { PayloadFilter } from '../dispatch/PayloadFilter.js';
@@ -23,6 +24,11 @@ import type {
 export interface QueueServiceOptions {
   /** Called when a push arrives, so the host that owns the idle shutdown can cancel its countdown. */
   onActivity?: () => void;
+  /**
+   * The project-sdk registry directory: the project of a push comes from the registered path that contains its working directory.
+   * Absent, no project is looked up (tests; the daemon always passes it).
+   */
+  registryDir?: string;
 }
 
 /**
@@ -57,6 +63,9 @@ function findSubscriber(subscribers: ResolvedSubscriber[], entrySubscriberId: st
 
 export function createQueueService(configDir: string, options: QueueServiceOptions = {}): QueueService {
   const warnedUnnamed = new Set<string>();
+  // What was already said, once per daemon run: a push happens many times and the same sentence each time would hide the others
+  const saidOnce = new Set<string>();
+  const projectResolver = options.registryDir === undefined ? undefined : new ProjectResolver(options.registryDir);
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
@@ -98,6 +107,12 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
       try {
         const cwd = req.cwd;
+        const lookup: ProjectLookup | undefined = projectResolver?.lookup(cwd);
+        const problem = lookup?.kind === 'unavailable' ? lookup.problem : lookup?.kind === 'unregistered' ? lookup.warning : undefined;
+        if (problem !== undefined && !saidOnce.has(problem)) {
+          saidOnce.add(problem);
+          eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: problem });
+        }
         const envelope: EventEnvelope = {
           id: crypto.randomUUID(),
           timestamp: new Date().toISOString(),
@@ -106,6 +121,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           meta: {
             cwd,
             projectName: resolveProjectName(cwd),
+            ...(lookup?.kind === 'registered' && { projectId: lookup.project.id }),
           },
         };
 
@@ -117,6 +133,15 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           const reason = getErrorMessage(err);
           eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `config error for event ${req.event}: ${reason}` });
           return { status: 'aborted', reason, eventId: envelope.id };
+        }
+
+        // A subscribers.yml found by walking up is a transition: the subscribers of a project will live in its config folder of the registry
+        for (const file of new Set(subscribers.filter((sub) => sub.scope === 'project').map((sub) => sub.file))) {
+          const note = `${file} is used because it was found above ${cwd} (transition: the subscribers of a project will live in the config folder of its project-sdk registry entry, and this lookup will go once they are moved)`;
+          if (!saidOnce.has(note)) {
+            saidOnce.add(note);
+            eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: note });
+          }
         }
 
         // Once per subscriber and per daemon run, before the filter (a subscriber whose `when` never matches is still unnamed)
@@ -160,6 +185,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           eventId: envelope.id,
           event: req.event,
           project: envelope.meta.projectName,
+          ...(envelope.meta.projectId !== undefined && { projectId: envelope.meta.projectId }),
           matchedCount: filtered.length,
           totalCount: subscribers.length,
           payload: req.payload,

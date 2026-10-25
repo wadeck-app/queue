@@ -21,7 +21,7 @@ export interface IsolatedCliEnv {
   /** Value of QUEUE_CONFIG_DIR; also where ConfigDir.get('queue') resolves under the overridden XDG_CONFIG_HOME. */
   configDir: string;
   npmPrefix: string;
-  /** Full env for spawn(): parent env minus steering vars, plus the isolation overrides and `extra`. */
+  /** Full env for the spawned CLI: parent env minus steering vars, plus the isolation overrides and `extra`. */
   env: NodeJS.ProcessEnv;
   /** Removes the whole tree. Call from an afterAll/afterEach hook. */
   cleanup(): void;
