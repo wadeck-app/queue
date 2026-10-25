@@ -106,10 +106,10 @@ describe('pending-page.yaml', () => {
     expect(actions['giveUpStuck']?.['url']).toBe('POST /api/modules/queue/pending/give-up-stuck');
     expect(String(actions['giveUpStuck']?.['confirm'])).toMatch(/dead-letter queue/i);
     const sections = doc['sections'] as Node[];
-    const warning = sections.find((section) => section['$if'] === '$sources.pending.stuckCount' && section['$type'] === 'Badge');
-    expect(warning?.['label']).toBe('$sources.pending.stuckText');
-    const button = sections.find((section) => section['$type'] === 'ActionButton') as Node;
-    expect(button['$if']).toBe('$sources.pending.stuckCount');
+    const box = sections.find((section) => section['$type'] === 'Card' && section['$if'] === '$sources.pending.stuckCount') as Node;
+    const row = (box['items'] as Node[])[0] as Node;
+    const [sentence, button] = row['items'] as Node[];
+    expect(sentence).toMatchObject({ $type: 'Markdown', text: '$sources.pending.stuckText' });
     expect(button['action']).toBe('giveUpStuck');
   });
 

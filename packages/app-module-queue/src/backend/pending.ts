@@ -1,8 +1,11 @@
 import { listInFlightEntries, abandonInFlightEntry, abandonStuckEntries, countStuckEntries, STUCK_AFTER_MS } from '@wadeck-app/queue-core';
 import { NotInFlightError, PendingNotFoundError } from './errors.js';
+import { shortId } from './ids.js';
 
 export interface PendingRow {
   id: string;
+  /** What the table shows of the id (the full one is its tooltip). */
+  idShort: string;
   event: string;
   subscriberId: string;
   status: 'pending' | 'failed';
@@ -25,6 +28,7 @@ export interface PendingList {
 export function listPending(configDir: string): PendingList {
   const entries = listInFlightEntries(configDir).map((entry): PendingRow => ({
     id: entry.id,
+    idShort: shortId(entry.id),
     event: entry.event,
     subscriberId: entry.subscriberId,
     status: entry.status === 'failed' ? 'failed' : 'pending',

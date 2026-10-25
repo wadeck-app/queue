@@ -36,7 +36,7 @@ sections:
       - { key: "subscriberId", label: "Subscriber" }
       - { key: "attempts", label: "Attempts" }
       - { key: "lastError", label: "Last error" }
-      - { key: "id", label: "Id", mono: true }
+      - { key: "idShort", label: "Id", mono: true, nowrap: true, title: "{id}" }
       - type: actions
         items:
           - { label: Replay, action: replayEntry, icon: play, variant: primary }

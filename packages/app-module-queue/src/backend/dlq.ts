@@ -2,10 +2,11 @@ import { listDlqEntries, clearDlqEntries } from '@wadeck-app/queue-core';
 import type { DlqEntry, DlqReplayResponse, DlqClearResponse } from '@wadeck-app/queue-core';
 import { createQueueAppClient } from './client.js';
 import { DaemonUnreachableError } from './errors.js';
+import { shortId } from './ids.js';
 
 /** Lists dispatches that permanently failed (retries exhausted), awaiting human attention. Reads the DLQ file: no daemon needed. */
-export function listDlq(configDir: string): DlqEntry[] {
-  return listDlqEntries(configDir);
+export function listDlq(configDir: string): Array<DlqEntry & { idShort: string }> {
+  return listDlqEntries(configDir).map((entry) => ({ ...entry, idShort: shortId(entry.id) }));
 }
 
 /** Clears one DLQ entry by id, or all entries when `id` is omitted. Edits the DLQ file under its lock: no daemon needed. */

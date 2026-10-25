@@ -31,31 +31,40 @@ sections:
   - $type: PageHeader
     title: Pending events
     subtitle: Written to the WAL and not delivered yet. The daemon retries them by itself; retrying one here runs its subscriber now.
-  - $type: Badge
+  # What needs attention, in a box of its own: the sentence on the left, its action on the right.
+  - $type: Card
     $if: $sources.daemon.hint
-    label: $sources.daemon.hint
-    variant: warning
-  - $type: Badge
+    padding: sm
+    items:
+      - $type: Markdown
+        text: $sources.daemon.hint
+  - $type: Card
     $if: $sources.pending.stuckCount
-    label: $sources.pending.stuckText
-    variant: warning
-  - $type: ActionButton
-    $if: $sources.pending.stuckCount
-    action: giveUpStuck
-    label: Give up all the stuck events
-    icon: archive
-    variant: danger-outline
+    padding: sm
+    items:
+      - $type: HorizontalStack
+        gap: gap-4
+        justify: justify-between
+        align: items-center
+        items:
+          - $type: Markdown
+            text: $sources.pending.stuckText
+          - $type: ActionButton
+            action: giveUpStuck
+            label: Give up all the stuck events
+            icon: archive
+            variant: danger-outline
   - $type: DataTable
     rows: $sources.pending.entries
     emptyMessage: Nothing is waiting
     columns:
       - { key: "queuedAt", label: "Queued at", format: "datetime" }
-      - { key: "event", label: "Event", href: "/modules/queue/history?event={event}" }
-      - { key: "subscriberId", label: "Subscriber" }
+      - { key: "event", label: "Event", nowrap: true, href: "/modules/queue/history?event={event}" }
+      - { key: "subscriberId", label: "Subscriber", nowrap: true }
       - { key: "status", label: "Status" }
       - { key: "attempts", label: "Attempts" }
-      - { key: "lastError", label: "Last error" }
-      - { key: "id", label: "Id", mono: true }
+      - { key: "lastError", label: "Last error", nowrap: true }
+      - { key: "idShort", label: "Id", mono: true, nowrap: true, title: "{id}" }
       - type: actions
         items:
           - { label: Retry now, action: retryPending, icon: rotate-ccw, variant: primary }

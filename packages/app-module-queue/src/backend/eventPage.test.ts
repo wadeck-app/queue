@@ -69,7 +69,26 @@ describe('pending-page.yaml', () => {
     const doc = load('pending-page.yaml');
     expect(find(doc, 'Form')).toEqual([]);
     expect(find(doc, 'ActionButton')).toEqual([
-      { $type: 'ActionButton', $if: '$sources.pending.stuckCount', action: 'giveUpStuck', label: 'Give up all the stuck events', icon: 'archive', variant: 'danger-outline' },
+      { $type: 'ActionButton', action: 'giveUpStuck', label: 'Give up all the stuck events', icon: 'archive', variant: 'danger-outline' },
     ]);
+  });
+
+  it('shows the warning in a box of its own: the sentence on the left, its action on the right, only when events are stuck', () => {
+    const doc = load('pending-page.yaml');
+    const card = find(doc, 'Card').find((candidate) => candidate['$if'] === '$sources.pending.stuckCount');
+    expect(card).toBeDefined();
+    const row = find(card, 'HorizontalStack')[0];
+    expect(row).toMatchObject({ justify: 'justify-between' });
+    expect((row!['items'] as Node[]).map((item) => item['$type'])).toEqual(['Markdown', 'ActionButton']);
+  });
+
+  it('keeps the cells of a row on one line: event, subscriber, last error and the (long) id', () => {
+    const doc = load('pending-page.yaml');
+    const columns = (find(doc, 'DataTable')[0]!['columns'] as Node[]).filter((column) => typeof column['key'] === 'string');
+    for (const key of ['event', 'subscriberId', 'lastError']) {
+      expect(columns.find((column) => column['key'] === key)).toMatchObject({ nowrap: true });
+    }
+    // 8 characters of the id in the cell, the whole id as its tooltip
+    expect(columns.find((column) => column['key'] === 'idShort')).toMatchObject({ mono: true, nowrap: true, title: '{id}' });
   });
 });
