@@ -262,3 +262,59 @@ describe('push: the project of the working directory (project-sdk registry)', ()
     expect(lines[0]).toContain(file);
   });
 });
+
+describe('push: an explicit project (protocol 1.2.0)', () => {
+  let registryDir: string;
+
+  beforeEach(() => {
+    registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+  });
+
+  afterEach(() => {
+    rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  const historyEntries = (): Array<Record<string, unknown>> => {
+    const dir = join(configDir, 'history');
+    return existsSync(dir)
+      ? readdirSync(dir)
+          .flatMap((file) => readFileSync(join(dir, file), 'utf-8').split('\n'))
+          .filter((line) => line !== '')
+          .map((line) => {
+            const record: unknown = JSON.parse(line);
+            return isRecord(record) ? record : {};
+          })
+      : [];
+  };
+
+  it('records the given project, even for a working directory that lies in another registered project or in none', async () => {
+    const wanted = await addProject(registryDir, { name: 'wanted', path: projectDir });
+    const other = mkdtempSync(join(tmpdir(), 'queue-service-other-'));
+    try {
+      await addProject(registryDir, { name: 'other', path: other });
+      const service = createQueueService(configDir, { registryDir });
+      const response = await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: other, project: wanted.id, protocol: '1.2.0' });
+      expect(response).toMatchObject({ status: 'queued' });
+      expect(historyEntries()[0]).toMatchObject({ projectId: wanted.id });
+    } finally {
+      rmSync(other, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it('rejects an id the registry does not know, saying how to list the projects, and records nothing', async () => {
+    const service = createQueueService(configDir, { registryDir });
+    const response = await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir, project: 'deadbeef', protocol: '1.2.0' });
+    expect(response.status).toBe('rejected');
+    expect(response.reason).toContain("'deadbeef'");
+    expect(response.reason).toContain('project list');
+    expect(historyEntries()).toEqual([]);
+  });
+
+  it('rejects a project when the daemon has no registry to check it against, instead of trusting it', async () => {
+    const service = createQueueService(configDir);
+    const response = await service.commands.push({ event: 'onNobodyListens', payload: {}, cwd: projectDir, project: 'deadbeef', protocol: '1.2.0' });
+    expect(response.status).toBe('rejected');
+    expect(response.reason).toContain('registry');
+    expect(historyEntries()).toEqual([]);
+  });
+});

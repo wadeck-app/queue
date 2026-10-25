@@ -25,6 +25,21 @@ export class ProjectResolver {
     this.registryDir = registryDir;
   }
 
+  /** A project named by its id (the explicit `project` of a push). `unregistered` here means: no project of that id. */
+  lookupId(id: string): ProjectLookup {
+    let registry;
+    try {
+      registry = loadRegistry(this.registryDir);
+    } catch (err) {
+      return { kind: 'unavailable', problem: `the project registry in ${this.registryDir} could not be read: ${getErrorMessage(err)}` };
+    }
+    const project = registry.projects.find((candidate) => candidate.id === id);
+    if (project === undefined) {
+      return { kind: 'unregistered', warning: `no registered project has the id '${id}'. Fix: project list shows the registered projects and their ids` };
+    }
+    return { kind: 'registered', project: { id: project.id, name: project.name }, path: project.paths.find((path) => path.main)?.path ?? '' };
+  }
+
   lookup(cwd: string): ProjectLookup {
     let match;
     try {

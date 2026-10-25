@@ -6,7 +6,8 @@ import type { ResolvedSubscriber } from '../types.js';
 // queue-relay-client). Types only: nothing here depends on how the daemon is hosted.
 
 // `protocol` is the SemVer push protocol the client speaks (absent = 1.0.0); see @wadeck-app/queue-sdk/protocol
-export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; replayOf?: string; protocol?: string; }
+// `project` (protocol 1.2.0): the id of a project of the project-sdk registry, resolved by the client; the daemon only checks it is registered
+export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd: string; replayOf?: string; protocol?: string; project?: string; }
 // `rejected`: the push was not recorded because the client protocol is not accepted; `supported` is the range of accepted client versions
 export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted' | 'rejected'; result?: unknown; reason?: string; subscriberCount?: number; eventId?: string; supported?: string; }
 // Protocol 1.1.0: a program declares the events it pushes (see catalog/EventCatalog.ts). `events` is validated by the daemon.

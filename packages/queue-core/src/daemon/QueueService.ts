@@ -103,11 +103,22 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       if (!protocol.ok) {
         return { status: 'rejected', reason: protocol.reason, supported: protocol.supported };
       }
+      // An explicit project is checked before anything is recorded: a wrong id must not file the event under nothing, silently
+      let explicit: ProjectLookup | undefined;
+      if (req.project !== undefined) {
+        if (projectResolver === undefined) {
+          return { status: 'rejected', reason: `this daemon has no project registry to check the project '${req.project}' against, so it did not record the event` };
+        }
+        explicit = projectResolver.lookupId(req.project);
+        if (explicit.kind !== 'registered') {
+          return { status: 'rejected', reason: `${explicit.kind === 'unavailable' ? explicit.problem : explicit.warning}; the event was not recorded` };
+        }
+      }
       activeDispatches++;
 
       try {
         const cwd = req.cwd;
-        const lookup: ProjectLookup | undefined = projectResolver?.lookup(cwd);
+        const lookup: ProjectLookup | undefined = explicit ?? projectResolver?.lookup(cwd);
         const problem = lookup?.kind === 'unavailable' ? lookup.problem : lookup?.kind === 'unregistered' ? lookup.warning : undefined;
         if (problem !== undefined && !saidOnce.has(problem)) {
           saidOnce.add(problem);

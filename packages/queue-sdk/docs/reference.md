@@ -106,9 +106,9 @@ import { startFakeQueueDaemon } from '@wadeck-app/queue-sdk/testing';
 const daemon = await startFakeQueueDaemon();
 const queue = createQueuePublisher({ configDir: daemon.configDir, silent: true });
 await queue.publishAndWait('myapp.thing', { n: 1 });
-daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: '...', protocol: '1.1.0' }]
+daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: '...', protocol: '1.2.0' }]
 await queue.registerEvents('myapp', [{ name: 'myapp.thing', description: 'A thing happened.' }]);
-daemon.registrations();     // [{ source: 'myapp', events: [...], protocol: '1.1.0' }]
+daemon.registrations();     // [{ source: 'myapp', events: [...], protocol: '1.2.0' }]
 daemon.respondNextRegistration({ status: 'rejected', reason: '...', problems: [{ path: 'events[0].name', message: '...' }] });
 daemon.resetNextRegistration();   // the connection breaks on the next registration; the SDK retries once (idempotent), two breaks in a row give `unknown`
 daemon.respondNext({ status: 'aborted', reason: 'refused' });   // the next push gets this result

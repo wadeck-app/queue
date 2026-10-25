@@ -29,6 +29,8 @@ import { pushFailure } from './pushOutcome.js';
 import { isCalVer, devBuildRefusalMessage } from './devBuildGuard.js';
 import { createUpdateScheduler } from './updateScheduler.js';
 import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
+import { parseProjectFlag, resolvePushProject } from './pushProject.js';
+import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
 
@@ -127,7 +129,7 @@ Concepts:
               with what outcome; spans all available days
 
 Usage:
-  queue push <event> <json> [--timeout <duration>]
+  queue push <event> <json> [--project <name|alias|id>] [--timeout <duration>]
   queue retry --event <id>
   queue replay <eventId> [--cwd <directory>]   Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>, run in the directory recorded with it (--cwd names another). For manual testing, not delivery guarantees.
@@ -811,7 +813,7 @@ async function main(): Promise<void> {
     const jsonArg = rest[1];
 
     if (!event || !jsonArg) {
-      process.stderr.write('Usage: queue push <event> <json> [--timeout <duration>]\n');
+      process.stderr.write('Usage: queue push <event> <json> [--project <name|alias|id>] [--timeout <duration>]\n');
       process.exit(1);
     }
 
@@ -834,10 +836,22 @@ async function main(): Promise<void> {
       }
     }
 
+    // --project / -p, else QUEUE_PROJECT: the project is resolved here (name, alias or id) and the push carries its id
+    const projectFlag = parseProjectFlag(rest);
+    if (projectFlag.error !== undefined) {
+      process.stderr.write(`[fail] ${projectFlag.error}\n`);
+      process.exit(1);
+    }
+    const target = resolvePushProject({ ...(projectFlag.value !== undefined && { flag: projectFlag.value }), cwd: process.cwd(), registryDir: defaultRegistryDir(process.env), env: process.env });
+    if (!target.ok) {
+      process.stderr.write(`[fail] ${target.message}\n`);
+      process.exit(1);
+    }
+
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
 
-    const response = await client.send('push', { event, payload, timeout, cwd: process.cwd() });
+    const response = await client.send('push', { event, payload, timeout, cwd: target.cwd ?? process.cwd(), ...(target.project !== undefined && { project: target.project }) });
 
     const failure = pushFailure(response, 'Event');
     if (failure) {

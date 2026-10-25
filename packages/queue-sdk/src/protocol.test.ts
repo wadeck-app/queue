@@ -8,12 +8,13 @@ import {
   negotiate,
   checkClientProtocol,
   daemonSupportsEventCatalog,
+  daemonSupportsPushProject,
 } from './protocol.js';
 import { satisfies } from './semver.js';
 
 describe('protocol constants', () => {
   it('start at 1.1.0 and are consistent with each other', () => {
-    expect(PROTOCOL_VERSION).toBe('1.1.0');
+    expect(PROTOCOL_VERSION).toBe('1.2.0');
     expect(satisfies(PROTOCOL_VERSION, DAEMON_ACCEPTS)).toBe(true);
     expect(satisfies(PROTOCOL_VERSION, SDK_UNDERSTANDS)).toBe(true);
   });
@@ -68,10 +69,10 @@ describe('negotiate (SDK side, before sending anything)', () => {
   });
 
   it('refuses a daemon that no longer accepts the SDK version (the SDK is too old)', () => {
-    const result = negotiate({ version: '1.5.0', accepts: '>=1.2.0 <2.0.0' });
+    const result = negotiate({ version: '1.5.0', accepts: '>=1.9.0 <2.0.0' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toContain('>=1.2.0 <2.0.0');
+      expect(result.reason).toContain('>=1.9.0 <2.0.0');
       expect(result.reason).toMatch(/update .*queue-sdk/i);
     }
   });
@@ -133,5 +134,16 @@ describe('daemonSupportsEventCatalog (the event catalog arrived with protocol 1.
     ['1.4.2', true],
   ])('a daemon at %s: %s', (version, expected) => {
     expect(daemonSupportsEventCatalog(version)).toBe(expected);
+  });
+});
+
+describe('daemonSupportsPushProject (the project field of a push arrived with protocol 1.2.0)', () => {
+  it.each([
+    ['1.0.0', false],
+    ['1.1.0', false],
+    ['1.2.0', true],
+    ['1.10.0', true],
+  ])('a daemon speaking %s -> %s', (version, expected) => {
+    expect(daemonSupportsPushProject(version)).toBe(expected);
   });
 });

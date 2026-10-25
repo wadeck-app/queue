@@ -1,6 +1,6 @@
 # Push protocol
 
-The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.1.0**.
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.2.0**.
 
 Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
 
@@ -43,7 +43,7 @@ No authentication.
   "config_dir": "C:\\Users\\me\\.config\\queue",
   "sdkVersion": 1,
   "port": 47910,
-  "queueProtocol": { "version": "1.1.0", "accepts": "^1.0.0" }
+  "queueProtocol": { "version": "1.2.0", "accepts": "^1.0.0" }
 }
 ```
 
@@ -54,7 +54,7 @@ No authentication.
 Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 ```json
-{ "protocol": "1.1.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+{ "protocol": "1.2.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
 ```
 
 | Field | Required | Meaning |
@@ -65,6 +65,7 @@ Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 | `protocol` | no | Protocol version the client speaks; absent = `1.0.0` |
 | `timeout` | no | Milliseconds a `before*` event may take (default 30000) |
 | `replayOf` | no | Id of the event this push replays |
+| `project` | no | Since 1.2.0. Id (8 hex characters) of the project of the project registry the event belongs to. The client resolves a name or an alias to the id (and sends a `cwd` inside that project). Absent, the daemon finds the project from `cwd`. A daemon older than 1.2.0 ignores the field, so check `queueProtocol.version` before relying on it |
 
 Answer, HTTP 200: `{ "ok": true, "result": <PushResponse> }`.
 
@@ -73,7 +74,7 @@ Answer, HTTP 200: `{ "ok": true, "result": <PushResponse> }`.
 | `queued` | Recorded; `on*` subscribers run in the background | `eventId`, `subscriberCount` |
 | `dispatched` | A `before*` event ran synchronously | `eventId`, `result` (the subscribers' answer) |
 | `aborted` | A subscriber refused, or `subscribers.yml` is invalid | `reason`, `eventId` |
-| `rejected` | The client protocol is not accepted; nothing was recorded | `reason`, `supported` (the accepted range) |
+| `rejected` | The client protocol is not accepted, or the `project` is not in the registry (or the registry cannot be read); nothing was recorded | `reason`, `supported` (the accepted range, for a protocol refusal) |
 
 A client must treat an unknown `status` as a failure and ignore unknown fields.
 

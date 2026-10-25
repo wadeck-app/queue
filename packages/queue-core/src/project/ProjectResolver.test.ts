@@ -58,3 +58,22 @@ describe('ProjectResolver', () => {
     expect(resolver.lookup(app).kind).toBe('registered');
   });
 });
+
+describe('ProjectResolver.lookupId (an explicit project id of a push)', () => {
+  it('finds a registered project by its id', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: folder('app') });
+    expect(new ProjectResolver(registryDir).lookupId(project.id)).toMatchObject({ kind: 'registered', project: { id: project.id, name: 'app' } });
+  });
+
+  it('says an id the registry does not know is unknown, with the command that lists the projects', () => {
+    const found = new ProjectResolver(registryDir).lookupId('deadbeef');
+    expect(found.kind).toBe('unregistered');
+    expect((found as { warning: string }).warning).toContain("'deadbeef'");
+    expect((found as { warning: string }).warning).toContain('project list');
+  });
+
+  it('reports an unreadable registry as such', () => {
+    writeFileSync(join(registryDir, 'registry.json'), '{ not json');
+    expect(new ProjectResolver(registryDir).lookupId('deadbeef').kind).toBe('unavailable');
+  });
+});
