@@ -454,3 +454,19 @@ describe('parseHistoryQuery', () => {
     });
   });
 });
+
+describe('parseHistoryQuery: project', () => {
+  it('filters on the id of a registered project; an empty value is absent', () => {
+    expect(parseHistoryQuery({ project: '569c412d' }).filter.projectId).toBe('569c412d');
+    expect(parseHistoryQuery({ project: '' }).filter.projectId).toBeUndefined();
+  });
+
+  it('refuses something that is not a project id, naming the expected form, instead of listing an empty history', () => {
+    expect(() => parseHistoryQuery({ project: 'my app' })).toThrowError(InvalidQueryError);
+    expect(() => parseHistoryQuery({ project: 'my app' })).toThrowError(/project must be .*8 hexadecimal/);
+  });
+
+  it('refuses the parameter given twice', () => {
+    expect(() => parseHistoryQuery({ project: ['569c412d', 'deadbeef'] })).toThrowError(/project must be given once/);
+  });
+});

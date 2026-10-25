@@ -29,7 +29,7 @@ import { pushFailure } from './pushOutcome.js';
 import { isCalVer, devBuildRefusalMessage } from './devBuildGuard.js';
 import { createUpdateScheduler } from './updateScheduler.js';
 import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
-import { parseProjectFlag, resolvePushProject } from './pushProject.js';
+import { parseProjectFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
@@ -47,7 +47,7 @@ const VERSION = getVersion();
 
 const DLQ_GROUP_HELP = `queue dlq - Dead Letter Queue management
 Usage:
-  queue dlq list
+  queue dlq list [--project <name|alias|id>]
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
 `;
@@ -140,7 +140,7 @@ Usage:
   queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done
   queue status [--json]
   queue list-subscribers [event] [--json]
-  queue dlq list
+  queue dlq list [--project <name|alias|id>]
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
   queue sub list [event] [--json] [--scope global|project]
@@ -152,7 +152,7 @@ Usage:
   queue stop
   queue relay start|stop|status [--json]   Webhook relay client (reads relay.yml from QUEUE_CONFIG_DIR)
   queue logs [--follow]
-  queue history [--event <name>] [--subscriber <id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]
+  queue history [--event <name>] [--subscriber <id>] [--project <name|alias|id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
@@ -239,7 +239,8 @@ function isFlagPresent(args: string[], flag: string): boolean {
   return args.indexOf(flag) !== -1;
 }
 
-export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; limit: number; offset: number; errors: string[] } {
+/** `projectRef`: the --project / -p given, a name, an alias or an id still to be resolved with the project registry. */
+export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; limit: number; offset: number; errors: string[]; projectRef?: string } {
   const errors: string[] = [];
   const getArg = (flag: string): string | undefined => {
     const idx = args.indexOf(flag);
@@ -261,6 +262,15 @@ export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json
       errors.push('--event requires a value');
     } else {
       filter.event = eventVal;
+    }
+  }
+
+  let projectRef: string | undefined;
+  const projectFlag = ['--project', '-p'].find((flag) => isFlagPresent(args, flag));
+  if (projectFlag !== undefined) {
+    projectRef = getArg(projectFlag);
+    if (projectRef === undefined) {
+      errors.push('--project requires a value');
     }
   }
 
@@ -331,7 +341,7 @@ export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json
     }
   }
 
-  return { filter, json: args.includes('--json'), limit, offset, errors };
+  return { filter, json: args.includes('--json'), limit, offset, errors, ...(projectRef !== undefined && { projectRef }) };
 }
 
 // Helper to inject dependencies into follow mode for testing (with AbortSignal support).
@@ -407,14 +417,22 @@ export async function runFollowMode(deps: {
 async function queueHistoryCommand(configDir: string, args: string[]): Promise<void> {
   warnUnknownArgs(
     args,
-    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f', '--limit', '-n', '--offset'],
+    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f', '--limit', '-n', '--offset', '--project', '-p'],
     'queue history',
-    new Set(['--event', '--subscriber', '--status', '--since', '--limit', '-n', '--offset']),
+    new Set(['--event', '--subscriber', '--status', '--since', '--limit', '-n', '--offset', '--project', '-p']),
   );
-  const { filter, json, limit, offset, errors } = parseHistoryFlags(args);
+  const { filter, json, limit, offset, errors, projectRef } = parseHistoryFlags(args);
   if (errors.length > 0) {
     for (const err of errors) process.stderr.write(`[fail] ${err}\n`);
     process.exit(1);
+  }
+  if (projectRef !== undefined) {
+    const project = resolveProjectId(projectRef, defaultRegistryDir(process.env));
+    if (!project.ok) {
+      process.stderr.write(`[fail] ${project.message}\n`);
+      process.exit(1);
+    }
+    filter.projectId = project.id;
   }
 
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
@@ -1011,7 +1029,21 @@ async function main(): Promise<void> {
       await ensureDaemon(configDir);
       const client = createQueueClient(configDir);
       const response = await client.send('dlq-list', undefined);
-      process.stdout.write(JSON.stringify(response.entries, null, 2) + '\n');
+      const projectFlag = parseProjectFlag(rest);
+      if (projectFlag.error !== undefined) {
+        process.stderr.write(`[fail] ${projectFlag.error}\n`);
+        process.exit(1);
+      }
+      let projectId: string | undefined;
+      if (projectFlag.value !== undefined) {
+        const project = resolveProjectId(projectFlag.value, defaultRegistryDir(process.env));
+        if (!project.ok) {
+          process.stderr.write(`[fail] ${project.message}\n`);
+          process.exit(1);
+        }
+        projectId = project.id;
+      }
+      process.stdout.write(JSON.stringify(onlyProject(response.entries, projectId), null, 2) + '\n');
       return;
     }
 

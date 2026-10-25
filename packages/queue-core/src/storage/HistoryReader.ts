@@ -16,6 +16,8 @@ export interface HistoryEntry {
   eventId: string;
   event: string;
   project?: string;
+  /** Id of the registered project (project-sdk) of the push; absent when its working directory was in no registered project, and before this field existed. */
+  projectId?: string;
   /** Subscribers configured for this event, before the `when:` filter was applied. Absent for orphan entries, see below. */
   totalCount?: number;
   /** Subscribers that passed the `when:` filter and were actually dispatched. Absent for orphan entries. */
@@ -33,6 +35,8 @@ export interface HistoryEntry {
 
 export interface HistoryFilter {
   event?: string;
+  /** Only the pushes of this registered project (its id). */
+  projectId?: string;
   subscriberId?: string;
   status?: 'success' | 'failed' | 'dlq' | 'filtered';
   sinceMs?: number;
@@ -88,6 +92,7 @@ interface Accumulator {
   eventId: string;
   event?: string;
   project?: string;
+  projectId?: string;
   totalCount?: number;
   matchedCount?: number;
   payload?: unknown;
@@ -118,6 +123,7 @@ export class HistoryReader {
       eventId: a.eventId,
       event: a.event ?? '(unknown)',
       project: a.project,
+      projectId: a.projectId,
       totalCount: a.totalCount,
       matchedCount: a.matchedCount,
       subscribers: a.subscribers,
@@ -338,6 +344,7 @@ export class HistoryReader {
       entry.ts = ts;
       entry.event = record['event'] as string;
       entry.project = record['project'] as string | undefined;
+      entry.projectId = record['projectId'] as string | undefined;
       entry.matchedCount = record['matchedCount'] as number;
       entry.totalCount = record['totalCount'] as number;
       entry.payload = record['payload'];
@@ -369,6 +376,9 @@ export class HistoryReader {
 
   private matches(entry: HistoryEntry, filter: HistoryFilter): boolean {
     if (filter.event && entry.event !== filter.event) {
+      return false;
+    }
+    if (filter.projectId && entry.projectId !== filter.projectId) {
       return false;
     }
     if (filter.sinceMs !== undefined && Date.parse(entry.ts) < filter.sinceMs) {

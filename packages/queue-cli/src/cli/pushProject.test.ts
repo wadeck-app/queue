@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { addProject, addPath } from '@wadeck-app/project-sdk';
-import { parseProjectFlag, resolvePushProject } from './pushProject.js';
+import { parseProjectFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 
 let registryDir: string;
 let work: string;
@@ -88,5 +88,37 @@ describe('resolvePushProject', () => {
   it('names where a wrong QUEUE_PROJECT comes from', () => {
     const result = resolvePushProject({ cwd: work, registryDir, env: { QUEUE_PROJECT: 'nope' } });
     expect(!result.ok && result.message).toContain('QUEUE_PROJECT');
+  });
+});
+
+describe('resolveProjectId (the --project filter of a read command)', () => {
+  it('turns a name, an alias or an id into the id', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: folder('app') });
+    expect(resolveProjectId('app', registryDir)).toEqual({ ok: true, id: project.id });
+    expect(resolveProjectId(project.id, registryDir)).toEqual({ ok: true, id: project.id });
+  });
+
+  it('refuses a reference that matches nothing, with the closest names: a filter on nothing would list nothing and look like an empty history', async () => {
+    await addProject(registryDir, { name: 'alpha', path: folder('alpha') });
+    const result = resolveProjectId('alpa', registryDir);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toContain('alpha');
+  });
+
+  it('needs no path: a project without any (virtual) is a valid filter', async () => {
+    const project = await addProject(registryDir, { name: 'virtual' });
+    expect(resolveProjectId('virtual', registryDir)).toEqual({ ok: true, id: project.id });
+  });
+});
+
+describe('onlyProject', () => {
+  const entries = [{ id: 'a', meta: { projectId: '569c412d' } }, { id: 'b', meta: { projectId: 'deadbeef' } }, { id: 'c', meta: {} }];
+
+  it('keeps the entries of that project', () => {
+    expect(onlyProject(entries, '569c412d').map((e) => e.id)).toEqual(['a']);
+  });
+
+  it('keeps all of them without a project', () => {
+    expect(onlyProject(entries, undefined)).toHaveLength(3);
   });
 });

@@ -5,8 +5,10 @@ import { DaemonUnreachableError } from './errors.js';
 import { shortId } from './ids.js';
 
 /** Lists dispatches that permanently failed (retries exhausted), awaiting human attention. Reads the DLQ file: no daemon needed. */
-export function listDlq(configDir: string): Array<DlqEntry & { idShort: string }> {
-  return listDlqEntries(configDir).map((entry) => ({ ...entry, idShort: shortId(entry.id) }));
+export function listDlq(configDir: string, projectId?: string): Array<DlqEntry & { idShort: string }> {
+  return listDlqEntries(configDir)
+    .filter((entry) => projectId === undefined || entry.meta.projectId === projectId)
+    .map((entry) => ({ ...entry, idShort: shortId(entry.id) }));
 }
 
 /** Clears one DLQ entry by id, or all entries when `id` is omitted. Edits the DLQ file under its lock: no daemon needed. */

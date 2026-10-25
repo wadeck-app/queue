@@ -172,4 +172,25 @@ describe('parseHistoryFlags', () => {
       expect(result.errors).toContain('--event requires a value');
     });
   });
+
+  describe('--project', () => {
+    it('is returned as the reference to resolve (a name, an alias or an id), not put in the filter as it was typed', () => {
+      const result = parseHistoryFlags(['history', '--project', 'app']);
+      expect(result.errors).toEqual([]);
+      expect(result.projectRef).toBe('app');
+      expect(result.filter.projectId).toBeUndefined();
+    });
+
+    it('-p is the short form', () => {
+      expect(parseHistoryFlags(['history', '-p', 'app']).projectRef).toBe('app');
+    });
+
+    it('without a value pushes an error instead of listing every project', () => {
+      expect(parseHistoryFlags(['history', '--project']).errors).toContain('--project requires a value');
+    });
+
+    it('is absent without the flag', () => {
+      expect(parseHistoryFlags(['history']).projectRef).toBeUndefined();
+    });
+  });
 });

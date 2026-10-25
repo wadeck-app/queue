@@ -1,4 +1,4 @@
-import { loadRegistry, requirePath, resolveScope, NoProjectInScopeError } from '@wadeck-app/project-sdk';
+import { loadRegistry, requirePath, resolveReference, resolveScope, NoProjectInScopeError } from '@wadeck-app/project-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 
 /** `--project <ref>` / `-p <ref>` out of the arguments of a command; `error` when the flag has no value. */
@@ -46,4 +46,18 @@ export function resolvePushProject(input: { flag?: string; cwd: string; registry
     const from = input.flag !== undefined ? `--project "${input.flag}"` : `QUEUE_PROJECT="${fromEnv}"`;
     return { ok: false, message: `${from}: ${getErrorMessage(err)}` };
   }
+}
+
+/** The id of the project a read command (--project of history, dlq, status) filters on: a name, an alias or an id, resolved with the project-sdk. */
+export function resolveProjectId(ref: string, registryDir: string): { ok: true; id: string } | { ok: false; message: string } {
+  try {
+    return { ok: true, id: resolveReference(loadRegistry(registryDir), ref).id };
+  } catch (err) {
+    return { ok: false, message: `--project "${ref}": ${getErrorMessage(err)}` };
+  }
+}
+
+/** The entries (WAL, DLQ) of one project, by the id their meta carries; all of them without a project. */
+export function onlyProject<T extends { meta: { projectId?: string } }>(entries: T[], projectId: string | undefined): T[] {
+  return projectId === undefined ? entries : entries.filter((entry) => entry.meta.projectId === projectId);
 }

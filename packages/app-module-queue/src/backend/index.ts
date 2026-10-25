@@ -280,9 +280,13 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  ctx.registerRoute('GET', '/dlq', (_req, reply) => {
+  ctx.registerRoute('GET', '/dlq', (req, reply) => {
     try {
-      const entries = listDlq(configDir);
+      const project = (req as { query?: QueryParams }).query?.['project'];
+      if (project !== undefined && project !== '' && (typeof project !== 'string' || !/^[0-9a-f]{8}$/.test(project))) {
+        return reply.code(400).send({ error: `project must be the id of a registered project (8 hexadecimal characters, project list shows them), got: ${JSON.stringify(project)}` });
+      }
+      const entries = listDlq(configDir, project === undefined || project === '' ? undefined : project);
       return reply.code(200).send({ entries });
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });

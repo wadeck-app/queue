@@ -8,6 +8,7 @@ import { Wal } from '../storage/Wal.js';
 import { waitFor } from '../waitFor.testUtil.js';
 import { addProject } from '@wadeck-app/project-sdk';
 import { isRecord } from '../isRecord.js';
+import { listDlqEntries } from '../operations.js';
 
 let configDir: string;
 let projectDir: string;
@@ -316,5 +317,22 @@ describe('push: an explicit project (protocol 1.2.0)', () => {
     expect(response.status).toBe('rejected');
     expect(response.reason).toContain('registry');
     expect(historyEntries()).toEqual([]);
+  });
+});
+
+describe('the project of a push follows the event into the WAL and the DLQ (meta.projectId)', () => {
+  it('a dispatch that fails for good lands in the DLQ with the id of the project of the push', async () => {
+    const registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+    try {
+      const project = await addProject(registryDir, { name: 'app', path: projectDir });
+      mkdirSync(join(projectDir, '.queue'), { recursive: true });
+      writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      name: fails\n      command: node -e "process.exit(1)"\n      retries: 0\n');
+      const service = createQueueService(configDir, { registryDir });
+      await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+      await waitFor('the failed dispatch to reach the DLQ', () => listDlqEntries(configDir).length === 1 && service.isIdle());
+      expect(listDlqEntries(configDir)[0]?.meta).toMatchObject({ projectId: project.id });
+    } finally {
+      rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
   });
 });

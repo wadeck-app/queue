@@ -89,6 +89,15 @@ export function parseHistoryQuery(query: QueryParams): ParsedHistoryQuery {
     subscriberId = validateSingleString(query['subscriberId'], 'subscriberId');
   }
 
+  // project: the id of a registered project (8 lowercase hexadecimal characters); empty is absent
+  let projectId: string | undefined;
+  if (query['project'] !== undefined && query['project'] !== '') {
+    projectId = validateSingleString(query['project'], 'project');
+    if (!/^[0-9a-f]{8}$/.test(projectId)) {
+      throw new InvalidQueryError(`project must be the id of a registered project (8 hexadecimal characters, project list shows them), got: "${projectId}"`);
+    }
+  }
+
   // Parse and validate limit: integer 1..MAX_HISTORY_LIMIT
   const limit = parseDigits(query['limit'], 'limit', {
     min: 1,
@@ -143,6 +152,7 @@ export function parseHistoryQuery(query: QueryParams): ParsedHistoryQuery {
   return {
     filter: {
       event,
+      projectId,
       subscriberId,
       status,
       sinceMs,

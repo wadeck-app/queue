@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -59,5 +59,16 @@ describe('replaying a DLQ entry still goes through the daemon (it runs the subsc
     mockSend.mockResolvedValue({ status: 'ok' });
     expect(await replayDlqEntry(configDir, 'd1')).toEqual({ status: 'ok' });
     expect(mockSend).toHaveBeenCalledWith('dlq-replay', { id: 'd1' });
+  });
+});
+
+describe('listDlq: project', () => {
+  it('lists only the entries of that project when asked, all of them otherwise', () => {
+    mkdirSync(configDir, { recursive: true });
+    const line = (id: string, projectId?: string): string => JSON.stringify({ id, event: 'onFoo', payload: {}, meta: { cwd: '/p', ...(projectId !== undefined && { projectId }) }, subscriberId: 's', attempts: 3, lastError: 'x', movedAt: '2026-10-18T12:00:00.000Z' });
+    writeFileSync(join(configDir, 'dlq.ndjson'), [line('a', '569c412d'), line('b', 'deadbeef'), line('c')].join('\n') + '\n');
+    expect(listDlq(configDir).map((e) => e.id)).toEqual(['a', 'b', 'c']);
+    expect(listDlq(configDir, '569c412d').map((e) => e.id)).toEqual(['a']);
+    expect(listDlq(configDir, 'cafebabe')).toEqual([]);
   });
 });
