@@ -26,8 +26,7 @@ import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, getQueueConfigDir, unnamedSubscriberAdvice, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
-import { isCalVer, devBuildRefusalMessage } from './devBuildGuard.js';
-import { createUpdateScheduler } from './updateScheduler.js';
+import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
 import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
 import { parseProjectFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 import { subscribersFileFor } from './subscribersFile.js';
@@ -798,11 +797,6 @@ async function main(): Promise<void> {
   // The config dir is passed explicitly: UpdateManager would otherwise resolve ~/.config/queue and ignore QUEUE_CONFIG_DIR,
   // so a test (or a relocated config) would read and clear the REAL update-state.json.
   const updateManager = new UpdateManager('@wadeck-app/queue-cli', getConfigDir());
-  // A dev build (version not CalVer) never spawns the updater: it would run `npm install -g` from a repo build.
-  const scheduleUpdate = createUpdateScheduler({
-    version: getVersion(),
-    schedule: () => updateManager.scheduleBackgroundUpdate(bundlePath, 'queue-updater.cjs'),
-  });
   const updateState = updateManager.readAndClearState();
   if (updateState) {
     if (updateState.status === 'success') {
@@ -1236,7 +1230,7 @@ async function main(): Promise<void> {
 
     if (sub === 'update') {
       // Before anything with a side effect: a repo-built bundle must never run `npm install -g` (incident 2026-10-24/25).
-      if (!isCalVer(getVersion())) {
+      if (!isReleaseVersion(getVersion())) {
         process.stderr.write(`[fail] ${devBuildRefusalMessage('queue', getVersion())}\n`);
         process.exit(1);
       }
@@ -1455,7 +1449,8 @@ async function main(): Promise<void> {
   process.exit(1);
 
   } finally {
-    scheduleUpdate();
+    // The version is passed so that a dev build (not a release) spawns nothing: it would run `npm install -g` from a repo build
+    updateManager.scheduleBackgroundUpdate(bundlePath, 'queue-updater.cjs', getVersion());
   }
 }
 

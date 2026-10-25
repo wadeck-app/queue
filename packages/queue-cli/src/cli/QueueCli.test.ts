@@ -26,7 +26,7 @@ vi.mock('@wadeck-app/shared-cli/UpdateManager', () => ({
 	UpdateManager: class {
 		constructor(_pkgName: string, configDir?: string) { updateManagerMock.configDirs.push(configDir); }
 		readAndClearState(): null { return null; }
-		scheduleBackgroundUpdate(bundlePath: string, updaterName: string): void { updateManagerMock.scheduleBackgroundUpdate(bundlePath, updaterName); }
+		scheduleBackgroundUpdate(bundlePath: string, updaterName: string, version?: string): void { updateManagerMock.scheduleBackgroundUpdate(bundlePath, updaterName, version); }
 	},
 }));
 
@@ -145,16 +145,19 @@ describe('queue cli history', () => {
 describe('background update scheduling', () => {
 	afterEach(() => { vi.unstubAllGlobals(); });
 
-	it('never schedules the updater for a dev build', async () => {
+	// The shared UpdateManager refuses to spawn the updater for a version that is not a release: the CLI must hand it its version
+	it('hands its version to the update manager, so that a dev build spawns nothing', async () => {
 		await run(['cli', 'version']);
-		expect(updateManagerMock.scheduleBackgroundUpdate).not.toHaveBeenCalled();
+		const [, , version] = updateManagerMock.scheduleBackgroundUpdate.mock.calls[0] ?? [];
+		expect(typeof version).toBe('string');
+		expect(version).not.toBe('');
 	});
 
 	it('schedules the updater next to the bundle for a release build', async () => {
 		vi.stubGlobal('__QUEUE_CLI_VERSION__', '2026.10.25-020-6cb52900');
 		await run(['cli', 'version']);
 		expect(updateManagerMock.scheduleBackgroundUpdate).toHaveBeenCalledTimes(1);
-		expect(updateManagerMock.scheduleBackgroundUpdate).toHaveBeenCalledWith(join(tmpDir, 'queue.cjs'), 'queue-updater.cjs');
+		expect(updateManagerMock.scheduleBackgroundUpdate).toHaveBeenCalledWith(join(tmpDir, 'queue.cjs'), 'queue-updater.cjs', '2026.10.25-020-6cb52900');
 	});
 
 	it('reads the update state from QUEUE_CONFIG_DIR, never from the real config dir', async () => {
@@ -173,7 +176,7 @@ describe('queue cli update from a dev build', () => {
 		const { stderr, exitCode } = await run(['cli', 'update']);
 		expect(exitCode).toBe(1);
 		expect(stderr).toMatch(/refusing to update the global install of queue/);
-		expect(stderr).toContain('`queue cli update`');
+		expect(stderr).toContain('queue cli update');
 		expect(cliUpdateCommand).not.toHaveBeenCalled();
 	});
 });

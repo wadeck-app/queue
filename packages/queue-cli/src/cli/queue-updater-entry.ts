@@ -6,7 +6,7 @@ import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { join } from 'node:path';
 import { registerAfterUpdate, readAppModuleVersion } from './registerAfterUpdate.js';
 import { registerWithAppCore } from '../daemon/AppCoreRegistration.js';
-import { isCalVer, devBuildRefusalMessage } from './devBuildGuard.js';
+import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
 
 // Injected by esbuild at bundle time via define; falls back to dev placeholder.
 declare const __QUEUE_CLI_VERSION__: string;
@@ -19,7 +19,7 @@ const currentVersion = typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CL
 // `npm install -g` leaves the CLI uninstalled (incident 2026-10-24/25). Runs before anything with a
 // side effect. Exit 1 when the user explicitly asked (`cli update` sets UPDATER_FORCE=1) so the
 // refusal is not mistaken for "already up to date"; exit 0 for a background invocation.
-if (!isCalVer(currentVersion)) {
+if (!isReleaseVersion(currentVersion)) {
     const msg = devBuildRefusalMessage('queue', currentVersion);
     process.stderr.write(`[queue-updater] ${msg}\n`);
     try { appendLog(configDir, 'warn', msg); } catch { /* the message above is already visible */ }
