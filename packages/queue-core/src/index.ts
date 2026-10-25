@@ -15,7 +15,7 @@ export { createQueueService } from './daemon/QueueService.js';
 export type { QueueService, QueueServiceOptions } from './daemon/QueueService.js';
 export { spawnDetachedProcess } from './daemon/spawnDetachedProcess.js';
 export type { SubscriberConfig } from './ConfigLoader.js';
-export { SubscribersYmlSchema, SUBSCRIBER_NAME_FORMAT, isValidSubscriberName } from './ConfigLoader.js';
+export { SubscribersYmlSchema, SUBSCRIBER_NAME_FORMAT, isValidSubscriberName, unnamedSubscriberAdvice } from './ConfigLoader.js';
 export { PayloadFilter } from './dispatch/PayloadFilter.js';
 export type { FilterEvaluation } from './dispatch/PayloadFilter.js';
 export type { EventEnvelope } from './types.js';

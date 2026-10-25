@@ -176,3 +176,27 @@ export function locateSubscriber(subs: SubscriberConfig[], event: string, args: 
   }
   return { index };
 }
+
+/**
+ * `queue sub edit <event> --index N --name x` with no other flag only names the entry (the fix the unnamed-subscriber warning gives);
+ * undefined when the flags ask for more, then edit replaces the entry.
+ */
+export function renameSubscriber(subs: SubscriberConfig[], index: number, config: Partial<SubscriberConfig>): { subs: SubscriberConfig[] } | { error: string } | undefined {
+  const keys = Object.keys(config);
+  if (config.name === undefined || keys.length !== 1) {
+    return undefined;
+  }
+  const clash = subs.findIndex((s, i) => i !== index && s.name === config.name);
+  if (clash !== -1) {
+    return { error: `The name '${config.name}' is already used by the subscriber at index ${clash} of this event: names are unique per event within a file` };
+  }
+  return { subs: subs.map((s, i) => (i === index ? { ...s, name: config.name } : s)) };
+}
+
+/** The warning for a subscriber of a subscribers.yml without a name (names will become mandatory), with the command that fixes it. */
+export function unnamedLine(event: string, index: number, scope: 'global' | 'project'): string {
+  return (
+    `[warn] subscriber ${event}[${index}] has no name: names tell the dashboard, the history and the DLQ who listens and will become mandatory. ` +
+    `Fix: queue sub edit ${event} --index ${index} --name <name>${scope === 'project' ? ' --scope project' : ''}`
+  );
+}

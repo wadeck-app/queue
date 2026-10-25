@@ -20,7 +20,7 @@ Today a subscriber is identified by `<event pattern>[<index>]` (`onFoo[0]`), bui
 | 1 | Resolved subscribers keep `legacyId` (`<event>[<index>]`) so an in-flight WAL entry, a DLQ entry or an old history line written before the name still resolves to the right subscriber |
 | 1 | Shown everywhere a subscriber is shown: `queue sub list` (name column), `queue sub add --name`, `queue sub edit|remove --name` next to `--index`, `queue history`, the dashboard Subscribers, History, DLQ, Pending and Logs pages; `list-subscribers` and the routes gain a `name` field (additive, protocol 1.x) |
 | 1 | Unnamed subscribers get a visible nudge (`unnamed` marker), not an error |
-| 2 | Name required: loading a file with an unnamed subscriber fails loudly with `queue sub migrate-names` as the fix; the command writes `<event>-<index>` names into the file, and `legacyId` keeps the pending entries working |
+| 2 | Name required, once every subscriber has one: loading a file with an unnamed subscriber fails loudly, naming the file, the entry and `queue sub edit <event> --index N --name <name>`. No migration command: the few subscribers are named by hand (user decision), so there is no migration code to keep. Then `legacyId` and the legacy-id lookup of retry can go too (nothing written before names is left in flight) |
 | 2 | Protocol change: none for `push`; `list-subscribers` already carries the field |
 
 Name format: `[a-z0-9][a-z0-9._-]*`, at most 64 characters (it appears in file names, URLs and logs).

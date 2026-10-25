@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createQueueService } from './QueueService.js';
@@ -129,6 +129,37 @@ describe('register-events (the event catalog, protocol 1.1.0)', () => {
     const service = createQueueService(configDir);
     await service.commands['register-events'](declaration);
     expect(service.isIdle()).toBe(true);
+  });
+});
+
+describe('push: warning for a subscriber without a name', () => {
+  // when never matches: nothing is dispatched, the subscriber is only loaded
+  const yml = (name: string): string => `subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      when: payload.never=1\n${name}`;
+
+  const warnings = (): string[] => {
+    const logsDir = join(configDir, 'logs');
+    return readdirSync(logsDir)
+      .flatMap((file) => readFileSync(join(logsDir, file), 'utf-8').split('\n'))
+      .filter((line) => line.includes('has no name'));
+  };
+
+  it('logs one actionable diagnostic per unnamed subscriber, not one per push', async () => {
+    mkdirSync(join(projectDir, '.queue'), { recursive: true });
+    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), yml(''));
+    const service = createQueueService(configDir);
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    const lines = warnings();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('queue sub edit onFoo --index 0 --name <name>');
+  });
+
+  it('logs nothing for a named subscriber', async () => {
+    mkdirSync(join(projectDir, '.queue'), { recursive: true });
+    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), yml('      name: notify\n'));
+    const service = createQueueService(configDir);
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    expect(existsSync(join(configDir, 'logs')) ? warnings() : []).toEqual([]);
   });
 });
 

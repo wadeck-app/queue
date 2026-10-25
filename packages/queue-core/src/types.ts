@@ -18,6 +18,9 @@ export interface ResolvedSubscriber {
   legacyId: string;
   /** The optional 'name' of the subscriber in subscribers.yml. */
   name?: string;
+  /** The subscribers.yml it comes from, and whether that is the global one or the one of a project. */
+  file: string;
+  scope: 'global' | 'project';
   event: string;
   type: 'cli' | 'http';
   command?: string;

@@ -120,7 +120,8 @@ interface ResolveContext {
   filePath: string;
   fileDir: string;
   /** Prefix of the ids of this file's subscribers: empty for the global file, '<project folder>/' for a project file. */
-  scope: string;
+  idPrefix: string;
+  kind: 'global' | 'project';
   globalCwd?: string;
   globalEnv?: Record<string, string>;
   eventCwd?: string;
@@ -188,9 +189,11 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   })();
 
   return {
-    subscriberId: `${ctx.scope}${raw.name ?? legacyId}`,
+    subscriberId: `${ctx.idPrefix}${raw.name ?? legacyId}`,
     legacyId,
     name: raw.name,
+    file: ctx.filePath,
+    scope: ctx.kind,
     event,
     type: raw.type,
     command: raw.command,
@@ -204,6 +207,23 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
     cwd: resolvedCwd,
     env: mergedEnv,
   };
+}
+
+/**
+ * What to tell the owner of a subscriber that has no name (names will become mandatory), or undefined when it has one.
+ * The fix is one command: `queue sub edit` with only --name keeps the rest of the entry.
+ */
+export function unnamedSubscriberAdvice(sub: ResolvedSubscriber): string | undefined {
+  if (sub.name !== undefined) {
+    return undefined;
+  }
+  const position = /^(.*)\[(\d+)\]$/.exec(sub.legacyId);
+  const event = position?.[1] ?? sub.event;
+  const index = position?.[2] ?? '0';
+  return (
+    `subscriber ${sub.subscriberId} (event '${event}', ${sub.file}) has no name: a name tells the dashboard, the history, the DLQ and the logs who listens, ` +
+    `survives a reorder of the list, and will become mandatory. Fix: queue sub edit ${event} --index ${index} --name <name>${sub.scope === 'project' ? ' --scope project' : ''}`
+  );
 }
 
 function assertUniqueNames(event: string, resolved: ResolvedSubscriber[], filePath: string): void {
@@ -240,11 +260,12 @@ export class ConfigLoader {
         return;
       }
       const fileDir = dirname(filePath);
-      const scope = filePath === globalFile ? '' : `${basename(defaultCwdForDir(fileDir))}/`;
-      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'scope' | 'globalCwd' | 'globalEnv'> = {
+      const kind = filePath === globalFile ? 'global' : 'project';
+      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'idPrefix' | 'kind' | 'globalCwd' | 'globalEnv'> = {
         filePath,
         fileDir,
-        scope,
+        idPrefix: kind === 'global' ? '' : `${basename(defaultCwdForDir(fileDir))}/`,
+        kind,
         globalCwd: yml.cwd,
         globalEnv: yml.env,
       };

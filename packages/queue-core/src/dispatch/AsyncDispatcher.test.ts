@@ -29,6 +29,8 @@ function makeSub(id: string): ResolvedSubscriber {
   return {
     subscriberId: id,
     legacyId: id,
+    file: "subscribers.yml",
+    scope: "global",
     event: 'onTicket.created',
     type: 'cli',
     command: 'echo ok',

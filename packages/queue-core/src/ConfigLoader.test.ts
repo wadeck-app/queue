@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve, normalize, basename } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ConfigLoader } from './ConfigLoader.js';
+import { ConfigLoader, unnamedSubscriberAdvice } from './ConfigLoader.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-test-${crypto.randomUUID()}`);
@@ -445,5 +445,51 @@ describe('ConfigLoader - subscriber ids', () => {
   it.each(['Notify', 'has space', '-lead', 'a/b', ''])('refuses the invalid name %j with the accepted format', (name) => {
     writeSubscribersYml(projectDir, `subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: "${name}"\n`);
     expect(() => loader.getSubscribers('onFoo', projectDir)).toThrow('[a-z0-9][a-z0-9._-]*');
+  });
+});
+
+describe('ConfigLoader - unnamed subscribers', () => {
+  let projectDir: string;
+  let globalDir: string;
+  let loader: ConfigLoader;
+
+  beforeEach(() => {
+    projectDir = makeTmpDir();
+    globalDir = makeTmpDir();
+    loader = new ConfigLoader(globalDir);
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true });
+  });
+
+  it('says which file a subscriber comes from and whether it is global or project', () => {
+    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo g\n', 'utf-8');
+    const projectFile = writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo p\n');
+    const [global, project] = loader.getSubscribers('onFoo', projectDir);
+    expect(global).toMatchObject({ scope: 'global', file: join(globalDir, 'subscribers.yml') });
+    expect(project).toMatchObject({ scope: 'project', file: projectFile });
+  });
+
+  it('gives no advice to a subscriber that has a name', () => {
+    writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo p\n      name: notify\n');
+    expect(unnamedSubscriberAdvice(loader.getSubscribers('onFoo', projectDir)[0]!)).toBeUndefined();
+  });
+
+  it('tells an unnamed project subscriber the file, why, and the exact command that names it', () => {
+    const file = writeSubscribersYml(projectDir, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: a\n    - type: cli\n      command: echo p\n');
+    const advice = unnamedSubscriberAdvice(loader.getSubscribers('onFoo', projectDir)[1]!)!;
+    expect(advice).toContain('onFoo');
+    expect(advice).toContain(file);
+    expect(advice).toContain('mandatory');
+    expect(advice).toContain('queue sub edit onFoo --index 1 --name <name> --scope project');
+  });
+
+  it('names no scope for a global subscriber, the default scope of queue sub', () => {
+    writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: http\n      url: http://localhost/x\n', 'utf-8');
+    const advice = unnamedSubscriberAdvice(loader.getSubscribers('onFoo', projectDir)[0]!)!;
+    expect(advice).toContain('queue sub edit onFoo --index 0 --name <name>');
+    expect(advice).not.toContain('--scope');
   });
 });

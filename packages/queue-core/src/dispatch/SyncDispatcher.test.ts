@@ -27,6 +27,8 @@ function makeSub(id: string, command = 'echo ok'): ResolvedSubscriber {
   return {
     subscriberId: id,
     legacyId: id,
+    file: "subscribers.yml",
+    scope: "global",
     event: 'beforeTicket.create',
     type: 'cli',
     command,

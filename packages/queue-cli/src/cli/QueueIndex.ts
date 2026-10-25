@@ -23,10 +23,10 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, unnamedSubscriberAdvice, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
-import { parseSubFlags, buildSubscriberEntry, locateSubscriber } from './subscriberEntry.js';
+import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
 
@@ -963,6 +963,11 @@ async function main(): Promise<void> {
     } else {
       process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
     }
+    for (const advice of response.subscribers.map(unnamedSubscriberAdvice)) {
+      if (advice !== undefined) {
+        process.stderr.write(`[warn] ${advice}\n`);
+      }
+    }
     return;
   }
 
@@ -1213,6 +1218,11 @@ async function main(): Promise<void> {
         } else {
           process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
         }
+        for (const advice of response.subscribers.map(unnamedSubscriberAdvice)) {
+          if (advice !== undefined) {
+            process.stderr.write(`[warn] ${advice}\n`);
+          }
+        }
         return;
       }
 
@@ -1227,6 +1237,9 @@ async function main(): Promise<void> {
         for (let i = 0; i < subs.length; i++) {
           const s = subs[i]!;
           entries.push({ subscriberId: s.name ?? `${evtPattern}[${i}]`, event: evtPattern, type: s.type, command: s.command, url: s.url });
+          if (s.name === undefined) {
+            process.stderr.write(`${unnamedLine(evtPattern, i, scope)}\n`);
+          }
         }
       }
       if (process.stdout.isTTY && !jsonFlag) {
@@ -1284,6 +1297,9 @@ async function main(): Promise<void> {
       data.subscribers[event] = [...existing, newEntry];
       writeSubsYmlOrExit(filePath, data);
       process.stdout.write(`[ok] Added subscriber to '${event}' (index ${existing.length}) in ${filePath}\n`);
+      if (newEntry.name === undefined) {
+        process.stderr.write(`${unnamedLine(event, existing.length, scope)}\n`);
+      }
       return;
     }
 
@@ -1329,8 +1345,19 @@ async function main(): Promise<void> {
         for (const e of errors) process.stderr.write(`[fail] ${e}\n`);
         process.exit(1);
       }
+      const renamed = renameSubscriber(subs, index, config);
+      if (renamed !== undefined) {
+        if ('error' in renamed) {
+          process.stderr.write(`[fail] ${renamed.error}\n`);
+          process.exit(1);
+        }
+        data.subscribers[event] = renamed.subs;
+        writeSubsYmlOrExit(filePath, data);
+        process.stdout.write(`[ok] Named the subscriber at index ${index} of '${event}' '${config.name}' in ${filePath}\n`);
+        return;
+      }
       if (!config.type) {
-        process.stderr.write(`[fail] --type cli|http is required\nUsage: queue sub edit <event> --index <N> --type cli|http ...\n`);
+        process.stderr.write(`[fail] --type cli|http is required (or only --name, to name the subscriber and keep the rest)\nUsage: queue sub edit <event> --index <N> --type cli|http ...\n`);
         process.exit(1);
       }
       if (config.type === 'cli' && !config.command) {

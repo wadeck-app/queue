@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSubscriberEntry, locateSubscriber, parseSubFlags } from './subscriberEntry.js';
+import { buildSubscriberEntry, locateSubscriber, parseSubFlags, renameSubscriber, unnamedLine } from './subscriberEntry.js';
 
 describe('parseSubFlags --name', () => {
   it('reads the name', () => {
@@ -68,5 +68,46 @@ describe('locateSubscriber', () => {
   it('refuses an invalid or out-of-range index with the count', () => {
     expect(locateSubscriber(subs, 'onFoo', ['--index', 'x'])).toMatchObject({ error: expect.stringContaining('non-negative integer') });
     expect(locateSubscriber(subs, 'onFoo', ['--index', '3'])).toMatchObject({ error: expect.stringContaining('found 3') });
+  });
+});
+
+describe('renameSubscriber (queue sub edit with --name only)', () => {
+  const subs = [
+    { type: 'cli' as const, command: 'a', name: 'first', cwd: 'sub', env: { A: '1' }, retries: 2 },
+    { type: 'http' as const, url: 'http://x' },
+  ];
+
+  it('is what edit does when --name is the only flag: it names the entry and keeps everything else', () => {
+    const { config } = parseSubFlags(['--index', '1', '--name', 'hook']);
+    const result = renameSubscriber(subs, 1, config);
+    expect(result).toEqual({ subs: [subs[0], { type: 'http', url: 'http://x', name: 'hook' }] });
+  });
+
+  it('does not apply when other flags are given: then edit replaces the entry as before', () => {
+    const { config } = parseSubFlags(['--index', '1', '--name', 'hook', '--type', 'http', '--url', 'http://y']);
+    expect(renameSubscriber(subs, 1, config)).toBeUndefined();
+  });
+
+  it('does not apply without a name', () => {
+    expect(renameSubscriber(subs, 1, {})).toBeUndefined();
+  });
+
+  it('refuses a name another subscriber of the event already has, naming it', () => {
+    const { config } = parseSubFlags(['--index', '1', '--name', 'first']);
+    const result = renameSubscriber(subs, 1, config);
+    expect(result).toMatchObject({ error: expect.stringContaining("'first'") });
+    expect((result as { error: string }).error).toContain('index 0');
+  });
+});
+
+describe('unnamedLine', () => {
+  it('warns about a subscriber without a name and gives the one command that names it', () => {
+    expect(unnamedLine('onFoo', 2, 'global')).toBe(
+      "[warn] subscriber onFoo[2] has no name: names tell the dashboard, the history and the DLQ who listens and will become mandatory. Fix: queue sub edit onFoo --index 2 --name <name>",
+    );
+  });
+
+  it('adds the scope when it is the project one', () => {
+    expect(unnamedLine('onFoo', 0, 'project')).toMatch(/--name <name> --scope project$/);
   });
 });
