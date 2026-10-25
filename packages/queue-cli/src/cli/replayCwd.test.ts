@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { HistoryEntry } from '@wadeck-app/queue-core';
 import { resolveReplayCwd } from './replayCwd.js';
 
-// Where a replay runs decides which subscribers fire (the directory selects the project's .queue/subscribers.yml), so a replay never
+// Where a replay runs decides which subscribers fire (the directory selects the registered project), so a replay never
 // falls back on its own to the directory the user happens to be in: it uses the recorded one, or the one the user names.
 
 function entryWith(fields: { cwd?: string }): HistoryEntry {

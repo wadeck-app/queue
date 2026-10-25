@@ -4,7 +4,7 @@ import type { HistoryEntry } from '@wadeck-app/queue-core';
 export type ReplayCwd = { ok: true; cwd: string } | { ok: false; message: string };
 
 /**
- * The directory a replay runs in. It decides which subscribers fire (it selects the project's .queue/subscribers.yml), so it is never
+ * The directory a replay runs in. It decides which subscribers fire (it selects the registered project, whose subscribers apply), so it is never
  * guessed: the one the user names with --cwd, else the one recorded with the event when it still exists, else a refusal that says how
  * to choose.
  *
@@ -27,6 +27,6 @@ export function resolveReplayCwd(
     ok: false,
     message:
       `[fail] ${entry.cwd ? `History entry ${entry.eventId}: ${why}` : why}, so the project it belongs to cannot be determined. ` +
-      `The directory selects which subscribers run, so a replay never picks one for you: name it with "queue replay ${entry.eventId} --cwd <directory>" (the project directory, or any directory whose .queue/subscribers.yml you want applied).`,
+      `The directory selects which subscribers run, so a replay never picks one for you: name it with "queue replay ${entry.eventId} --cwd <directory>" (the project directory, or any directory inside the registered project whose subscribers you want applied).`,
   };
 }

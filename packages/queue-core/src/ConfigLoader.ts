@@ -71,11 +71,6 @@ export function resolveProjectName(cwd: string): string | undefined {
   return undefined;
 }
 
-/** Returns the project root for a subscribers.yml at <root>/.queue/subscribers.yml, else the file's directory. */
-function defaultCwdForDir(fileDir: string): string {
-  return basename(fileDir) === '.queue' ? dirname(fileDir) : fileDir;
-}
-
 function resolveCwd(base: string, cwd: string): string {
   return isAbsolute(cwd) ? cwd : resolve(base, cwd);
 }
@@ -121,10 +116,10 @@ export interface SubscriberConfig {
 interface ResolveContext {
   filePath: string;
   fileDir: string;
-  /** Prefix of the ids of this file's subscribers: empty for the global file, '<project folder>/' for a project file. */
+  /** Prefix of the ids of this file's subscribers: empty for the global file, '<project id>/' for a project file. */
   idPrefix: string;
   kind: 'global' | 'project';
-  via?: 'registry' | 'walk-up';
+  via?: 'registry';
   globalCwd?: string;
   globalEnv?: Record<string, string>;
   eventCwd?: string;
@@ -175,7 +170,7 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   const legacyId = `${event}[${index}]`;
 
   // cwd resolution: subscriber > event > global > file default (project root)
-  const fileDefaultCwd = defaultCwdForDir(ctx.fileDir);
+  const fileDefaultCwd = ctx.fileDir;
   const baseCwd = ctx.globalCwd
     ? resolveCwd(ctx.fileDir, ctx.globalCwd)
     : fileDefaultCwd;
@@ -286,13 +281,15 @@ export class ConfigLoader {
   }
 
   /**
-   * `project`: the registered project of the event, when there is one. Its config folders are read first; a .queue/subscribers.yml found above
-   * the working directory is the fallback of a project that has no file yet (transition), and is not read once it has one.
+   * `project`: the registered project of the event, when there is one. Its config folders are read. A .queue/subscribers.yml found above the working
+   * directory is an error when the project has no file yet (see assertNoLegacyFile), and left alone once it has one.
    */
   load(cwd: string, project?: ProjectConfigSource): Map<string, ResolvedSubscriber[]> {
     const globalFile = join(this.globalConfigDir, 'subscribers.yml');
     const registryFiles = (project?.layers ?? []).map((layer) => ({ layer, file: join(layer.dir, 'subscribers.yml') })).filter(({ file }) => existsSync(file));
-    const projectFile = registryFiles.length > 0 ? null : this.findProjectFile(cwd);
+    if (registryFiles.length === 0) {
+      this.assertNoLegacyFile(cwd, project);
+    }
 
     const merged = new Map<string, ResolvedSubscriber[]>();
 
@@ -303,13 +300,11 @@ export class ConfigLoader {
       // A file of the registry is resolved against the project folder (its config folder says nothing about where to run)
       const fileDir = registry === undefined ? dirname(filePath) : registry.baseDir;
       const kind = filePath === globalFile ? 'global' : 'project';
-      const via = registry !== undefined ? 'registry' : kind === 'project' ? 'walk-up' : undefined;
-      // A project subscriber is identified by the id of its project once the project is registered, wherever its file is
-      const projectPrefix = registry !== undefined ? `${registry.projectId}/` : project !== undefined ? `${project.projectId}/` : `${basename(defaultCwdForDir(fileDir))}/`;
+      const via = registry !== undefined ? 'registry' : undefined;
       const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'idPrefix' | 'kind' | 'globalCwd' | 'globalEnv'> = {
         filePath,
         fileDir,
-        idPrefix: kind === 'global' ? '' : projectPrefix,
+        idPrefix: registry === undefined ? '' : `${registry.projectId}/`,
         kind,
         ...(via !== undefined && { via }),
         globalCwd: yml.cwd,
@@ -338,11 +333,10 @@ export class ConfigLoader {
 
     addFromYml(loadYml(globalFile), globalFile);
     for (const { layer, file } of registryFiles) {
+      // parsed (and its syntax error explained) before its keys are checked
+      const yml = loadYml(file);
       assertKnownKeys(file);
-      addFromYml(loadYml(file), file, { projectId: layer.projectId, baseDir: project!.baseDir });
-    }
-    if (projectFile) {
-      addFromYml(loadYml(projectFile), projectFile);
+      addFromYml(yml, file, { projectId: layer.projectId, baseDir: project!.baseDir });
     }
 
     return merged;
@@ -359,7 +353,26 @@ export class ConfigLoader {
     return result;
   }
 
-  /** The .queue/subscribers.yml found above `cwd`, if any (the lookup that is being replaced by the config folder of the registered project). */
+  /**
+   * A .queue/subscribers.yml above `cwd` is not read any more: silently ignoring it would leave its subscribers unfired with no sign,
+   * so it is an error that names the file and where its content goes.
+   */
+  private assertNoLegacyFile(cwd: string, project?: ProjectConfigSource): void {
+    const legacy = this.findProjectFile(cwd);
+    if (legacy === null) {
+      return;
+    }
+    const destination = project?.layers.at(-1);
+    const fix = destination !== undefined
+      ? `move its content to ${join(destination.dir, 'subscribers.yml')}, then delete ${legacy}`
+      : `register the project (project add "${cwd}"), move its content to the subscribers.yml of the queue config folder that 'project show' lists for it, then delete ${legacy}`;
+    throw new Error(
+      `[queue] ${legacy} is no longer read: the subscribers of a project live in the config folder of its project registry entry.\n` +
+      `Fix: ${fix}`
+    );
+  }
+
+  /** The .queue/subscribers.yml found above `cwd`, if any (no longer read: it is reported, see assertNoLegacyFile). */
   findProjectFile(cwd: string): string | null {
     let current = cwd;
     for (let i = 0; i < 20; i++) {

@@ -24,7 +24,7 @@ queue push <event> <json>              queue-relay-client (own daemon, port 4791
 ## Config model
 
 - Global config: `~/.config/queue/subscribers.yml` (override: `QUEUE_CONFIG_DIR`)
-- Project config: `.queue/subscribers.yml` (walked up from cwd, up to 20 levels)
+- Project config: `subscribers.yml` in the config folder of the registered project of the cwd (`project add`); the old `.queue/subscribers.yml` walk-up is an error
 - Project name: inferred from nearest `.queue` marker directory name
 - Subscriber types: `cli` (shell command) or `http` (HTTP request)
 - Conditional dispatch: `when:` field accepts a JSONPath/expression filter against the event payload

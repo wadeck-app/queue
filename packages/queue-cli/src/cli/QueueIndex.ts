@@ -103,7 +103,7 @@ Usage:
 
 Options:
   --scope global|project   File target: global=$QUEUE_CONFIG_DIR/subscribers.yml (default)
-                           project=the config folder of the registered project of the cwd (project add; .queue/subscribers.yml in cwd until it is registered)
+                           project=the config folder of the registered project of the cwd (register it first with: project add)
   --timeout <duration>     30s, 5m, 1h - dispatch timeout (default: 30s)
   --retries <n>            Max retries before DLQ (default: 5)
   --backoff <strategy>     exponential|linear (default: exponential)
@@ -124,7 +124,7 @@ Concepts:
   before.*    Synchronous: blocks caller, returns subscriber result, supports abort
   other.*     Asynchronous: fire-and-forget, WAL-tracked, retried on failure
   subscriber  Configured in $QUEUE_CONFIG_DIR/subscribers.yml (global)
-              or .queue/subscribers.yml (project, walks up from cwd)
+              or the config folder of the registered project of the cwd (project)
   logs        Verbose per-dispatch debug trail (stdout/stderr), today's file only
   history     Terse audit trail: which events were triggered, which subscribers listened,
               with what outcome; spans all available days
@@ -740,10 +740,6 @@ function resolveSubsFile(configDir: string, scope: string): string {
     process.stderr.write(`[fail] ${target.error}
 `);
     process.exit(1);
-  }
-  if (target.warning !== undefined) {
-    process.stderr.write(`[warn] ${target.warning}
-`);
   }
   return target.file;
 }

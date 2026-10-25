@@ -23,6 +23,14 @@ afterEach(() => {
   rmSync(projectDir, { recursive: true, force: true });
 });
 
+/** Registers `projectDir` in a new registry whose project holds this subscribers.yml in its config folder; returns the registry folder and the project id. */
+async function registerProjectWithSubscribers(yml: string): Promise<{ registryDir: string; projectId: string }> {
+  const registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+  const project = await addProject(registryDir, { name: 'app', path: projectDir });
+  writeFileSync(join(projectToolDir(registryDir, project.id, 'queue', 'config', { ensure: true }), 'subscribers.yml'), yml);
+  return { registryDir, projectId: project.id };
+}
+
 describe('createQueueService', () => {
   it('starts idle with an empty queue, and status reports it', () => {
     const service = createQueueService(configDir);
@@ -136,6 +144,14 @@ describe('register-events (the event catalog, protocol 1.1.0)', () => {
 });
 
 describe('push: warning for a subscriber without a name', () => {
+  let registryDir: string | undefined;
+
+  afterEach(() => {
+    if (registryDir !== undefined) {
+      rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
   // when never matches: nothing is dispatched, the subscriber is only loaded
   const yml = (name: string): string => `subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      when: payload.never=1\n${name}`;
 
@@ -147,9 +163,8 @@ describe('push: warning for a subscriber without a name', () => {
   };
 
   it('logs one actionable diagnostic per unnamed subscriber, not one per push', async () => {
-    mkdirSync(join(projectDir, '.queue'), { recursive: true });
-    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), yml(''));
-    const service = createQueueService(configDir);
+    registryDir = (await registerProjectWithSubscribers(yml(''))).registryDir;
+    const service = createQueueService(configDir, { registryDir });
     await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
     await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
     const lines = warnings();
@@ -158,9 +173,8 @@ describe('push: warning for a subscriber without a name', () => {
   });
 
   it('logs nothing for a named subscriber', async () => {
-    mkdirSync(join(projectDir, '.queue'), { recursive: true });
-    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), yml('      name: notify\n'));
-    const service = createQueueService(configDir);
+    registryDir = (await registerProjectWithSubscribers(yml('      name: notify\n'))).registryDir;
+    const service = createQueueService(configDir, { registryDir });
     await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
     expect(existsSync(join(configDir, 'logs')) ? warnings() : []).toEqual([]);
   });
@@ -168,8 +182,7 @@ describe('push: warning for a subscriber without a name', () => {
 
 describe('retry of an entry written before subscriber names and scopes', () => {
   it('finds the subscriber again through its legacy position id', async () => {
-    mkdirSync(join(projectDir, '.queue'), { recursive: true });
-    writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: node -e ""\n');
+    const { registryDir } = await registerProjectWithSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: node -e ""\n');
     new Wal(join(configDir, 'wal.ndjson')).append({
       id: 'evt-legacy',
       timestamp: new Date().toISOString(),
@@ -180,10 +193,14 @@ describe('retry of an entry written before subscriber names and scopes', () => {
       status: 'failed',
       attempts: 1,
     });
-    const service = createQueueService(configDir);
-    expect(await service.commands.retry({ eventId: 'evt-legacy' })).toEqual({ status: 'ok' });
-    // the retry runs the subscriber: its process must be gone before the afterEach removes the directory it runs in
-    await waitFor('the retry to finish', () => service.isIdle());
+    const service = createQueueService(configDir, { registryDir });
+    try {
+      expect(await service.commands.retry({ eventId: 'evt-legacy' })).toEqual({ status: 'ok' });
+      // the retry runs the subscriber: its process must be gone before the afterEach removes the directory it runs in
+      await waitFor('the retry to finish', () => service.isIdle());
+    } finally {
+      rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
   });
 });
 
@@ -250,17 +267,16 @@ describe('push: the project of the working directory (project-sdk registry)', ()
     expect(logLines().filter((line) => line.includes('could not be read'))).toHaveLength(1);
   });
 
-  it('logs, once per file, that a subscribers.yml found by walking up is used as a transition, naming the file and what replaces it', async () => {
+  it('aborts the push, naming the old .queue/subscribers.yml and the file to move it to, when the project has no file yet', async () => {
     mkdirSync(join(projectDir, '.queue'), { recursive: true });
     const file = join(projectDir, '.queue', 'subscribers.yml');
     writeFileSync(file, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: n\n      when: payload.never=1\n');
-    await addProject(registryDir, { name: 'app', path: projectDir });
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
     const service = createQueueService(configDir, { registryDir });
-    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
-    await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
-    const lines = logLines().filter((line) => line.includes('transition'));
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain(file);
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
+    expect(response.status).toBe('aborted');
+    expect(response.reason).toContain(file);
+    expect(response.reason).toContain(join(projectToolDir(registryDir, project.id, 'queue', 'config'), 'subscribers.yml'));
   });
 });
 
@@ -325,8 +341,7 @@ describe('the project of a push follows the event into the WAL and the DLQ (meta
     const registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
     try {
       const project = await addProject(registryDir, { name: 'app', path: projectDir });
-      mkdirSync(join(projectDir, '.queue'), { recursive: true });
-      writeFileSync(join(projectDir, '.queue', 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      name: fails\n      command: node -e "process.exit(1)"\n      retries: 0\n');
+      writeFileSync(join(projectToolDir(registryDir, project.id, 'queue', 'config', { ensure: true }), 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      name: fails\n      command: node -e "process.exit(1)"\n      retries: 0\n');
       const service = createQueueService(configDir, { registryDir });
       await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
       await waitFor('the failed dispatch to reach the DLQ', () => listDlqEntries(configDir).length === 1 && service.isIdle());
@@ -386,7 +401,6 @@ describe('subscribers kept in the config folder of the registered project', () =
     const service = createQueueService(configDir, { registryDir });
     await service.commands.push({ event: 'onFoo', payload: {}, cwd: join(projectDir, 'src') });
     expect(triggerCounts()).toEqual([1]);
-    expect(logMessages().filter((line) => line.includes('transition'))).toEqual([]);
   });
 
   it('loads them for an explicit project too, whatever the working directory of the push', async () => {

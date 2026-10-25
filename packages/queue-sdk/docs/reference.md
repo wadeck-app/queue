@@ -4,7 +4,7 @@
 
 | Option | Default | Meaning |
 |---|---|---|
-| `cwd` | `process.cwd()` | Project directory sent with every event; selects the project's `.queue/subscribers.yml` and the project name in the history |
+| `cwd` | `process.cwd()` | Project directory sent with every event; selects the registered project (its subscribers) and the project name in the history |
 | `project` | - | Id of a registered project (8 hexadecimal characters, `project list`) the events are pushed on behalf of, since push protocol 1.2.0. The SDK resolves nothing: give the id, not a name. Absent: the daemon finds the project from `cwd`. On an older daemon the event is dropped (`unsupported`), never filed under another project |
 | `configDir` | `QUEUE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/queue`, else `~/.config/queue` | Where the queue keeps its files |
 | `timeoutMs` | `5000` | HTTP timeout of one push |

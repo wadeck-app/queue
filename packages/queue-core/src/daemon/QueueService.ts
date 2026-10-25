@@ -68,8 +68,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   const projectResolver = options.registryDir === undefined ? undefined : new ProjectResolver(options.registryDir);
 
   /**
-   * The subscribers of an event: the global file, then those of the registered project (its config folders), else the .queue/subscribers.yml
-   * found above `cwd` as a transition. `lookup` is the project already found by the caller; `projectId` names it explicitly (a stored entry).
+   * The subscribers of an event: the global file, then those of the registered project (its config folders); a .queue/subscribers.yml found
+   * above `cwd` is refused by the loader. `lookup` is the project already found by the caller; `projectId` names it explicitly (a stored entry).
    */
   function loadSubscribers(event: string, cwd: string, lookup?: ProjectLookup, projectId?: string): ResolvedSubscriber[] {
     const known = lookup ?? (projectResolver === undefined ? undefined : projectId !== undefined ? projectResolver.lookupId(projectId) : projectResolver.lookup(cwd));
@@ -164,15 +164,6 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           const reason = getErrorMessage(err);
           eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `config error for event ${req.event}: ${reason}` });
           return { status: 'aborted', reason, eventId: envelope.id };
-        }
-
-        // A subscribers.yml found by walking up is a transition: the subscribers of a project will live in its config folder of the registry
-        for (const file of new Set(subscribers.filter((sub) => sub.via === 'walk-up').map((sub) => sub.file))) {
-          const note = `${file} is used because it was found above ${cwd} (transition: the subscribers of a project will live in the config folder of its project-sdk registry entry, and this lookup will go once they are moved)`;
-          if (!saidOnce.has(note)) {
-            saidOnce.add(note);
-            eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: note });
-          }
         }
 
         // Once per subscriber and per daemon run, before the filter (a subscriber whose `when` never matches is still unnamed)

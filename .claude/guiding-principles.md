@@ -14,7 +14,7 @@ An event is not considered dispatched until the WAL entry is updated to `status:
 
 ## Config is merged: global first, then project-local
 
-`~/.config/queue/subscribers.yml` is loaded first; `.queue/subscribers.yml` in the project tree is merged on top. Subscribers from both apply. Never document or implement a "project overrides global" semantics — they accumulate.
+`~/.config/queue/subscribers.yml` is loaded first; the `subscribers.yml` in the config folder of the registered project (and of its parents) is merged on top. A `.queue/subscribers.yml` above the cwd is no longer read: it is an error naming the file and its destination. Subscribers from both apply. Never document or implement a "project overrides global" semantics — they accumulate.
 
 ## Errors must be loud, not silent
 

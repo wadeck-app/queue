@@ -38,11 +38,10 @@ describe('subscribersFileFor', () => {
     expect(result).toEqual({ file: join(projectToolDir(registryDir, project.id, 'queue', 'config'), 'subscribers.yml'), createDir: true });
   });
 
-  it('project, outside every registered project: the .queue/subscribers.yml of the working directory, with the warning that says what to do', () => {
+  it('project, outside every registered project: refuses, with the command that registers the project, instead of writing a .queue/subscribers.yml that is no longer read', () => {
     const elsewhere = folder('elsewhere');
     const result = subscribersFileFor('project', { configDir, cwd: elsewhere, registryDir });
-    expect(result).toMatchObject({ file: join(elsewhere, '.queue', 'subscribers.yml'), createDir: true });
-    expect('warning' in result && result.warning).toContain(`project add "${elsewhere}"`);
+    expect('error' in result && result.error).toContain(`project add "${elsewhere}"`);
   });
 
   it('project, with an unreadable registry: refuses, with the reason, instead of writing somewhere else', () => {

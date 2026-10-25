@@ -74,7 +74,7 @@ export class ProjectResolver {
         kind: 'unregistered',
         warning:
           `the working directory ${cwd} is not inside any registered project: only the global subscribers apply ` +
-          `(and a .queue/subscribers.yml found above it, as a transition). Fix: project add "${cwd}"`,
+          `(a .queue/subscribers.yml found above it is refused, not read). Fix: project add "${cwd}"`,
       };
     }
     return { kind: 'registered', project: { id: match.project.id, name: match.project.name }, path: match.path };

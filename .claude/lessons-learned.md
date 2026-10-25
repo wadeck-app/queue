@@ -1,8 +1,16 @@
 # Lessons learned
 
-<!-- Last updated: 2026-10-24T13:59:18.001Z -->
+<!-- Last updated: 2026-10-25T20:27:54.541Z -->
 
 ## Recurring feedback
+
+<!-- session fc140a04 2026-10-25 -->
+- User corrected output format violation at start — required exact pattern matching with only four section tags.
+
+<!-- session 53a72f6b 2026-10-25 -->
+- Frequent version compatibility checks required between SDK and daemon (protocol versions, EVENT_CATALOG_MIN_VERSION, daemon version warnings) — version negotiation is complex in this system
+- Temporary .mjs scripts staged in /tmp/ used for multi-step code transformations before running tests and committing — consistent pattern across multiple features
+- Dependency updates to @wadeck-app/shared-cli and @wadeck-app/project-sdk required lockfile updates (17:21-17:30, 16:10) — version pinning or update automation may reduce friction.
 
 <!-- session 4ff1a10a 2026-10-24 -->
 - Async/await refactoring pattern: Multiple agents independently rewrote `rmSync()` → `await removeDir()` across several integration test files (QueueIndex.integration.test.ts, relayRead.integration.test.ts, QueueDaemon.integration.test.ts, QueueSdk.integration.test.ts) using sed. This suggests a broad requirement that should have been upfront or applied uniformly in one pass.
@@ -179,6 +187,13 @@
 - Manual E2E test cycle needed after each deployment: daemon lifecycle (start/stop), event push/delivery, DLQ checks, and dispatch log verification.
 
 ## Agent errors
+
+<!-- session fc140a04 2026-10-25 -->
+- Multiple successive .mjs scripts written and executed for piecemeal file modifications (sed/edit operations) without upfront scope planning; suggests exploration in place of comprehensive analysis before starting implementation.
+
+<!-- session 53a72f6b 2026-10-25 -->
+- Assistant planned for a "migrate-names command" that doesn't exist in the codebase; discovered and corrected at 2026-10-25 10:33:06
+- Multiple edits to ciWaitCommand.ts and wait.md docs (16:50-16:52) to clarify relay/repository diagnostics — existing guidance on when exit 3 occurs and what "no delivery" means was ambiguous and needed clarification during implementation.
 
 <!-- session 4ff1a10a 2026-10-24 -->
 - Multiple agents (ac5f, acbf, aa20, ae09) spawned in parallel for wall-clock-fragility deflaking across 4+ packages at 09:46:02+ without explicit verification before reporting completion—no evidence results were reviewed for correctness.
@@ -575,6 +590,14 @@
 
 ## Documentation gaps
 
+<!-- session fc140a04 2026-10-25 -->
+- Protocol versioning system (contract files, PROTOCOL_VERSION, daemon compatibility checks) required extensive grep/read exploration across multiple files; naming conventions and version update procedures are not immediately clear.
+
+<!-- session 53a72f6b 2026-10-25 -->
+- write-doc skill not loaded when attempted at 20:23:39 — user worked around with Write tool directly. Skill loading may need better error handling or pre-loading for docs task patterns.
+- Registry/ConfigLoader/subscribers interconnections required extensive codebase exploration (grep/sed at 16:03-16:08) before implementation — architecture not immediately clear from existing docs or code comments.
+- Pending page layout required multiple screenshot iterations and DOM inspection (20:20-20:21) — visual behavior/layout not fully specified upfront, necessitated real-app testing to validate design.
+
 <!-- session 4ff1a10a 2026-10-24 -->
 - Test timeout/fragility patterns (setTimeout, Date.now, hardcoded delays) not documented; guiding-principles.md updated reactively (09:45:44) but no proactive guide for teams on which patterns to avoid.
 - SDK testing helpers (makeTempDir, removeDir, closedPort, waitFor) duplicated across packages; no centralized API or pattern guide—each package reinvents with inconsistent signatures.
@@ -821,6 +844,12 @@
 - New violations rules require a corresponding test file (`src/rules/[category]/[rule].test.ts`), or self-check fails with no clear error message pointing to the root cause.
 
 ## Known constraints
+
+<!-- session fc140a04 2026-10-25 -->
+- Project adoption implementation requires explicit user decisions (SDK vs. config strategy, adoption order) before proceeding — scope question at 14:20 blocked progress until confirmed.
+
+<!-- session 53a72f6b 2026-10-25 -->
+- CRLF line ending issue caught during test file review at 2026-10-25 14:06:41 — Windows Git Bash platform gotcha when working with test files
 
 <!-- session 4ff1a10a 2026-10-24 -->
 - Version management scattered: BUNDLE_VERSION env var, package.json, embedded in daemon code—no single source of truth discovered; investigation at 08:03:23-08:04:54 showed confusion across multiple grep attempts.

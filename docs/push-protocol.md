@@ -61,7 +61,7 @@ Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 |---|---|---|
 | `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `**` or `>` the rest) |
 | `payload` | yes | Any JSON value |
-| `cwd` | yes | Directory used to find the project's `.queue/subscribers.yml` and the project name; omitting it gives HTTP 500 |
+| `cwd` | yes | Directory used to find the registered project (its subscribers) and the project name; omitting it gives HTTP 500 |
 | `protocol` | no | Protocol version the client speaks; absent = `1.0.0` |
 | `timeout` | no | Milliseconds a `before*` event may take (default 30000) |
 | `replayOf` | no | Id of the event this push replays |
