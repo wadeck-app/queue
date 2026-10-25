@@ -1,5 +1,11 @@
 # Lessons learned — queue
 
+### A repo-built bundle must never run the real `cli update` / updater (incident 2026-10-24/25)
+
+**Problem:** Tests spawned a repo-built `queue.cjs` with the real config dir and the real global npm; the background updater ran `npm install -g`, was killed mid-install, and the global CLI vanished.
+**Fix:** Spawned CLIs in tests use `createIsolatedCliEnv()` (`src/testing/isolatedCliEnv.ts`: temp config/home/npm prefix+cache, unreachable registry, `UPDATER_*`/`LAUNCHER_*`/`NPM_CONFIG_*` stripped). A non-CalVer bundle refuses to update (`devBuildGuard.ts`): `cli update` exits 1 with a message, the updater entry logs and exits (1 if `UPDATER_FORCE=1`, else 0), the scheduler never spawns it.
+**Context:** `UpdateManager` ignores `QUEUE_CONFIG_DIR` unless given the dir (now passed) and lives in `node_modules`, so `vi.mock('node:child_process')` does not reach its `spawn`: mock `UpdateManager` itself.
+
 ### Valider avec les vrais binaires installés, pas le bundle local
 
 **Problem:** Tester avec `node dist-bundle/queue.cjs` ne valide pas le vrai comportement : le Go launcher, le chemin de résolution des fichiers déployés, et le contenu du package npm publié peuvent tous diverger.
