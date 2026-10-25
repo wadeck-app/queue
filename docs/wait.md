@@ -41,6 +41,10 @@ Without an inferred list, "done" means every workflow run seen for the commit is
 
 The relay does not replay events missed while it was down: a wait only sees events that arrive while it is connected.
 
+### Repositories the relay does not cover
+
+A GitHub webhook only covers the repositories of its owner, and the relay is configured for the organisation only. The repositories of the personal account are deliberately not relayed: `queue wait ci` on one of them ends with exit 3 ("No workflow_run delivery from <owner>/<repo> reached the relay"), whatever the CI does. That is expected, not a fault of the relay or of the webhook. For those repositories do not use `queue wait ci`: poll the run with the GitHub tools (`gh run list --commit <sha>`, or the GitHub MCP tools, see the `poll-event` skill).
+
 ## Exit codes
 
 | Command | 0 | 1 | 2 | 3 | 4 |

@@ -162,6 +162,7 @@ describe('ciWaitCommand: no run seen, was anything delivered for this repository
     expect(text).toContain('wadeck-app/scrapers');
     expect(text).toContain('only covers the repositories of its owner');
     expect(text).toContain('queue relay webhook list');
+    expect(text).toContain('deliberately not relayed (docs/wait.md)');
   });
 
   it('says the relay delivered nothing at all when the history holds no workflow_run in the last 24 h', async () => {

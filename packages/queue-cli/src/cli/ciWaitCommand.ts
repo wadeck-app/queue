@@ -49,7 +49,7 @@ function deliveryHint(repo: string | undefined, entries: HistoryEntry[]): string
   }
   return (
     `No workflow_run delivery from ${repo} reached the relay in the last 24 h (it delivered: ${seen.join(', ')}). ` +
-    'A webhook only covers the repositories of its owner (an organisation webhook does not cover a personal account\'s repositories): add one for that owner ("queue relay webhook list" shows the configured ones). '
+    'A webhook only covers the repositories of its owner (an organisation webhook does not cover a personal account\'s repositories): if that owner is meant to be relayed, "queue relay webhook list" shows the configured webhooks; if it is deliberately not relayed (docs/wait.md), poll the run with "gh run list" instead. '
   );
 }
 
