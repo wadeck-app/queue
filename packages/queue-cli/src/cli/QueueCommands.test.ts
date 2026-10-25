@@ -4,7 +4,8 @@
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { addProject } from '@wadeck-app/project-sdk';
 import { join } from 'node:path';
 import { runQueueCommand } from './QueueIndex.js';
 import { getErrorMessage } from '@wadeck-app/queue-core';
@@ -89,6 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	delete process.env['QUEUE_CONFIG_DIR'];
+	delete process.env['XDG_CONFIG_HOME'];
 	delete process.env['LAUNCHER_BUNDLE_OVERRIDE'];
 	rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -167,6 +169,28 @@ describe('queue status', () => {
 		expect(exitCode).toBe(0);
 		const parsed = JSON.parse(stdout);
 		expect(parsed).toMatchObject({ pendingCount: 3, dlqCount: 1 });
+	});
+
+	it('counts one project only with --project, from the queue files, and says which project', async () => {
+		const configDir = process.env['QUEUE_CONFIG_DIR'] as string;
+		// the registry the CLI reads is the one under XDG_CONFIG_HOME
+		process.env['XDG_CONFIG_HOME'] = join(tmpDir, 'xdg');
+		const project = await addProject(join(tmpDir, 'xdg', 'project'), { name: 'app', path: tmpDir });
+		const entry = (id: string, projectId: string) => ({ id, timestamp: new Date().toISOString(), event: 'onFoo', payload: {}, meta: { cwd: '/p', projectId }, subscriberId: 's', status: 'pending' as const, attempts: 0 });
+		writeFileSync(join(configDir, 'wal.ndjson'), [entry('a', project.id), entry('b', 'other')].map((line) => JSON.stringify(line)).join('\n') + '\n');
+		mockSend.mockResolvedValue({ pendingCount: 2, dlqCount: 0 });
+		Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+		const { stdout, exitCode } = await run(['status', '--project', 'app', '--json']);
+		Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+		expect(exitCode).toBe(0);
+		expect(JSON.parse(stdout)).toMatchObject({ projectId: project.id, pendingCount: 1, dlqCount: 0 });
+	});
+
+	it('refuses a --project that is not registered, with the reason, instead of counting nothing', async () => {
+		process.env['XDG_CONFIG_HOME'] = join(tmpDir, 'xdg');
+		const { stderr, exitCode } = await run(['status', '--project', 'no-such-project-zzz']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('no-such-project-zzz');
 	});
 
 	it('shows not-running status when daemon is down', async () => {

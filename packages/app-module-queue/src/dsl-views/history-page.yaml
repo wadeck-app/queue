@@ -8,6 +8,9 @@ $sources:
       event: $urlParam.event
       subscriberId: $urlParam.subscriber
       status: $urlParam.status
+      project: $urlParam.project
+  projects:
+    url: GET /api/modules/queue/projects
 
 # {eventId} is the event id of the clicked row (the renderer percent-encodes it). The replay runs the subscribers again.
 $actions:
@@ -43,6 +46,13 @@ sections:
           - { value: failed, label: Failed attempt }
           - { value: dlq, label: Given up (DLQ) }
           - { value: filtered, label: Filtered out }
+      - $type: CompactSelect
+        $if: $sources.projects.options.length
+        urlParam: project
+        resetUrlParams: [page]
+        ariaLabel: Project
+        placeholder: Any project
+        options: $sources.projects.options
   - $type: DataTable
     rows: $sources.history.entries
     # `row` is not injected into the expansion: pass it with $ctx.row.

@@ -21,6 +21,7 @@ const {
   mockGiveUpPending,
   mockGiveUpStuck,
   mockListSubscribers,
+  mockListProjectOptions,
   mockPushEvent,
   mockGetLogs,
   mockGetEvents,
@@ -49,6 +50,7 @@ const {
   mockGiveUpPending: vi.fn(),
   mockGiveUpStuck: vi.fn(),
   mockListSubscribers: vi.fn(),
+  mockListProjectOptions: vi.fn(),
   mockPushEvent: vi.fn(),
   mockGetLogs: vi.fn(),
   mockGetEvents: vi.fn(),
@@ -72,6 +74,7 @@ vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: 
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlqEntry, clearDlqEntry: mockClearDlqEntry }));
 vi.mock('./subscribers.js', () => ({ listSubscribers: mockListSubscribers }));
+vi.mock('./projects.js', () => ({ listProjectOptions: mockListProjectOptions }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
 vi.mock('./events.js', () => ({ getEvents: mockGetEvents, getEventPage: mockGetEventPage, pushTestEvent: mockPushTestEvent, validateEventPayload: mockValidateEventPayload }));
@@ -150,6 +153,7 @@ describe('backend', () => {
       'GET /dlq',
       'POST /dlq/:id/replay',
       'POST /dlq/:id/clear',
+      'GET /projects',
       'GET /subscribers',
       'POST /push',
     ]);
@@ -496,6 +500,26 @@ describe('backend', () => {
     await routes.get('GET /dlq')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(500);
     expect(reply.send).toHaveBeenCalledWith({ error: 'Cannot read dlq.ndjson' });
+  });
+
+  it('GET /projects answers the registered projects as select options', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListProjectOptions.mockReturnValue([{ value: '64f4ae91', label: 'app' }]);
+    const reply = fakeReply();
+    await routes.get('GET /projects')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ options: [{ value: '64f4ae91', label: 'app' }] });
+  });
+
+  it('GET /projects returns 500 with the reason when the registry cannot be read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListProjectOptions.mockImplementation(() => { throw new Error('registry is not valid JSON'); });
+    const reply = fakeReply();
+    await routes.get('GET /projects')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'registry is not valid JSON' });
   });
 
   it('GET /subscribers returns 500 with the reason for an invalid subscribers.yml', async () => {

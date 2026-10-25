@@ -43,6 +43,21 @@ describe('readQueueCounts', () => {
     new DlqStore(join(configDir, 'dlq.ndjson')).append(dlqEntry('x'));
     expect(readQueueCounts(configDir)).toEqual({ pendingCount: 2, dlqCount: 1 });
   });
+
+  it('counts only the entries of one project (meta.projectId) when asked, leaving out the entries of no project', () => {
+    const wal = new Wal(join(configDir, 'wal.ndjson'));
+    const inProject = (id: string, projectId?: string) => ({ ...walEntry(id, 'pending'), meta: { ...meta, ...(projectId !== undefined && { projectId }) } });
+    wal.append(inProject('a', 'p1'));
+    wal.append(inProject('b', 'p2'));
+    wal.append(inProject('c'));
+    const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
+    dlq.append({ ...dlqEntry('x'), meta: { ...meta, projectId: 'p1' } });
+    dlq.append({ ...dlqEntry('y'), meta: { ...meta, projectId: 'p2' } });
+    dlq.append(dlqEntry('z'));
+    expect(readQueueCounts(configDir, 'p1')).toEqual({ pendingCount: 1, dlqCount: 1 });
+    expect(readQueueCounts(configDir, 'nobody')).toEqual({ pendingCount: 0, dlqCount: 0 });
+    expect(readQueueCounts(configDir)).toEqual({ pendingCount: 3, dlqCount: 3 });
+  });
 });
 
 describe('listDlqEntries / clearDlqEntries', () => {

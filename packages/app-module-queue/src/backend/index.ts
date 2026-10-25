@@ -19,6 +19,7 @@ import { getDaemonState } from './daemon.js';
 import { getRelayInfo } from './relay.js';
 import { listWebhooks, listDeliveries } from './relayWebhooks.js';
 import { listSubscribers } from './subscribers.js';
+import { listProjectOptions } from './projects.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery, validateSingleString } from './historyQuery.js';
@@ -307,6 +308,15 @@ export default function (ctx: ModuleContext): void {
     const { id } = req.params;
     try {
       return reply.code(200).send(clearDlqEntry(configDir, id));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // The registered projects, for the project selector of the History and DLQ pages
+  ctx.registerRoute('GET', '/projects', (_req, reply) => {
+    try {
+      return reply.code(200).send({ options: listProjectOptions(defaultRegistryDir(process.env)) });
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

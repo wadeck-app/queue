@@ -153,6 +153,15 @@ describe('dlq-page.yaml', () => {
     expect(actions['clearEntry']?.['url']).toBe('POST /api/modules/queue/dlq/{id}/clear');
   });
 
+  it('filters by project: the selector sets the project URL parameter and the dlq source sends it to the route', () => {
+    const sources = doc['$sources'] as Record<string, Node>;
+    const select = (doc['sections'] as Node[]).find((section) => section['urlParam'] === 'project') as Node;
+    expect(select['$type']).toBe('CompactSelect');
+    expect(select['options']).toBe('$sources.projects.options');
+    expect((sources['dlq']?.['params'] as Node)['project']).toBe('$urlParam.project');
+    expect(sources['projects']?.['url']).toBe('GET /api/modules/queue/projects');
+  });
+
   it('confirms before dropping an entry and says what happened, on success and on failure', () => {
     expect(String(actions['clearEntry']?.['confirm'])).toMatch(/cannot be recovered/);
     for (const action of Object.values(actions)) {

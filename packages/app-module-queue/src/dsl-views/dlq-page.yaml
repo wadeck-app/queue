@@ -1,6 +1,10 @@
 $sources:
   dlq:
     url: GET /api/modules/queue/dlq
+    params:
+      project: $urlParam.project
+  projects:
+    url: GET /api/modules/queue/projects
   daemon:
     url: GET /api/modules/queue/daemon
 
@@ -27,6 +31,12 @@ sections:
     $if: $sources.daemon.hint
     label: $sources.daemon.hint
     variant: warning
+  - $type: CompactSelect
+    $if: $sources.projects.options.length
+    urlParam: project
+    ariaLabel: Project
+    placeholder: Any project
+    options: $sources.projects.options
   - $type: DataTable
     rows: $sources.dlq.entries
     emptyMessage: No failed event

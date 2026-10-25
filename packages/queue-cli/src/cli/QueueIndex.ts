@@ -23,7 +23,7 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, unnamedSubscriberAdvice, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, unnamedSubscriberAdvice, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -139,7 +139,7 @@ Usage:
   queue events show <name> [--json]   Schema, example, payload paths for 'queue wait --when' and a ready command
   queue events register --source <s> --file <events.json> [--json]   Declare the events of a program that does not use the Node SDK
   queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done
-  queue status [--json]
+  queue status [--project <name|alias|id>] [--json]
   queue list-subscribers [event] [--json]
   queue dlq list [--project <name|alias|id>]
   queue dlq replay --id <id>
@@ -960,10 +960,24 @@ async function main(): Promise<void> {
 
   if (command === 'status') {
     const jsonFlag = rest.includes('--json');
+    const projectFlag = parseProjectFlag(rest);
+    if (projectFlag.error !== undefined) {
+      process.stderr.write(`[fail] ${projectFlag.error}\n`);
+      process.exit(1);
+    }
+    let projectId: string | undefined;
+    if (projectFlag.value !== undefined) {
+      const project = resolveProjectId(projectFlag.value, defaultRegistryDir(process.env));
+      if (!project.ok) {
+        process.stderr.write(`[fail] ${project.message}\n`);
+        process.exit(1);
+      }
+      projectId = project.id;
+    }
     const client = createQueueClient(configDir);
     const running = await client.isRunning().catch(() => false);
     if (!running) {
-      const data = { daemonRunning: false, pendingCount: 0, dlqCount: 0 };
+      const data = { daemonRunning: false, pendingCount: 0, dlqCount: 0, ...(projectId !== undefined && { projectId }) };
       if (process.stdout.isTTY && !jsonFlag) {
         process.stdout.write('[fail] daemon: not running\n');
         process.stdout.write('       pending: 0\n');
@@ -973,7 +987,9 @@ async function main(): Promise<void> {
       }
       return;
     }
-    const response = await client.send('status', undefined);
+    const daemonStatus = await client.send('status', undefined);
+    // the counts of one project come from the queue files (the daemon counts everything), read here like the dashboard does
+    const response = projectId === undefined ? daemonStatus : { ...daemonStatus, ...readQueueCounts(configDir, projectId) };
     const { execFileSync: execFS } = await import('node:child_process');
     let orchAvailable = false;
     try {
@@ -984,13 +1000,16 @@ async function main(): Promise<void> {
     }
     const daemonVersion = await readDaemonVersion(configDir);
     const mismatch = versionMismatchWarning(daemonVersion, getVersion());
-    const data = { ...response, orchAvailable, ...(daemonVersion !== undefined && { daemonVersion }), cliVersion: getVersion() };
+    const data = { ...response, ...(projectId !== undefined && { projectId }), orchAvailable, ...(daemonVersion !== undefined && { daemonVersion }), cliVersion: getVersion() };
     if (mismatch !== undefined) {
       process.stderr.write(`[warn] ${mismatch}
 `);
     }
     if (process.stdout.isTTY && !jsonFlag) {
       process.stdout.write('[ok]  daemon:  running\n');
+      if (projectId !== undefined) {
+        process.stdout.write(`      project: ${projectId} (pending and dlq count this project only)\n`);
+      }
       process.stdout.write(`      pending: ${response.pendingCount}\n`);
       process.stdout.write(`      dlq:     ${response.dlqCount}\n`);
       process.stdout.write(`      uptime:  ${formatUptime(response.uptimeSec ?? 0)}\n`);

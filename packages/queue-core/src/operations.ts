@@ -19,8 +19,15 @@ export interface QueueCounts {
   dlqCount: number;
 }
 
-export function countQueue(wal: Wal, dlq: DlqStore): QueueCounts {
-  return { pendingCount: wal.pendingCount(), dlqCount: dlq.readAll().length };
+/** `projectId`: count only the entries recorded for that project (meta.projectId); without it, all of them. */
+export function countQueue(wal: Wal, dlq: DlqStore, projectId?: string): QueueCounts {
+  if (projectId === undefined) {
+    return { pendingCount: wal.pendingCount(), dlqCount: dlq.readAll().length };
+  }
+  return {
+    pendingCount: wal.readAll().filter((entry) => entry.status === 'pending' && entry.meta.projectId === projectId).length,
+    dlqCount: dlq.readAll().filter((entry) => entry.meta.projectId === projectId).length,
+  };
 }
 
 /** Subscribers for one event, or all of them. An invalid subscribers.yml throws: an empty list would hide the mistake. */
@@ -36,8 +43,8 @@ export function removeFromDlq(dlq: DlqStore, id?: string): number {
   return id ? dlq.remove(id) : dlq.clear();
 }
 
-export function readQueueCounts(configDir: string): QueueCounts {
-  return countQueue(new Wal(join(configDir, 'wal.ndjson')), new DlqStore(join(configDir, 'dlq.ndjson')));
+export function readQueueCounts(configDir: string, projectId?: string): QueueCounts {
+  return countQueue(new Wal(join(configDir, 'wal.ndjson')), new DlqStore(join(configDir, 'dlq.ndjson')), projectId);
 }
 
 /** The events still on their way: written to the WAL and neither delivered (acked) nor given up (dlq). Oldest first. */

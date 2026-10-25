@@ -38,10 +38,11 @@ describe('history-page.yaml pagination structure', () => {
 		expect(params).toEqual({
 			page: '$urlParam.page',
 			limit: '$urlParam.size',
-			// the filters of `queue history`: --event, --subscriber, --status
+			// the filters of `queue history`: --event, --subscriber, --status, --project
 			event: '$urlParam.event',
 			subscriberId: '$urlParam.subscriber',
 			status: '$urlParam.status',
+			project: '$urlParam.project',
 		});
 	});
 
@@ -221,7 +222,17 @@ describe('history-page.yaml filters', () => {
 			['SearchBar', 'event'],
 			['SearchBar', 'subscriber'],
 			['CompactSelect', 'status'],
+			['CompactSelect', 'project'],
 		]);
+	});
+
+	it('offers the registered projects, only when there are some, and sends the choice to the history route', () => {
+		const select = bar.items.find((item) => item.urlParam === 'project');
+		expect(select?.options).toBe('$sources.projects.options');
+		expect(select?.$if).toBe('$sources.projects.options.length');
+		const doc = yaml.load(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../dsl-views/history-page.yaml'), 'utf-8')) as { $sources: Record<string, { url: string; params?: Record<string, string> }> };
+		expect(doc.$sources['projects']?.url).toBe('GET /api/modules/queue/projects');
+		expect(doc.$sources['history']?.params?.['project']).toBe('$urlParam.project');
 	});
 
 	// A narrower filter on page 3 would otherwise land on an empty page (needs dsl-ui >= 2026.10.22-124)
@@ -235,7 +246,7 @@ describe('history-page.yaml filters', () => {
 	});
 
 	it('offers exactly the outcomes the route accepts', () => {
-		const select = bar.items.find((item) => item.$type === 'CompactSelect') as { options: Array<{ value: string }> };
+		const select = bar.items.find((item) => item.urlParam === 'status') as { options: Array<{ value: string }> };
 		expect(select.options.map((option) => option.value)).toEqual(['success', 'failed', 'dlq', 'filtered']);
 	});
 });
