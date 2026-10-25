@@ -12,6 +12,7 @@ gap: gap-2
 items:
   - $type: HorizontalStack
     gap: gap-2
+    itemSizes: [flex, flex, flex]
     items:
       - $type: StatTile
         label: 5 min

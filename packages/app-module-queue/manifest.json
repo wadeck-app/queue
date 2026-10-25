@@ -29,7 +29,8 @@
         "type": "path",
         "value": "./src/dsl-views/outcomes-widget.yaml"
       },
-      "width": 3
+      "width": 3,
+      "height": 3
     },
     {
       "kind": "widget",
@@ -39,7 +40,8 @@
         "type": "path",
         "value": "./src/dsl-views/top-events-widget.yaml"
       },
-      "width": 3
+      "width": 3,
+      "height": 4
     },
     {
       "kind": "widget",

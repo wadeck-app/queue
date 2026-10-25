@@ -4,8 +4,10 @@ $sources:
 
 # Chosen among the A/B variants of 5b6f846: one row of three tiles under a caption that says the period. variant and yFormat need
 # dsl-ui >= 2026.10.19-117.
+# The tiles share the full width in equal columns; the chart takes what height is left in the dashboard tile.
 $type: VerticalStack
 gap: gap-2
+fill: true
 items:
   - $type: Badge
     label: Last 24 hours
@@ -13,6 +15,7 @@ items:
     size: sm
   - $type: HorizontalStack
     gap: gap-2
+    itemSizes: [flex, flex, flex]
     items:
       - $type: StatTile
         label: Delivered
@@ -29,6 +32,7 @@ items:
   - $type: Chart
     $if: $sources.outcomes.hasFailures
     variant: sparkline
+    fill: true
     data: $sources.outcomes.series
     xAxisKey: label
     xAxisType: category
