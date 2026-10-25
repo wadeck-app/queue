@@ -23,5 +23,15 @@
     "name": "a malformed protocol is rejected, not guessed",
     "request": { "event": "on.contract.malformed", "payload": {}, "protocol": "banana" },
     "response": { "status": "rejected", "supported": "^1.0.0", "eventId": "absent" }
+  },
+  {
+    "name": "1.2.0: a client naming a registered project (the placeholder stands for its id) is accepted",
+    "request": { "event": "on.contract.project", "payload": {}, "protocol": "1.2.0", "project": "<registered-project>" },
+    "response": { "status": "queued", "eventId": "present" }
+  },
+  {
+    "name": "1.2.0: a client naming a project the registry does not know is rejected and nothing is recorded",
+    "request": { "event": "on.contract.unknown-project", "payload": {}, "protocol": "1.2.0", "project": "deadbeef" },
+    "response": { "status": "rejected", "eventId": "absent" }
   }
 ]

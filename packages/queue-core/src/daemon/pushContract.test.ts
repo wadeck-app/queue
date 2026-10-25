@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { addProject } from '@wadeck-app/project-sdk';
 import { createQueueService } from './QueueService.js';
 
 // The recorded wire contract of push protocol 1.x (packages/queue-sdk/contract/protocol-1.json), replayed against the real
@@ -20,25 +21,31 @@ const cases = JSON.parse(readFileSync(fixture, 'utf8')) as ContractCase[];
 
 let configDir: string;
 let projectDir: string;
+let registryDir: string;
 
 beforeEach(() => {
   configDir = mkdtempSync(join(tmpdir(), 'queue-contract-config-'));
   projectDir = mkdtempSync(join(tmpdir(), 'queue-contract-project-'));
+  registryDir = mkdtempSync(join(tmpdir(), 'queue-contract-registry-'));
 });
 
 afterEach(() => {
   rmSync(configDir, { recursive: true, force: true });
   rmSync(projectDir, { recursive: true, force: true });
+  rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe('push protocol 1.x contract (recorded)', () => {
   it('has recorded cases', () => {
-    expect(cases.length).toBeGreaterThanOrEqual(4);
+    expect(cases.length).toBeGreaterThanOrEqual(7);
   });
 
   it.each(cases.map((contractCase) => [contractCase.name, contractCase] as const))('%s', async (_name, contractCase) => {
-    const service = createQueueService(configDir);
-    const answer = await service.commands.push({ ...contractCase.request, cwd: projectDir } as never);
+    // a registry with one project, which the fixture names with a placeholder (an id is generated at registration)
+    const registered = await addProject(registryDir, { name: 'contract', path: projectDir });
+    const request = contractCase.request['project'] === '<registered-project>' ? { ...contractCase.request, project: registered.id } : contractCase.request;
+    const service = createQueueService(configDir, { registryDir });
+    const answer = await service.commands.push({ ...request, cwd: projectDir } as never);
 
     expect(answer.status).toBe(contractCase.response.status);
     expect(answer.supported).toBe(contractCase.response.supported);
