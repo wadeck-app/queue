@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { HistoryReader, readDispatchDurations } from '@wadeck-app/queue-core';
 
-export const TOP_EVENTS = 8;
+export const TOP_EVENTS = 10;
 export const TOP_SUBSCRIBERS = 10;
 
 export interface EventCount {
