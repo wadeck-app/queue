@@ -64,6 +64,21 @@ interface WorkflowRunPayload {
   repository?: { full_name?: string };
 }
 
+/** The repositories (`owner/name`) that delivered a workflow_run event to the relay, in the entries given. */
+export function repositoriesSeen(entries: HistoryEntry[]): string[] {
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (entry.event !== WORKFLOW_RUN_EVENT || entry.orphan) {
+      continue;
+    }
+    const name = (entry.payload as WorkflowRunPayload | undefined)?.repository?.full_name;
+    if (typeof name === 'string') {
+      seen.add(name);
+    }
+  }
+  return [...seen].sort();
+}
+
 export function shaMatches(wanted: string, actual: string): boolean {
   return actual.toLowerCase().startsWith(wanted.toLowerCase());
 }

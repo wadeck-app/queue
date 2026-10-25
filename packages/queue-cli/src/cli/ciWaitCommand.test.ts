@@ -150,3 +150,32 @@ describe('parseGithubRepo', () => {
     expect(parseGithubRepo('https://gitlab.com/a/b.git')).toBeNull();
   });
 });
+
+describe('ciWaitCommand: no run seen, was anything delivered for this repository?', () => {
+  const elsewhere = (): HistoryEntry => ({ ...runEntry(T0 - 3_600_000, 'completed', 'success'), eventId: 'other', payload: { workflow_run: { id: 7, name: 'CI', head_sha: 'f'.repeat(40), run_attempt: 1, status: 'completed', conclusion: 'success' }, repository: { full_name: 'wadeck-app/scrapers' } } });
+
+  it('says no delivery from this repository reached the relay, lists the ones that did, and explains that a webhook only covers the repositories of its owner', async () => {
+    const h = harness(() => [elsewhere()]);
+    expect(await ciWaitCommand({ ...base, repo: 'Wadeck/poc-node-infomaniak' }, h.deps)).toBe(CI_EXIT.NO_RUN);
+    const text = h.err.join('');
+    expect(text).toContain('No workflow_run delivery from Wadeck/poc-node-infomaniak reached the relay in the last 24 h');
+    expect(text).toContain('wadeck-app/scrapers');
+    expect(text).toContain('only covers the repositories of its owner');
+    expect(text).toContain('queue relay webhook list');
+  });
+
+  it('says the relay delivered nothing at all when the history holds no workflow_run in the last 24 h', async () => {
+    const h = harness(() => []);
+    await ciWaitCommand({ ...base, repo: 'o/r' }, h.deps);
+    expect(h.err.join('')).toContain('delivered no workflow_run event at all in the last 24 h');
+  });
+
+  it('does not blame the webhook when the repository did deliver (another commit): the cause is elsewhere (path filter, branch)', async () => {
+    const sameRepoOtherCommit: HistoryEntry = { ...elsewhere(), payload: { workflow_run: { id: 8, name: 'CI', head_sha: 'e'.repeat(40), run_attempt: 1, status: 'completed', conclusion: 'success' }, repository: { full_name: 'o/r' } } };
+    const h = harness(() => [sameRepoOtherCommit]);
+    await ciWaitCommand({ ...base, repo: 'o/r' }, h.deps);
+    const text = h.err.join('');
+    expect(text).toContain('path/branch filter');
+    expect(text).not.toContain('reached the relay in the last 24 h');
+  });
+});

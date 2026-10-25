@@ -30,6 +30,7 @@ import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli
 import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
 import { parseProjectFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 import { subscribersFileFor } from './subscribersFile.js';
+import { readDaemonVersion, versionMismatchWarning } from './daemonVersion.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
@@ -524,6 +525,13 @@ async function waitForDaemon(configDir: string, timeoutMs = 5000): Promise<boole
 async function ensureDaemon(configDir: string): Promise<void> {
   const client = createQueueClient(configDir);
   const running = await client.isRunning().catch(() => false);
+  // A daemon that was already running keeps the code it started with, whatever the CLI updated to since
+  if (running) {
+    const warning = versionMismatchWarning(await readDaemonVersion(configDir), getVersion());
+    if (warning !== undefined) {
+      process.stderr.write(`[warn] ${warning}\n`);
+    }
+  }
   if (!running) {
     spawnQueueDaemon(configDir);
     const started = await waitForDaemon(configDir, 5000);
@@ -978,7 +986,13 @@ async function main(): Promise<void> {
     } catch {
       orchAvailable = false;
     }
-    const data = { ...response, orchAvailable };
+    const daemonVersion = await readDaemonVersion(configDir);
+    const mismatch = versionMismatchWarning(daemonVersion, getVersion());
+    const data = { ...response, orchAvailable, ...(daemonVersion !== undefined && { daemonVersion }), cliVersion: getVersion() };
+    if (mismatch !== undefined) {
+      process.stderr.write(`[warn] ${mismatch}
+`);
+    }
     if (process.stdout.isTTY && !jsonFlag) {
       process.stdout.write('[ok]  daemon:  running\n');
       process.stdout.write(`      pending: ${response.pendingCount}\n`);
@@ -986,6 +1000,7 @@ async function main(): Promise<void> {
       process.stdout.write(`      uptime:  ${formatUptime(response.uptimeSec ?? 0)}\n`);
       process.stdout.write(`      pid:     ${response.pid ?? '?'}\n`);
       process.stdout.write(`      orch:    ${orchAvailable ? 'available' : 'not found'}\n`);
+      process.stdout.write(`      version: ${daemonVersion ?? '?'}${daemonVersion === getVersion() ? '' : ` (this CLI: ${getVersion()})`}\n`);
     } else {
       process.stdout.write(JSON.stringify(data) + '\n');
     }
