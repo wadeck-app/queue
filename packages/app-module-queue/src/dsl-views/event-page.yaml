@@ -56,18 +56,18 @@ sections:
       - $type: Badge
         $if: $sources.event.terminalText
         label: $sources.event.terminalText
-        variant: neutral
+        variant: default
       - $type: Badge
         label: $sources.event.countBadge
         href: $sources.event.historyHref
-        variant: neutral
+        variant: default
       - $type: Badge
         label: $sources.event.lastSeenBadge
-        variant: neutral
+        variant: default
       - $type: Badge
         $if: $sources.event.correlationBadge
         label: $sources.event.correlationBadge
-        variant: neutral
+        variant: default
   - $type: PageHeader
     $if: $sources.event.description
     title: Description
