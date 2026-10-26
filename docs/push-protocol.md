@@ -17,6 +17,7 @@ The protocol has its own SemVer version, independent from every package version.
 - The daemon states the version it implements (`version`) and the SemVer range of client versions it accepts (`accepts`).
 - A client states the version it speaks in the request body (`protocol`). Absent means `1.0.0`.
 - A new MAJOR keeps the previous MAJOR in `accepts` for at least one release cycle (for example `^1.0.0 || ^2.0.0`). Deprecated MAJORs: none yet.
+- **Why SemVer and not the CalVer of the CLI** (decided 2026-10-26, do not reopen without a new fact): the version is negotiated, not read. The daemon states a range it accepts (`^1.0.0`) and a client gates a feature with `>=1.3.0`; a date says nothing about compatibility, would change at every CLI release without any change on the wire, and the range parser does not read it. The CalVer of the release is shown by `queue --version` and by `GET /version` (`version`, beside `queueProtocol.version`); the History table below says which protocol version a change introduced.
 - Supported range syntax: `>=`, `>`, `<=`, `<`, `=`, a bare version, `^`, a space for AND, `||` for OR. Prerelease and build metadata are not used.
 
 ## Finding the daemon
