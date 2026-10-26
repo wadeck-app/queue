@@ -184,17 +184,15 @@ describe('relayRead integration', () => {
     });
   });
 
-  afterEach(() => {
-    return new Promise<void>((resolve) => {
+  afterEach(async () => {
+    await new Promise<void>((resolve) => {
       if (server) {
         server.close(() => resolve());
       } else {
         resolve();
       }
     });
-  });
-
-  afterAll(() => {
+    // Each test makes its own config dir: removed here, not once at the end (that left all but the last behind)
     if (tempDir && existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }

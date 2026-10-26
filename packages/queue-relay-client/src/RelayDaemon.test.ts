@@ -398,6 +398,8 @@ plugins:
     });
 
     try {
+      // This test builds its own config dir: the one the beforeEach made would be forgotten (the afterEach removes only the current one)
+      rmSync(tmpConfigDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       tmpConfigDir = makeTmpDir();
       const pluginPath = join(tmpConfigDir, 'plugin.js');
       writeFileSync(
