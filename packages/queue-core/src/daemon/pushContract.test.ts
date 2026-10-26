@@ -37,15 +37,20 @@ afterEach(() => {
 
 describe('push protocol 1.x contract (recorded)', () => {
   it('has recorded cases', () => {
-    expect(cases.length).toBeGreaterThanOrEqual(7);
+    expect(cases.length).toBeGreaterThanOrEqual(9);
   });
 
   it.each(cases.map((contractCase) => [contractCase.name, contractCase] as const))('%s', async (_name, contractCase) => {
     // a registry with one project, which the fixture names with a placeholder (an id is generated at registration)
     const registered = await addProject(registryDir, { name: 'contract', path: projectDir });
-    const request = contractCase.request['project'] === '<registered-project>' ? { ...contractCase.request, project: registered.id } : contractCase.request;
+    const virtual = await addProject(registryDir, { name: 'contract-virtual' });
+    const named = contractCase.request['project'];
+    const request = named === '<registered-project>' ? { ...contractCase.request, project: registered.id } : named === '<virtual-project>' ? { ...contractCase.request, project: virtual.id } : contractCase.request;
+    // a case may send no working directory: a project without folder, or nothing at all ("cwd": "<none>")
+    const sendsNoCwd = named === '<virtual-project>' || request['cwd'] === '<none>';
+    const { cwd: _marker, ...rest } = request;
     const service = createQueueService(configDir, { registryDir });
-    const answer = await service.commands.push({ ...request, cwd: projectDir } as never);
+    const answer = await service.commands.push({ ...rest, ...(!sendsNoCwd && { cwd: projectDir }) } as never);
 
     expect(answer.status).toBe(contractCase.response.status);
     expect(answer.supported).toBe(contractCase.response.supported);

@@ -1,5 +1,6 @@
 export interface EventMeta {
-  cwd: string;
+  /** Where the event was emitted from. Absent for an event of a project that has no folder (virtual), pushed with `project` and no cwd. */
+  cwd?: string;
   projectName?: string;
   /** Id of the registered project (project-sdk) the working directory belongs to; absent when it belongs to none. */
   projectId?: string;
@@ -34,5 +35,7 @@ export interface ResolvedSubscriber {
   timeoutMs: number;
   backoff: 'exponential' | 'linear';
   cwd?: string;
+  /** Why a cli subscriber cannot run from any folder (it belongs to a virtual project and has no absolute cwd of its own); the dispatch fails with it. */
+  cwdProblem?: string;
   env?: Record<string, string>;
 }

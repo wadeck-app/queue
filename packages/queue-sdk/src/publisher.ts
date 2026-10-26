@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { createDaemonResolver, isPidAlive, type DaemonInfo, type Resolution } from './daemon.js';
 import { loopbackRequest, type HttpOutcome, type LoopbackRequest } from './http.js';
 import { resolveConfigDir } from './configDir.js';
-import { daemonSupportsEventCatalog, daemonSupportsPushProject, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION, PUSH_PROJECT_MIN_VERSION } from './protocol.js';
+import { daemonSupportsEventCatalog, daemonSupportsPushProject, daemonSupportsPushWithoutCwd, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION, PUSH_PROJECT_MIN_VERSION, PUSH_WITHOUT_CWD_MIN_VERSION } from './protocol.js';
 import { createReporter, describeHttpError, type FailureKind, type QueueFailure, type Reporter } from './report.js';
 import { defaultStartDeps, startDaemon, type RunOutcome, type StartDeps, type StartResult } from './start.js';
 import {
@@ -24,8 +24,11 @@ import {
 const PROJECT_ID = /^[0-9a-f]{8}$/;
 
 export interface QueuePublisherOptions {
-  /** Project directory sent with every event (selects `.queue/subscribers.yml`). Default `process.cwd()`. */
-  cwd?: string;
+  /**
+   * Project directory sent with every event (it selects the registered project). Default `process.cwd()`. `null`: send none, for the events of a
+   * project that has no folder (virtual); needs `project` and queue-cli >= push protocol 1.3.0.
+   */
+  cwd?: string | null;
   /**
    * Id of the project (8 hexadecimal characters, see `project list`) every event is pushed on behalf of. Absent: the daemon finds the
    * project from `cwd`. The SDK does not resolve names: resolve a name or an alias to its id first. Needs queue-cli >= push protocol 1.2.0.
@@ -51,8 +54,8 @@ export interface QueuePublisherOptions {
 }
 
 export interface PublishOptions {
-  /** Overrides the publisher's `cwd` for this event. */
-  cwd?: string;
+  /** Overrides the publisher's `cwd` for this event (`null`: none, see the publisher option). */
+  cwd?: string | null;
   /** Overrides the publisher's `project` for this event. */
   project?: string;
   /** Overrides the HTTP timeout. For `before*` events it is the request timeout sent to the daemon and 5000 ms more are waited. */
@@ -164,7 +167,7 @@ export function createQueuePublisher(options: QueuePublisherOptions = {}): Queue
 export function createQueuePublisherWithDeps(options: QueuePublisherOptions, deps: PublisherDeps): QueuePublisher {
   const reporter = createReporter({ silent: options.silent, onError: options.onError, onWarning: options.onWarning, sink: deps.sink });
   const configDir = options.configDir ?? resolveConfigDir(deps.env ?? process.env);
-  const defaultCwd = options.cwd ?? process.cwd();
+  const defaultCwd = options.cwd === undefined ? process.cwd() : options.cwd;
   const request = deps.request ?? loopbackRequest;
   const configProblem = (name: string, value: unknown, fallback: number): number => {
     if (value === undefined) {
@@ -343,10 +346,14 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
         `project must be the id of a registered project (8 hexadecimal characters, \`project list\` shows them), got ${JSON.stringify(project)}: resolve a name or an alias to its id first`,
       );
     }
+    const cwd = call.cwd === undefined ? defaultCwd : call.cwd;
+    if (cwd === null && project === undefined) {
+      return fail('invalid-argument', 'cwd: null needs a project: without a working directory only the project says where the event comes from');
+    }
     const isBefore = event.startsWith('before');
     const requestTimeout = isBefore ? call.timeoutMs : undefined;
     const httpTimeout = isBefore ? (requestTimeout ?? DAEMON_BEFORE_TIMEOUT_MS) + BEFORE_MARGIN_MS : (call.timeoutMs ?? timeoutMs);
-    const wire: PushRequest = { event, payload, cwd: resolve(call.cwd ?? defaultCwd), protocol: PROTOCOL_VERSION, ...(requestTimeout !== undefined && { timeout: requestTimeout }), ...(project !== undefined && { project }) };
+    const wire: PushRequest = { event, payload, ...(cwd !== null && { cwd: resolve(cwd) }), protocol: PROTOCOL_VERSION, ...(requestTimeout !== undefined && { timeout: requestTimeout }), ...(project !== undefined && { project }) };
     return exchange<PublishResult>({
       path: '/push',
       httpTimeout,
@@ -356,10 +363,15 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
       fail,
       // An older daemon would ignore the project and file the event under the project of the cwd: drop it instead, and say why
       ...(project !== undefined && {
-        precheck: (daemon: DaemonInfo): PublishResult | undefined =>
-          daemonSupportsPushProject(daemon.protocol.version)
-            ? undefined
-            : fail('unsupported', `the daemon speaks push protocol ${daemon.protocol.version} and the project of an event needs ${PUSH_PROJECT_MIN_VERSION}: it would ignore the project and file the event under another. Update queue-cli (\`queue cli update\`), or publish without a project`),
+        precheck: (daemon: DaemonInfo): PublishResult | undefined => {
+          if (!daemonSupportsPushProject(daemon.protocol.version)) {
+            return fail('unsupported', `the daemon speaks push protocol ${daemon.protocol.version} and the project of an event needs ${PUSH_PROJECT_MIN_VERSION}: it would ignore the project and file the event under another. Update queue-cli (\`queue cli update\`), or publish without a project`);
+          }
+          if (cwd === null && !daemonSupportsPushWithoutCwd(daemon.protocol.version)) {
+            return fail('unsupported', `the daemon speaks push protocol ${daemon.protocol.version} and an event without a working directory needs ${PUSH_WITHOUT_CWD_MIN_VERSION}. Update queue-cli (\`queue cli update\`), or publish with a cwd`);
+          }
+          return undefined;
+        },
       }),
       ambiguous: (cause) => `${cause}: the event may have been queued, it is not retried (raise timeoutMs if the daemon is slow)`,
       interpret: (daemon, text) => interpret(daemon, text, fail),

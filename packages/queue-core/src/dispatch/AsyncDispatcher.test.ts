@@ -235,6 +235,21 @@ describe('AsyncDispatcher - diagnosability', () => {
     expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-1', status: 'failed' });
   });
 
+  it('cli subscriber that has no folder to run from (virtual project) fails with the reason, and its command is not run', async () => {
+    const spawned = vi.spyOn(CliTransport.prototype, 'dispatch');
+    const sub: ResolvedSubscriber = { ...makeSub('sub-1'), cwd: '', cwdProblem: "subscriber 'x' belongs to the virtual project 'v'" };
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([sub], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(spawned).not.toHaveBeenCalled();
+    expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed' }));
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'failed',
+      error: expect.stringContaining("virtual project 'v'") as unknown as string,
+    }));
+  });
+
   it('http subscriber without url is logged as failed', async () => {
     const sub: ResolvedSubscriber = { ...makeSub('sub-1'), type: 'http', command: undefined, url: undefined };
     const w = makeWalEntry('sub-1');

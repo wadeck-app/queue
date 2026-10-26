@@ -139,6 +139,16 @@ describe('SyncDispatcher - diagnosability', () => {
     }));
   });
 
+  it('cli subscriber that has no folder to run from (virtual project) aborts with the reason, and its command is not run', async () => {
+    const spawned = vi.spyOn(CliTransport.prototype, 'dispatch');
+    const sub: ResolvedSubscriber = { ...makeSub('s1'), cwd: '', cwdProblem: "subscriber 'x' belongs to the virtual project 'v'" };
+
+    const result = await dispatcher.dispatch([sub], makeEnvelope(), 5000);
+
+    expect(spawned).not.toHaveBeenCalled();
+    expect(result.reason).toContain("virtual project 'v'");
+  });
+
   it('cli subscriber without command aborts with an actionable reason and is logged', async () => {
     const sub: ResolvedSubscriber = { ...makeSub('s1'), command: undefined };
 

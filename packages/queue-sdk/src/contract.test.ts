@@ -9,7 +9,7 @@ import { parsePushAnswer, parseRegisterAnswer, serializePushRequest, serializeRe
 
 interface ContractCase {
   name: string;
-  request: { event: string; payload: unknown; protocol?: string; project?: string };
+  request: { event: string; payload: unknown; protocol?: string; project?: string; cwd?: string };
   response: { status: string; supported?: string; eventId: 'present' | 'absent' };
 }
 
@@ -18,8 +18,12 @@ const cases = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url
 describe('push protocol 1.x contract (recorded)', () => {
   it.each(cases.map((contractCase) => [contractCase.name, contractCase] as const))('the SDK can send and read: %s', (_name, contractCase) => {
     // the placeholder stands for the id of a project the harness of the daemon registers
-    const project = contractCase.request.project === '<registered-project>' ? '64f4ae91' : contractCase.request.project;
-    const serialized = serializePushRequest({ ...contractCase.request, ...(project !== undefined && { project }), cwd: '/project' });
+    const isPlaceholder = contractCase.request.project === '<registered-project>' || contractCase.request.project === '<virtual-project>';
+    const project = isPlaceholder ? '64f4ae91' : contractCase.request.project;
+    // a case may send no working directory (a project without folder, or nothing at all)
+    const sendsNoCwd = contractCase.request.project === '<virtual-project>' || contractCase.request.cwd === '<none>';
+    const { cwd: _marker, ...rest } = contractCase.request;
+    const serialized = serializePushRequest({ ...rest, ...(project !== undefined && { project }), ...(!sendsNoCwd && { cwd: '/project' }) });
     expect(serialized.ok).toBe(true);
 
     const answer = parsePushAnswer({

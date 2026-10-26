@@ -115,7 +115,10 @@ export interface SubscriberConfig {
 
 interface ResolveContext {
   filePath: string;
-  fileDir: string;
+  /** The folder a relative cwd is resolved against and the default cwd: the folder of the file (global) or the main folder of the project that owns it. Absent for a virtual project. */
+  fileDir: string | undefined;
+  /** The virtual project that owns the file, to name in the problem of a subscriber that has no folder to run from. */
+  virtualProject?: string;
   /** Prefix of the ids of this file's subscribers: empty for the global file, '<project id>/' for a project file. */
   idPrefix: string;
   kind: 'global' | 'project';
@@ -173,13 +176,24 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
   }
   assertValidName(event, index, name, ctx.filePath);
 
-  // cwd resolution: subscriber > event > global > file default (project root)
-  const fileDefaultCwd = ctx.fileDir;
-  const baseCwd = ctx.globalCwd
-    ? resolveCwd(ctx.fileDir, ctx.globalCwd)
-    : fileDefaultCwd;
-  const eventCwd = ctx.eventCwd ? resolveCwd(ctx.fileDir, ctx.eventCwd) : baseCwd;
-  const resolvedCwd = raw.cwd ? resolveCwd(ctx.fileDir, raw.cwd) : eventCwd;
+  // cwd resolution: subscriber > event > global > file default (the main folder of the project that owns the file)
+  const cwdValue = raw.cwd ?? ctx.eventCwd ?? ctx.globalCwd;
+  const fileDir = ctx.fileDir;
+  let resolvedCwd: string;
+  let cwdProblem: string | undefined;
+  if (fileDir !== undefined) {
+    resolvedCwd = cwdValue === undefined ? fileDir : resolveCwd(fileDir, cwdValue);
+  } else if (cwdValue !== undefined && isAbsolute(cwdValue)) {
+    resolvedCwd = cwdValue;
+  } else {
+    // A virtual project has no folder: only a command with an absolute cwd of its own can run (an http call needs none)
+    resolvedCwd = '';
+    if (raw.type === 'cli') {
+      cwdProblem =
+        `subscriber '${name}' of event '${event}' belongs to the virtual project '${ctx.virtualProject ?? '?'}', which has no folder to run its command from (${ctx.filePath}). ` +
+        `Fix: give the subscriber an absolute 'cwd:' (a relative one has nothing to resolve against), or register a folder for the project: project path add`;
+    }
+  }
 
   // env resolution: merge from least to most specific (global -> event -> subscriber)
   const mergedEnv: Record<string, string> | undefined = (() => {
@@ -207,6 +221,7 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
     timeoutMs: raw.timeout ? parseDurationMs(raw.timeout) : 30_000,
     backoff: raw.backoff ?? 'exponential',
     cwd: resolvedCwd,
+    ...(cwdProblem !== undefined && { cwdProblem }),
     env: mergedEnv,
   };
 }
@@ -229,13 +244,14 @@ export interface ProjectConfigLayer {
   dir: string;
   /** Id of the project that owns the folder: it identifies the subscribers of the file. */
   projectId: string;
+  projectName: string;
+  /** The main folder of that project: the default cwd of the subscribers of the file. Absent for a virtual project (no path). */
+  folder?: string;
 }
 
-/** The registered project of an event: where its subscribers are kept and the folder they run from. */
+/** The registered project of an event: where its subscribers are kept. Each layer says the folder its subscribers run from. */
 export interface ProjectConfigSource {
   projectId: string;
-  /** The registered path of the project the working directory is in (its main path for an explicit project): the default `cwd` of its subscribers, and what a relative `cwd` is resolved against. */
-  baseDir: string;
   /** Config folders of the project and its ancestors, root first. */
   layers: ProjectConfigLayer[];
 }
@@ -267,7 +283,7 @@ export class ConfigLoader {
    * `project`: the registered project of the event, when there is one. Its config folders are read. A .queue/subscribers.yml found above the working
    * directory is an error when the project has no file yet (see assertNoLegacyFile), and left alone once it has one.
    */
-  load(cwd: string, project?: ProjectConfigSource): Map<string, ResolvedSubscriber[]> {
+  load(cwd: string | undefined, project?: ProjectConfigSource): Map<string, ResolvedSubscriber[]> {
     const globalFile = join(this.globalConfigDir, 'subscribers.yml');
     const registryFiles = (project?.layers ?? []).map((layer) => ({ layer, file: join(layer.dir, 'subscribers.yml') })).filter(({ file }) => existsSync(file));
     if (registryFiles.length === 0) {
@@ -276,17 +292,18 @@ export class ConfigLoader {
 
     const merged = new Map<string, ResolvedSubscriber[]>();
 
-    const addFromYml = (yml: SubscribersYml | null, filePath: string, registry?: { projectId: string; baseDir: string }): void => {
+    const addFromYml = (yml: SubscribersYml | null, filePath: string, registry?: ProjectConfigLayer): void => {
       if (!yml) {
         return;
       }
-      // A file of the registry is resolved against the project folder (its config folder says nothing about where to run)
-      const fileDir = registry === undefined ? dirname(filePath) : registry.baseDir;
+      // A file of the registry is resolved against the main folder of the project that owns it (its config folder says nothing about where to run)
+      const fileDir = registry === undefined ? dirname(filePath) : registry.folder;
       const kind = filePath === globalFile ? 'global' : 'project';
       const via = registry !== undefined ? 'registry' : undefined;
-      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'idPrefix' | 'kind' | 'globalCwd' | 'globalEnv'> = {
+      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'virtualProject' | 'idPrefix' | 'kind' | 'globalCwd' | 'globalEnv'> = {
         filePath,
         fileDir,
+        ...(registry !== undefined && registry.folder === undefined && { virtualProject: registry.projectName }),
         idPrefix: registry === undefined ? '' : `${registry.projectId}/`,
         kind,
         ...(via !== undefined && { via }),
@@ -319,13 +336,13 @@ export class ConfigLoader {
       // parsed (and its syntax error explained) before its keys are checked
       const yml = loadYml(file);
       assertKnownKeys(file);
-      addFromYml(yml, file, { projectId: layer.projectId, baseDir: project!.baseDir });
+      addFromYml(yml, file, layer);
     }
 
     return merged;
   }
 
-  getSubscribers(event: string, cwd: string, project?: ProjectConfigSource): ResolvedSubscriber[] {
+  getSubscribers(event: string, cwd: string | undefined, project?: ProjectConfigSource): ResolvedSubscriber[] {
     const all = this.load(cwd, project);
     const result: ResolvedSubscriber[] = [];
     for (const [pattern, subs] of all) {
@@ -340,15 +357,16 @@ export class ConfigLoader {
    * A .queue/subscribers.yml above `cwd` is not read any more: silently ignoring it would leave its subscribers unfired with no sign,
    * so it is an error that names the file and where its content goes.
    */
-  private assertNoLegacyFile(cwd: string, project?: ProjectConfigSource): void {
-    const legacy = this.findProjectFile(cwd);
+  private assertNoLegacyFile(cwd: string | undefined, project?: ProjectConfigSource): void {
+    // An event without a folder (virtual project) has no old file above it
+    const legacy = cwd === undefined ? null : this.findProjectFile(cwd);
     if (legacy === null) {
       return;
     }
     const destination = project?.layers.at(-1);
     const fix = destination !== undefined
       ? `move its content to ${join(destination.dir, 'subscribers.yml')}, then delete ${legacy}`
-      : `register the project (project add "${cwd}"), move its content to the subscribers.yml of the queue config folder that 'project show' lists for it, then delete ${legacy}`;
+      : `register the project (project add "${cwd ?? '<folder>'}"), move its content to the subscribers.yml of the queue config folder that 'project show' lists for it, then delete ${legacy}`;
     throw new Error(
       `[queue] ${legacy} is no longer read: the subscribers of a project live in the config folder of its project registry entry.\n` +
       `Fix: ${fix}`

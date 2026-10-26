@@ -43,6 +43,9 @@ export class SyncDispatcher {
         if (!sub.command) {
           return this.abort(envelope, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
         }
+        if (sub.cwdProblem !== undefined) {
+          return this.abort(envelope, sub, sub.cwdProblem);
+        }
         result = await this.cliTransport.dispatch(sub.command, currentEnvelope, timeoutMs, sub.cwd, sub.env);
       } else {
         if (!sub.url) {

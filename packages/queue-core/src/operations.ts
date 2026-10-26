@@ -31,7 +31,7 @@ export function countQueue(wal: Wal, dlq: DlqStore, projectId?: string): QueueCo
 }
 
 /** Subscribers for one event, or all of them. An invalid subscribers.yml throws: an empty list would hide the mistake. */
-export function subscribersFor(configLoader: ConfigLoader, req: { event?: string; cwd: string; project?: ProjectConfigSource }): ResolvedSubscriber[] {
+export function subscribersFor(configLoader: ConfigLoader, req: { event?: string; cwd?: string; project?: ProjectConfigSource }): ResolvedSubscriber[] {
   if (req.event) {
     return configLoader.getSubscribers(req.event, req.cwd, req.project);
   }

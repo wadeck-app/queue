@@ -6,7 +6,8 @@ import { getErrorMessage } from './errors.js';
 export interface PushRequest {
   event: string;
   payload: unknown;
-  cwd: string;
+  /** Absent only with `project` (since 1.3.0): the event of a project that has no folder (virtual). */
+  cwd?: string;
   /** Request timeout in ms, only meaningful for `before*` events (the daemon dispatches them synchronously). */
   timeout?: number;
   /** The push protocol SemVer the client speaks. */

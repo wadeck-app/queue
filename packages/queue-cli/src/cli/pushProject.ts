@@ -37,7 +37,8 @@ export function resolvePushProject(input: { flag?: string; cwd: string; registry
       envName: 'QUEUE_PROJECT',
       cwd: input.cwd,
     });
-    return { ok: true, project: scope.project.id, cwd: requirePath(scope) };
+    // A virtual project has no folder: the event carries the project alone
+    return { ok: true, project: scope.project.id, ...(scope.project.paths.length > 0 && { cwd: requirePath(scope) }) };
   } catch (err) {
     if (err instanceof NoProjectInScopeError) {
       return { ok: false, message: `${getErrorMessage(err)}\n${err.hint}` };

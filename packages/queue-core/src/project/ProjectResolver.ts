@@ -32,19 +32,22 @@ export class ProjectResolver {
     if (lookup.kind !== 'registered') {
       return { lookup };
     }
-    const source = this.configSource(lookup.project.id, lookup.path !== '' ? lookup.path : cwd);
+    const source = this.configSource(lookup.project.id);
     return { lookup, ...(source !== undefined && { source }) };
   }
 
-  /** Where the subscribers of a registered project are kept: the config folders of the project and its ancestors, root first. `baseDir` is where its subscribers run from. */
-  configSource(projectId: string, baseDir: string): ProjectConfigSource | undefined {
+  /** Where the subscribers of a registered project are kept: the config folders of the project and its ancestors, root first, each with the main folder of its project (the default cwd of its subscribers). */
+  configSource(projectId: string): ProjectConfigSource | undefined {
     const registry = loadRegistry(this.registryDir);
     const project = registry.projects.find((candidate) => candidate.id === projectId);
     if (project === undefined) {
       return undefined;
     }
-    const layers = getConfigLayers(registry, this.registryDir, project, 'queue').map((layer) => ({ dir: layer.dir, projectId: layer.project.id }));
-    return { projectId, baseDir, layers };
+    const layers = getConfigLayers(registry, this.registryDir, project, 'queue').map((layer) => {
+      const folder = layer.project.paths.find((path) => path.main)?.path ?? layer.project.paths[0]?.path;
+      return { dir: layer.dir, projectId: layer.project.id, projectName: layer.project.name, ...(folder !== undefined && { folder }) };
+    });
+    return { projectId, layers };
   }
 
   /** A project named by its id (the explicit `project` of a push). `unregistered` here means: no project of that id. */

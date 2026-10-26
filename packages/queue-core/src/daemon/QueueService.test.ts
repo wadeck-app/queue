@@ -400,3 +400,95 @@ describe('subscribers kept in the config folder of the registered project', () =
     expect(notes[0]).toContain(legacy);
   });
 });
+
+describe('the project chain of an event (Decision #29): parents, virtual projects', () => {
+  let registryDir: string;
+  let parentDir: string;
+  const NEVER = (name: string): string => `subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: ${name}\n      when: payload.never=1\n`;
+
+  beforeEach(() => {
+    registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+    parentDir = mkdtempSync(join(tmpdir(), 'queue-service-parent-'));
+  });
+
+  afterEach(() => {
+    rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(parentDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  // the registry stores paths with forward slashes
+  const slash = (path: string): string => path.replace(/\\/g, '/');
+
+  const writeFor = (id: string, yml: string): void => {
+    writeFileSync(join(projectToolDir(registryDir, id, 'queue', 'config', { ensure: true }), 'subscribers.yml'), yml);
+  };
+
+  const triggerCounts = (): number[] => {
+    const dir = join(configDir, 'history');
+    return existsSync(dir)
+      ? readdirSync(dir)
+          .flatMap((file) => readFileSync(join(dir, file), 'utf-8').split('\n'))
+          .filter((line) => line !== '')
+          .map((line): unknown => JSON.parse(line))
+          .filter(isRecord)
+          .filter((record) => record['type'] === 'trigger')
+          .map((record) => Number(record['totalCount']))
+      : [];
+  };
+
+  async function parentAndChild(): Promise<{ parentId: string; childId: string }> {
+    const parent = await addProject(registryDir, { name: 'parent', path: parentDir });
+    const child = await addProject(registryDir, { name: 'child', path: projectDir, parent: 'parent' });
+    writeFor(parent.id, NEVER('p'));
+    writeFor(child.id, NEVER('c'));
+    return { parentId: parent.id, childId: child.id };
+  }
+
+  it('an event pushed in a child project reaches the subscribers of the child and of its parent', async () => {
+    await parentAndChild();
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, cwd: join(projectDir, 'src') });
+    expect(triggerCounts()).toEqual([2]);
+  });
+
+  it('the same through an explicit project, whatever the working directory', async () => {
+    const { childId } = await parentAndChild();
+    const elsewhere = mkdtempSync(join(tmpdir(), 'queue-service-elsewhere-'));
+    try {
+      const service = createQueueService(configDir, { registryDir });
+      await service.commands.push({ event: 'onFoo', payload: {}, cwd: elsewhere, project: childId, protocol: '1.2.0' });
+      expect(triggerCounts()).toEqual([2]);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it('lists the subscribers of the parents too, each running from the main folder of its own project', async () => {
+    const { parentId, childId } = await parentAndChild();
+    const service = createQueueService(configDir, { registryDir });
+    const { subscribers } = await service.commands['list-subscribers']({ event: 'onFoo', cwd: projectDir });
+    expect(subscribers.map((sub) => [sub.subscriberId, sub.cwd])).toEqual([
+      [`${parentId}/p`, slash(parentDir)],
+      [`${childId}/c`, slash(projectDir)],
+    ]);
+  });
+
+  it('accepts an event of a virtual project (no path) without a working directory, and records its project', async () => {
+    const virtual = await addProject(registryDir, { name: 'virtual-app' });
+    writeFor(virtual.id, NEVER('v'));
+    const service = createQueueService(configDir, { registryDir });
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, project: virtual.id, protocol: '1.3.0' } as never);
+    expect(response.status).toBe('queued');
+    expect(triggerCounts()).toEqual([1]);
+  });
+
+  it('a cli subscriber of a virtual project with no cwd of its own fails loudly (failed in the WAL, with the reason), naming the project', async () => {
+    const virtual = await addProject(registryDir, { name: 'virtual-app' });
+    writeFor(virtual.id, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: v\n      retries: 0\n');
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, project: virtual.id, protocol: '1.3.0' } as never);
+    const walEntries = (): Array<{ status: string; lastError?: string }> => new Wal(join(configDir, 'wal.ndjson')).readAll();
+    await waitFor('the misconfigured dispatch to fail', () => walEntries().some((entry) => entry.status === 'failed') && service.isIdle());
+    expect(walEntries()[0]?.lastError).toContain("'virtual-app'");
+  });
+});

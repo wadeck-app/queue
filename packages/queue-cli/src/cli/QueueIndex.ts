@@ -875,7 +875,7 @@ async function main(): Promise<void> {
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
 
-    const response = await client.send('push', { event, payload, timeout, cwd: target.cwd ?? process.cwd(), ...(target.project !== undefined && { project: target.project }) });
+    const response = await client.send('push', { event, payload, timeout, ...(target.cwd !== undefined || target.project === undefined ? { cwd: target.cwd ?? process.cwd() } : {}), ...(target.project !== undefined && { project: target.project }) });
 
     const failure = pushFailure(response, 'Event');
     if (failure) {

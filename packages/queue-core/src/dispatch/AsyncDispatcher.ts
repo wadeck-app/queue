@@ -43,6 +43,10 @@ export class AsyncDispatcher {
             this.failConfig(envelope, walEntry, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
             return;
           }
+          if (sub.cwdProblem !== undefined) {
+            this.failConfig(envelope, walEntry, sub, sub.cwdProblem);
+            return;
+          }
           result = await this.cliTransport.dispatch(sub.command, envelope, sub.timeoutMs, sub.cwd, sub.env);
         } else {
           if (!sub.url) {

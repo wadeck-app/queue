@@ -6,7 +6,7 @@ import { parseRange, parseVersion, satisfies, compareVersions } from './semver.j
 // included, so there is exactly one place that says what version is spoken.
 
 /** The protocol version this SDK speaks and the daemon of the same release implements. */
-export const PROTOCOL_VERSION = '1.2.0';
+export const PROTOCOL_VERSION = '1.3.0';
 /** Daemon protocol versions whose answers this SDK can read. */
 export const SDK_UNDERSTANDS = '^1.0.0';
 /** Client protocol versions the daemon accepts. While a MAJOR is deprecated, both stay listed (e.g. `^1.0.0 || ^2.0.0`). */
@@ -33,6 +33,14 @@ export const PUSH_PROJECT_MIN_VERSION = '1.2.0';
 /** Whether a daemon that implements protocol `daemonProtocolVersion` honours the `project` of a push. */
 export function daemonSupportsPushProject(daemonProtocolVersion: string): boolean {
   return satisfies(daemonProtocolVersion, `>=${PUSH_PROJECT_MIN_VERSION}`);
+}
+
+/** The protocol version from which `cwd` is optional when `project` is named (an event of a virtual project, which has no folder); an older daemon answers 500 to a push without cwd. */
+export const PUSH_WITHOUT_CWD_MIN_VERSION = '1.3.0';
+
+/** Whether a daemon that implements protocol `daemonProtocolVersion` accepts a push with a `project` and no `cwd`. */
+export function daemonSupportsPushWithoutCwd(daemonProtocolVersion: string): boolean {
+  return satisfies(daemonProtocolVersion, `>=${PUSH_WITHOUT_CWD_MIN_VERSION}`);
 }
 
 /** A daemon whose GET /version has no `queueProtocol` predates versioning and speaks the original contract. */

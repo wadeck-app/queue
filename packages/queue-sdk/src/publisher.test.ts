@@ -993,6 +993,33 @@ describe('publishing on behalf of a project (push protocol 1.2.0)', () => {
     expect(h.fake!.pushes()).toEqual([]);
   });
 
+  it('cwd: null sends no working directory, for the project of a virtual project (no folder), protocol 1.3.0', async () => {
+    const h = await setup({ daemon: current, publisher: { project: ID, cwd: null } });
+    await h.publisher.publishAndWait('app.thing', {});
+    const body = JSON.parse(h.fake!.pushes()[0]!.body) as { project?: string };
+    expect(body.project).toBe(ID);
+    expect(body).not.toHaveProperty('cwd');
+  });
+
+  it('refuses cwd: null without a project: the daemon could not tell where the event comes from, sending nothing', async () => {
+    const h = await setup({ daemon: current, publisher: { cwd: null } });
+    const result = await h.publisher.publishAndWait('app.thing', {});
+    expect(result.status).toBe('dropped');
+    expect(h.failures[0]?.kind).toBe('invalid-argument');
+    expect(h.failures[0]?.message).toContain('project');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
+  it('drops an event without cwd when the daemon is older than protocol 1.3.0, saying to update queue-cli', async () => {
+    const h = await setup({ daemon: { queueProtocol: { version: '1.2.0', accepts: '^1.0.0' } }, publisher: { project: ID, cwd: null } });
+    const result = await h.publisher.publishAndWait('app.thing', {});
+    expect(result.status).toBe('dropped');
+    expect(h.failures[0]?.kind).toBe('unsupported');
+    expect(h.failures[0]?.message).toContain('1.3.0');
+    expect(h.failures[0]?.message).toContain('queue-cli');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
   it('a project the daemon refuses is reported with the daemon reason, not as a protocol mismatch', async () => {
     const h = await setup({ daemon: current, publisher: { project: ID } });
     h.fake!.script.push({ kind: 'answer', result: { status: 'rejected', reason: "no registered project has the id '569c412d'. Fix: project list shows the registered projects and their ids; the event was not recorded" } });

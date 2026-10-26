@@ -61,13 +61,13 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    * The subscribers of an event: the global file, then those of the registered project (its config folders); a .queue/subscribers.yml found
    * above `cwd` is refused by the loader. `lookup` is the project already found by the caller; `projectId` names it explicitly (a stored entry).
    */
-  function loadSubscribers(event: string, cwd: string, lookup?: ProjectLookup, projectId?: string): ResolvedSubscriber[] {
-    const known = lookup ?? (projectResolver === undefined ? undefined : projectId !== undefined ? projectResolver.lookupId(projectId) : projectResolver.lookup(cwd));
-    const source = known?.kind === 'registered' ? projectResolver?.configSource(known.project.id, known.path !== '' ? known.path : cwd) : undefined;
+  function loadSubscribers(event: string, cwd: string | undefined, lookup?: ProjectLookup, projectId?: string): ResolvedSubscriber[] {
+    const known = lookup ?? (projectResolver === undefined ? undefined : projectId !== undefined ? projectResolver.lookupId(projectId) : cwd === undefined ? undefined : projectResolver.lookup(cwd));
+    const source = known?.kind === 'registered' ? projectResolver?.configSource(known.project.id) : undefined;
     const subscribers = configLoader.getSubscribers(event, cwd, source);
     const registryFile = subscribers.find((sub) => sub.via === 'registry')?.file;
     if (registryFile !== undefined) {
-      const legacy = configLoader.findProjectFile(cwd);
+      const legacy = cwd === undefined ? null : configLoader.findProjectFile(cwd);
       const note = `${legacy} is ignored: the subscribers of this project are in ${registryFile}. Delete the old file once its content is there`;
       if (legacy !== null && !saidOnce.has(note)) {
         saidOnce.add(note);
@@ -124,11 +124,15 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           return { status: 'rejected', reason: `${explicit.kind === 'unavailable' ? explicit.problem : explicit.warning}; the event was not recorded` };
         }
       }
+      // Without a working directory the project is the only thing that says where the event comes from: a virtual project has no folder
+      if (req.cwd === undefined && req.project === undefined) {
+        return { status: 'rejected', reason: "the push has neither a 'cwd' nor a 'project': the daemon cannot tell which project the event belongs to. Fix: send the working directory, or name the project (queue push --project <name|alias|id>)" };
+      }
       activeDispatches++;
 
       try {
         const cwd = req.cwd;
-        const lookup: ProjectLookup | undefined = explicit ?? projectResolver?.lookup(cwd);
+        const lookup: ProjectLookup | undefined = explicit ?? (cwd === undefined ? undefined : projectResolver?.lookup(cwd));
         const problem = lookup?.kind === 'unavailable' ? lookup.problem : lookup?.kind === 'unregistered' ? lookup.warning : undefined;
         if (problem !== undefined && !saidOnce.has(problem)) {
           saidOnce.add(problem);
@@ -141,7 +145,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           payload: req.payload,
           meta: {
             cwd,
-            projectName: resolveProjectName(cwd),
+            projectName: cwd !== undefined ? resolveProjectName(cwd) : lookup?.kind === 'registered' ? lookup.project.name : undefined,
             ...(lookup?.kind === 'registered' && { projectId: lookup.project.id }),
           },
         };

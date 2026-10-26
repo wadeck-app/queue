@@ -9,12 +9,13 @@ import {
   checkClientProtocol,
   daemonSupportsEventCatalog,
   daemonSupportsPushProject,
+  daemonSupportsPushWithoutCwd,
 } from './protocol.js';
 import { satisfies } from './semver.js';
 
 describe('protocol constants', () => {
   it('start at 1.1.0 and are consistent with each other', () => {
-    expect(PROTOCOL_VERSION).toBe('1.2.0');
+    expect(PROTOCOL_VERSION).toBe('1.3.0');
     expect(satisfies(PROTOCOL_VERSION, DAEMON_ACCEPTS)).toBe(true);
     expect(satisfies(PROTOCOL_VERSION, SDK_UNDERSTANDS)).toBe(true);
   });
@@ -134,6 +135,16 @@ describe('daemonSupportsEventCatalog (the event catalog arrived with protocol 1.
     ['1.4.2', true],
   ])('a daemon at %s: %s', (version, expected) => {
     expect(daemonSupportsEventCatalog(version)).toBe(expected);
+  });
+});
+
+describe('daemonSupportsPushWithoutCwd (a push of a project without folder needs protocol 1.3.0)', () => {
+  it.each([
+    ['1.2.0', false],
+    ['1.3.0', true],
+    ['1.10.0', true],
+  ])('a daemon speaking %s -> %s', (version, expected) => {
+    expect(daemonSupportsPushWithoutCwd(version)).toBe(expected);
   });
 });
 

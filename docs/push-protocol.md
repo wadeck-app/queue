@@ -1,6 +1,6 @@
 # Push protocol
 
-The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.2.0**.
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.3.0**.
 
 Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
 
@@ -43,7 +43,7 @@ No authentication.
   "config_dir": "C:\\Users\\me\\.config\\queue",
   "sdkVersion": 1,
   "port": 47910,
-  "queueProtocol": { "version": "1.2.0", "accepts": "^1.0.0" }
+  "queueProtocol": { "version": "1.3.0", "accepts": "^1.0.0" }
 }
 ```
 
@@ -54,14 +54,14 @@ No authentication.
 Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 ```json
-{ "protocol": "1.2.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+{ "protocol": "1.3.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
 | `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `**` or `>` the rest) |
 | `payload` | yes | Any JSON value |
-| `cwd` | yes | Directory used to find the registered project (its subscribers) and the project name; omitting it gives HTTP 500 |
+| `cwd` | yes, unless `project` is given | Directory used to find the registered project (its subscribers) and the project name. Since 1.3.0 it may be omitted when `project` names the project (an event of a virtual project, which has no folder); with neither, the push is `rejected`. A daemon older than 1.3.0 answers HTTP 500 to a push without `cwd` |
 | `protocol` | no | Protocol version the client speaks; absent = `1.0.0` |
 | `timeout` | no | Milliseconds a `before*` event may take (default 30000) |
 | `replayOf` | no | Id of the event this push replays |
@@ -142,5 +142,7 @@ The port above is the default (47910); the daemon takes the next free one up to 
 
 | Version | Change |
 |---|---|
+| 1.3.0 | Additive (MINOR): `cwd` is optional when `project` is named, so a virtual project (no folder) can emit events. Its subscribers run from their own `cwd:`; one without it fails with the project name. A subscriber always runs from the main folder of the project that owns its file (not the emitter's). Recorded in `packages/queue-sdk/contract/protocol-1.json` |
+| 1.2.0 | Additive (MINOR): the optional `project` of a push (id of a project of the project registry) |
 | 1.1.0 | Additive (MINOR): the `register-events` command (event catalog); the daemon still accepts clients `^1.0.0`, and a 1.0.0 daemon answers it with HTTP 404. Recorded in `packages/queue-sdk/contract/register-events-1.1.json` |
 | 1.0.0 | Initial contract: Bearer token, `event`/`payload`/`cwd`, statuses `queued`, `dispatched`, `aborted`; adds `protocol` and the `rejected` status |

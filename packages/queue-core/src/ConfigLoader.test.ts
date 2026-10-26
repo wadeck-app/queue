@@ -11,6 +11,7 @@ function makeTmpDir(): string {
 }
 
 const TEST_PROJECT_ID = '64f4ae91';
+const NL = String.fromCharCode(10);
 
 /** Writes the subscribers.yml of the project at `dir` in its config folder (`<dir>/.config`), as the registry would hold it. */
 function writeSubscribersYml(dir: string, content: string): string {
@@ -32,7 +33,7 @@ function writeLegacySubscribersYml(dir: string, content: string): string {
 
 /** The registered project whose folder is `dir` and whose config folder is `<dir>/.config`. */
 function sourceOf(dir: string): ProjectConfigSource {
-  return { projectId: TEST_PROJECT_ID, baseDir: dir, layers: [{ dir: join(dir, '.config'), projectId: TEST_PROJECT_ID }] };
+  return { projectId: TEST_PROJECT_ID, layers: [{ dir: join(dir, '.config'), projectId: TEST_PROJECT_ID, projectName: 'app', folder: dir }] };
 }
 
 describe('ConfigLoader - cwd resolution', () => {
@@ -563,13 +564,13 @@ describe('ConfigLoader - subscribers kept in the config folder of a registered p
 
   it('reads the file of the project, identifies its subscribers by the project id, and runs them from the project folder', () => {
     const dir = layerDir('64f4ae91', FOO('echo reg'));
-    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', layers: [{ dir, projectId: '64f4ae91', projectName: 'app', folder: projectDir }] });
     expect(sub).toMatchObject({ subscriberId: '64f4ae91/n', command: 'echo reg', scope: 'project', via: 'registry', file: join(dir, 'subscribers.yml'), cwd: projectDir });
   });
 
   it('resolves a relative cwd of the file from the project folder, not from the config folder', () => {
     const dir = layerDir('64f4ae91', 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: n\n      cwd: tools\n');
-    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', layers: [{ dir, projectId: '64f4ae91', projectName: 'app', folder: projectDir }] });
     expect(sub!.cwd).toBe(resolve(projectDir, 'tools'));
   });
 
@@ -578,10 +579,9 @@ describe('ConfigLoader - subscribers kept in the config folder of a registered p
     const child = layerDir('bbbbbbbb', FOO('echo child', 'c'));
     const subs = loader.getSubscribers('onFoo', projectDir, {
       projectId: 'bbbbbbbb',
-      baseDir: projectDir,
       layers: [
-        { dir: parent, projectId: 'aaaaaaaa' },
-        { dir: child, projectId: 'bbbbbbbb' },
+        { dir: parent, projectId: 'aaaaaaaa', projectName: 'parent', folder: join(projectDir, 'parent') },
+        { dir: child, projectId: 'bbbbbbbb', projectName: 'child', folder: projectDir },
       ],
     });
     expect(subs.map((sub) => [sub.subscriberId, sub.command])).toEqual([
@@ -590,10 +590,47 @@ describe('ConfigLoader - subscribers kept in the config folder of a registered p
     ]);
   });
 
+  it('runs each subscriber from the main folder of the project that owns its file, not from the folder of the emitter', () => {
+    const parent = layerDir('aaaaaaaa', FOO('echo parent', 'p'));
+    const child = layerDir('bbbbbbbb', FOO('echo child', 'c'));
+    const parentFolder = join(projectDir, 'parent');
+    const subs = loader.getSubscribers('onFoo', projectDir, {
+      projectId: 'bbbbbbbb',
+      layers: [
+        { dir: parent, projectId: 'aaaaaaaa', projectName: 'parent', folder: parentFolder },
+        { dir: child, projectId: 'bbbbbbbb', projectName: 'child', folder: projectDir },
+      ],
+    });
+    expect(subs.map((sub) => sub.cwd)).toEqual([parentFolder, projectDir]);
+  });
+
+  it('a subscriber of a virtual project (no folder) with no cwd of its own cannot run: it says so, naming the project and the fix', () => {
+    const dir = layerDir('cccccccc', FOO('echo virtual', 'v'));
+    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: 'cccccccc', layers: [{ dir, projectId: 'cccccccc', projectName: 'virtual-app' }] });
+    expect(sub!.cwdProblem).toContain("'virtual-app'");
+    expect(sub!.cwdProblem).toContain('cwd');
+  });
+
+  it('a subscriber of a virtual project that gives an absolute cwd, or that is an http call, has no problem', () => {
+    const yml = 'subscribers:' + NL + '  onFoo:' + NL + '    - type: cli' + NL + '      name: abs' + NL + '      command: echo x' + NL + '      cwd: ' + projectDir.replace(/\\/g, '/') + NL + '    - type: http' + NL + '      name: hook' + NL + '      url: http://localhost/x' + NL;
+    const dir = layerDir('cccccccc', yml);
+    const subs = loader.getSubscribers('onFoo', projectDir, { projectId: 'cccccccc', layers: [{ dir, projectId: 'cccccccc', projectName: 'virtual-app' }] });
+    expect(subs.map((sub) => sub.cwdProblem)).toEqual([undefined, undefined]);
+    // an absolute cwd is used as written (forward slashes)
+    expect(subs[0]!.cwd).toBe(projectDir.replace(/\\/g, '/'));
+  });
+
+  it('a relative cwd in the file of a virtual project is a problem too: there is no folder to resolve it against', () => {
+    const yml = 'subscribers:' + NL + '  onFoo:' + NL + '    - type: cli' + NL + '      name: rel' + NL + '      command: echo x' + NL + '      cwd: tools' + NL;
+    const dir = layerDir('cccccccc', yml);
+    const [sub] = loader.getSubscribers('onFoo', projectDir, { projectId: 'cccccccc', layers: [{ dir, projectId: 'cccccccc', projectName: 'virtual-app' }] });
+    expect(sub!.cwdProblem).toContain("'virtual-app'");
+  });
+
   it('does not read the .queue/subscribers.yml found above the working directory once the project has a file of its own', () => {
     writeLegacySubscribersYml(projectDir, FOO('echo walk-up', 'old'));
     const dir = layerDir('64f4ae91', FOO('echo reg'));
-    const subs = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+    const subs = loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', layers: [{ dir, projectId: '64f4ae91', projectName: 'app', folder: projectDir }] });
     expect(subs.map((sub) => sub.command)).toEqual(['echo reg']);
   });
 
@@ -602,7 +639,7 @@ describe('ConfigLoader - subscribers kept in the config folder of a registered p
     const dir = layerDir('64f4ae91', null);
     let message = '';
     try {
-      loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] });
+      loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', layers: [{ dir, projectId: '64f4ae91', projectName: 'app', folder: projectDir }] });
     } catch (err) {
       message = (err as Error).message;
     }
@@ -625,7 +662,7 @@ describe('ConfigLoader - subscribers kept in the config folder of a registered p
 
   it('refuses a key that is not one of a subscribers file, naming the file and the key, instead of ignoring it', () => {
     const dir = layerDir('64f4ae91', 'subscribers: {}\nsubscriber:\n  onFoo: []\n');
-    expect(() => loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', baseDir: projectDir, layers: [{ dir, projectId: '64f4ae91' }] })).toThrow(/subscribers\.yml[\s\S]*subscriber/);
+    expect(() => loader.getSubscribers('onFoo', projectDir, { projectId: '64f4ae91', layers: [{ dir, projectId: '64f4ae91', projectName: 'app', folder: projectDir }] })).toThrow(/subscribers\.yml[\s\S]*subscriber/);
   });
 
   it('without a project and without an old file, only the global file applies', () => {

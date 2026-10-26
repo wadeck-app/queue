@@ -4,7 +4,7 @@
 
 | Option | Default | Meaning |
 |---|---|---|
-| `cwd` | `process.cwd()` | Project directory sent with every event; selects the registered project (its subscribers) and the project name in the history |
+| `cwd` | `process.cwd()` | Project directory sent with every event; selects the registered project (its subscribers) and the project name in the history. `null`: send none, for a project that has no folder (virtual); needs `project` and push protocol 1.3.0 (an older daemon: the event is dropped as `unsupported`) |
 | `project` | - | Id of a registered project (8 hexadecimal characters, `project list`) the events are pushed on behalf of, since push protocol 1.2.0. The SDK resolves nothing: give the id, not a name. Absent: the daemon finds the project from `cwd`. On an older daemon the event is dropped (`unsupported`), never filed under another project |
 | `configDir` | `QUEUE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/queue`, else `~/.config/queue` | Where the queue keeps its files |
 | `timeoutMs` | `5000` | HTTP timeout of one push |
@@ -107,9 +107,9 @@ import { startFakeQueueDaemon } from '@wadeck-app/queue-sdk/testing';
 const daemon = await startFakeQueueDaemon();
 const queue = createQueuePublisher({ configDir: daemon.configDir, silent: true });
 await queue.publishAndWait('myapp.thing', { n: 1 });
-daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: '...', protocol: '1.2.0' }]
+daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: '...', protocol: '1.3.0' }]
 await queue.registerEvents('myapp', [{ name: 'myapp.thing', description: 'A thing happened.' }]);
-daemon.registrations();     // [{ source: 'myapp', events: [...], protocol: '1.2.0' }]
+daemon.registrations();     // [{ source: 'myapp', events: [...], protocol: '1.3.0' }]
 daemon.respondNextRegistration({ status: 'rejected', reason: '...', problems: [{ path: 'events[0].name', message: '...' }] });
 daemon.resetNextRegistration();   // the connection breaks on the next registration; the SDK retries once (idempotent), two breaks in a row give `unknown`
 daemon.respondNext({ status: 'aborted', reason: 'refused' });   // the next push gets this result

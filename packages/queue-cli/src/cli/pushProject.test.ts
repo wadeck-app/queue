@@ -78,11 +78,10 @@ describe('resolvePushProject', () => {
     expect(!result.ok && result.message).toContain('alpha');
   });
 
-  it('refuses a project without any path (virtual): an event needs a working directory', async () => {
-    await addProject(registryDir, { name: 'virtual' });
+  it('accepts a project without any path (virtual): the push names the project and sends no working directory (Decision #29)', async () => {
+    const project = await addProject(registryDir, { name: 'virtual' });
     const result = resolvePushProject({ flag: 'virtual', cwd: work, registryDir, env: {} });
-    expect(result.ok).toBe(false);
-    expect(!result.ok && result.message).toMatch(/no path|virtual/i);
+    expect(result).toEqual({ ok: true, project: project.id });
   });
 
   it('names where a wrong QUEUE_PROJECT comes from', () => {
