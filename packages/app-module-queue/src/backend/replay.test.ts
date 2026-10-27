@@ -106,6 +106,17 @@ describe('replayEvent', () => {
     expect(getErrorMessage(err)).toContain(missingDir);
   });
 
+  it('replays an event of a project without folder (no cwd recorded) through its project, with the direction it was pushed with', async () => {
+    const record = { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { a: 1 }, projectId: '64f4ae91', direction: ['to-children'] };
+    writeFileSync(join(configDir, 'history', '2026-01-01.ndjson'), JSON.stringify(record) + '\n');
+    mockIsRunning.mockResolvedValue(true);
+    mockSend.mockResolvedValue({ status: 'queued', eventId: 'e2' });
+
+    await replayEvent(configDir, 'e1');
+
+    expect(mockSend).toHaveBeenCalledWith('push', { event: 'onFoo', payload: { a: 1 }, project: '64f4ae91', replayOf: 'e1', direction: ['to-children'] });
+  });
+
   it('uses entry.cwd when recorded and directory exists', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'replay-project-'));
     try {

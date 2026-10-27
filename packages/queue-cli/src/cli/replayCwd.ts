@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import type { HistoryEntry } from '@wadeck-app/queue-core';
 
-export type ReplayCwd = { ok: true; cwd: string } | { ok: false; message: string };
+/** Where a replay runs: a directory, or (an event of a project without folder, recorded with no directory) the project alone. */
+export type ReplayCwd = { ok: true; cwd: string } | { ok: true; project: string } | { ok: false; message: string };
 
 /**
  * The directory a replay runs in. It decides which subscribers fire (it selects the registered project, whose subscribers apply), so it is never
@@ -21,6 +22,10 @@ export function resolveReplayCwd(
   }
   if (entry.cwd && testExistsSync(entry.cwd)) {
     return { ok: true, cwd: entry.cwd };
+  }
+  // An event of a virtual project has no directory: the project recorded with it says where it belongs
+  if (!entry.cwd && entry.projectId) {
+    return { ok: true, project: entry.projectId };
   }
   const why = entry.cwd ? `its recorded working directory ${entry.cwd} no longer exists` : `History entry ${entry.eventId} has no recorded working directory`;
   return {

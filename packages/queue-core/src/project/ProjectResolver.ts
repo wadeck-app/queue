@@ -1,5 +1,6 @@
-import { findProjectForPath, getConfigLayers, loadRegistry } from '@wadeck-app/project-sdk';
-import type { ProjectConfigSource } from '../ConfigLoader.js';
+import { findProjectForPath, getConfigLayers, getDescendants, loadRegistry } from '@wadeck-app/project-sdk';
+import type { PushDirection } from '@wadeck-app/queue-sdk/protocol';
+import type { ProjectConfigLayer, ProjectConfigSource } from '../ConfigLoader.js';
 import { getErrorMessage } from '../errors.js';
 
 export interface EventProject {
@@ -37,16 +38,28 @@ export class ProjectResolver {
   }
 
   /** Where the subscribers of a registered project are kept: the config folders of the project and its ancestors, root first, each with the main folder of its project (the default cwd of its subscribers). */
-  configSource(projectId: string): ProjectConfigSource | undefined {
+  configSource(projectId: string, directions: readonly PushDirection[] = ['to-parents']): ProjectConfigSource | undefined {
     const registry = loadRegistry(this.registryDir);
     const project = registry.projects.find((candidate) => candidate.id === projectId);
     if (project === undefined) {
       return undefined;
     }
-    const layers = getConfigLayers(registry, this.registryDir, project, 'queue').map((layer) => {
+    const toLayer = (layer: ReturnType<typeof getConfigLayers>[number], descendant: boolean): ProjectConfigLayer => {
       const folder = layer.project.paths.find((path) => path.main)?.path ?? layer.project.paths[0]?.path;
-      return { dir: layer.dir, projectId: layer.project.id, projectName: layer.project.name, ...(folder !== undefined && { folder }) };
-    });
+      return { dir: layer.dir, projectId: layer.project.id, projectName: layer.project.name, ...(folder !== undefined && { folder }), ...(descendant && { descendant: true as const }) };
+    };
+    // Root first, the emitter last: the ancestors only with to-parents; the emitter's own file fires in every direction
+    const chain = getConfigLayers(registry, this.registryDir, project, 'queue');
+    const layers = (directions.includes('to-parents') ? chain : chain.slice(-1)).map((layer) => toLayer(layer, false));
+    if (directions.includes('to-children')) {
+      // The own file of each descendant only: what is above the emitter already fired (or is not asked for), and the projects between are descendants themselves
+      for (const descendant of getDescendants(registry, project)) {
+        const own = getConfigLayers(registry, this.registryDir, descendant, 'queue').at(-1);
+        if (own !== undefined) {
+          layers.push(toLayer(own, true));
+        }
+      }
+    }
     return { projectId, layers };
   }
 

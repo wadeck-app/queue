@@ -37,7 +37,7 @@ afterEach(() => {
 
 describe('push protocol 1.x contract (recorded)', () => {
   it('has recorded cases', () => {
-    expect(cases.length).toBeGreaterThanOrEqual(9);
+    expect(cases.length).toBeGreaterThanOrEqual(12);
   });
 
   it.each(cases.map((contractCase) => [contractCase.name, contractCase] as const))('%s', async (_name, contractCase) => {

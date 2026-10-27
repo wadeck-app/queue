@@ -21,13 +21,14 @@ export async function replayEvent(configDir: string, eventId: string): Promise<P
     );
   }
 
-  // Check cwd: if not recorded, error with instruction; if recorded but missing, error with instruction
-  if (!entry.cwd) {
+  // Check cwd: if not recorded, error with instruction; if recorded but missing, error with instruction.
+  // An event of a project without folder has no cwd by design: its project is what the replay is filed under.
+  if (!entry.cwd && !entry.projectId) {
     throw new ReplayError(
       `History entry ${eventId} has no recorded working directory (it predates cwd recording), so the original project cannot be determined. Replay it from a terminal and name the project directory: queue replay ${eventId} --cwd <project>`
     );
   }
-  if (!existsSync(entry.cwd)) {
+  if (entry.cwd && !existsSync(entry.cwd)) {
     throw new ReplayError(
       `The working directory recorded for event ${eventId} no longer exists: ${entry.cwd}. Replay it from a terminal and name the project directory: queue replay ${eventId} --cwd <project>`
     );
@@ -39,5 +40,11 @@ export async function replayEvent(configDir: string, eventId: string): Promise<P
     throw new DaemonUnreachableError('Daemon is not running -- start it with `queue start` before replaying');
   }
 
-  return client.send('push', { event: entry.event, payload: entry.payload, cwd: entry.cwd, replayOf: eventId });
+  return client.send('push', {
+    event: entry.event,
+    payload: entry.payload,
+    ...(entry.cwd ? { cwd: entry.cwd } : { project: entry.projectId }),
+    replayOf: eventId,
+    ...(entry.direction !== undefined && { direction: entry.direction }),
+  });
 }

@@ -5,7 +5,7 @@ import { resolveReplayCwd } from './replayCwd.js';
 // Where a replay runs decides which subscribers fire (the directory selects the registered project), so a replay never
 // falls back on its own to the directory the user happens to be in: it uses the recorded one, or the one the user names.
 
-function entryWith(fields: { cwd?: string }): HistoryEntry {
+function entryWith(fields: { cwd?: string; projectId?: string }): HistoryEntry {
   return { ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'test', subscribers: [], orphan: false, ...fields };
 }
 
@@ -13,6 +13,14 @@ const everythingExists = (): boolean => true;
 const nothingExists = (): boolean => false;
 
 describe('resolveReplayCwd', () => {
+  it('replays an event that had no working directory (a project without folder) through the project recorded with it', () => {
+    expect(resolveReplayCwd(entryWith({ projectId: '64f4ae91' }), undefined, everythingExists)).toEqual({ ok: true, project: '64f4ae91' });
+  });
+
+  it('still refuses when neither a directory nor a project was recorded', () => {
+    expect(resolveReplayCwd(entryWith({}), undefined, everythingExists).ok).toBe(false);
+  });
+
   it('uses the recorded directory when it exists', () => {
     expect(resolveReplayCwd(entryWith({ cwd: '/project' }), undefined, everythingExists)).toEqual({ ok: true, cwd: '/project' });
   });

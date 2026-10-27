@@ -28,7 +28,7 @@ import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
 import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
-import { parseProjectFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
+import { parseProjectFlag, parseDirectionFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 import { subscribersFileFor } from './subscribersFile.js';
 import { readDaemonVersion, versionMismatchWarning } from './daemonVersion.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
@@ -130,7 +130,7 @@ Concepts:
               with what outcome; spans all available days
 
 Usage:
-  queue push <event> <json> [--project <name|alias|id>] [--timeout <duration>]
+  queue push <event> <json> [--project <name|alias|id>] [--direction to-parents|to-children]... [--timeout <duration>]
   queue retry --event <id>
   queue replay <eventId> [--cwd <directory>]   Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>, run in the directory recorded with it (--cwd names another). For manual testing, not delivery guarantees.
@@ -837,7 +837,7 @@ async function main(): Promise<void> {
     const jsonArg = rest[1];
 
     if (!event || !jsonArg) {
-      process.stderr.write('Usage: queue push <event> <json> [--project <name|alias|id>] [--timeout <duration>]\n');
+      process.stderr.write('Usage: queue push <event> <json> [--project <name|alias|id>] [--direction to-parents|to-children]... [--timeout <duration>]\n');
       process.exit(1);
     }
 
@@ -866,6 +866,12 @@ async function main(): Promise<void> {
       process.stderr.write(`[fail] ${projectFlag.error}\n`);
       process.exit(1);
     }
+    // --direction (repeatable): where the event propagates from its project; absent = to-parents (the project and its ancestors)
+    const directionFlag = parseDirectionFlag(rest);
+    if (directionFlag.error !== undefined) {
+      process.stderr.write(`[fail] ${directionFlag.error}\n`);
+      process.exit(1);
+    }
     const target = resolvePushProject({ ...(projectFlag.value !== undefined && { flag: projectFlag.value }), cwd: process.cwd(), registryDir: defaultRegistryDir(process.env), env: process.env });
     if (!target.ok) {
       process.stderr.write(`[fail] ${target.message}\n`);
@@ -875,7 +881,7 @@ async function main(): Promise<void> {
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
 
-    const response = await client.send('push', { event, payload, timeout, ...(target.cwd !== undefined || target.project === undefined ? { cwd: target.cwd ?? process.cwd() } : {}), ...(target.project !== undefined && { project: target.project }) });
+    const response = await client.send('push', { event, payload, timeout, ...(target.cwd !== undefined || target.project === undefined ? { cwd: target.cwd ?? process.cwd() } : {}), ...(target.project !== undefined && { project: target.project }), ...(directionFlag.value !== undefined && { direction: directionFlag.value }) });
 
     const failure = pushFailure(response, 'Event');
     if (failure) {
@@ -943,11 +949,11 @@ async function main(): Promise<void> {
       process.stderr.write(resolved.message + '\n');
       process.exit(1);
     }
-    const replayCwd = resolved.cwd;
+    const replayWhere = 'cwd' in resolved ? { cwd: resolved.cwd } : { project: resolved.project };
 
     await ensureDaemon(configDir);
     const client = createQueueClient(configDir);
-    const response = await client.send('push', { event: entry.event, payload: entry.payload, cwd: replayCwd, replayOf: eventId });
+    const response = await client.send('push', { event: entry.event, payload: entry.payload, ...replayWhere, replayOf: eventId, ...(entry.direction !== undefined && { direction: entry.direction }) });
 
     const failure = pushFailure(response, 'Replay');
     if (failure) {

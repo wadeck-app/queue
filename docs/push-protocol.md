@@ -1,6 +1,6 @@
 # Push protocol
 
-The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.3.0**.
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.4.0**.
 
 Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
 
@@ -44,7 +44,7 @@ No authentication.
   "config_dir": "C:\\Users\\me\\.config\\queue",
   "sdkVersion": 1,
   "port": 47910,
-  "queueProtocol": { "version": "1.3.0", "accepts": "^1.0.0" }
+  "queueProtocol": { "version": "1.4.0", "accepts": "^1.0.0" }
 }
 ```
 
@@ -55,7 +55,7 @@ No authentication.
 Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 ```json
-{ "protocol": "1.3.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+{ "protocol": "1.4.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
 ```
 
 | Field | Required | Meaning |
@@ -67,6 +67,7 @@ Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 | `timeout` | no | Milliseconds a `before*` event may take (default 30000) |
 | `replayOf` | no | Id of the event this push replays |
 | `project` | no | Since 1.2.0. Id (8 hex characters) of the project of the project registry the event belongs to. The client resolves a name or an alias to the id (and sends a `cwd` inside that project). Absent, the daemon finds the project from `cwd`. A daemon older than 1.2.0 ignores the field, so check `queueProtocol.version` before relying on it |
+| `direction` | no | Since 1.4.0. Non-empty list of where the event propagates from its project: `to-parents` (the default when absent) = the project and its ancestors, root first; `to-children` = the project and its descendants, the own subscribers file of each (not the ancestors, not their other ancestors). Give both values to get both; the emitter's own subscribers fire in every case and each subscriber fires once. A subscriber of a descendant is dispatched under the descendant: its WAL, DLQ and event `meta.projectId` carry the descendant's id and `meta.emitterProjectId` the id of the project the event was emitted in. An unknown value, an empty list, `to-children` on a `before*` event (synchronous, one answer) or on an event that belongs to no registered project are `rejected` with the reason; nothing is recorded. The history records a non-default `direction`, so `queue replay` propagates the same way. A daemon older than 1.4.0 ignores the field and fires the ancestors only, so check `queueProtocol.version` before relying on it |
 
 Answer, HTTP 200: `{ "ok": true, "result": <PushResponse> }`.
 
@@ -143,6 +144,7 @@ The port above is the default (47910); the daemon takes the next free one up to 
 
 | Version | Change |
 |---|---|
+| 1.4.0 | Additive (MINOR): the optional `direction` of a push (`to-parents` by default, `to-children`, or both); the descendants' own subscribers fire under their own project id, with `emitterProjectId`. Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.3.0 | Additive (MINOR): `cwd` is optional when `project` is named, so a virtual project (no folder) can emit events. Its subscribers run from their own `cwd:`; one without it fails with the project name. A subscriber always runs from the main folder of the project that owns its file (not the emitter's). Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.2.0 | Additive (MINOR): the optional `project` of a push (id of a project of the project registry) |
 | 1.1.0 | Additive (MINOR): the `register-events` command (event catalog); the daemon still accepts clients `^1.0.0`, and a 1.0.0 daemon answers it with HTTP 404. Recorded in `packages/queue-sdk/contract/register-events-1.1.json` |

@@ -17,6 +17,8 @@ export interface TriggerHistoryEntry {
   replayOf?: string;
   /** Working directory of the original push, so `queue replay <eventId>` can reuse it to find the correct subscribers.yml. */
   cwd?: string;
+  /** The `direction` of the push when it was not the default (`to-parents`), so `queue replay` propagates the event the same way. */
+  direction?: string[];
 }
 
 export interface OutcomeHistoryEntry {

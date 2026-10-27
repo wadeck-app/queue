@@ -14,6 +14,8 @@ export interface PushRequest {
   protocol?: string;
   /** Since 1.2.0: id of the project of the project registry the event belongs to. */
   project?: string;
+  /** Since 1.4.0: where the event propagates from its project (`to-parents` by default, `to-children`, or both). */
+  direction?: string[];
 }
 
 export type PushStatus = 'dispatched' | 'queued' | 'aborted' | 'rejected';

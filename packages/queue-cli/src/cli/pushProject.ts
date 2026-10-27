@@ -1,5 +1,7 @@
 import { loadRegistry, requirePath, resolveReference, resolveScope, NoProjectInScopeError } from '@wadeck-app/project-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
+import { checkPushDirection, PUSH_DIRECTIONS } from '@wadeck-app/queue-sdk/protocol';
+import type { PushDirection } from '@wadeck-app/queue-sdk/protocol';
 
 /** `--project <ref>` / `-p <ref>` out of the arguments of a command; `error` when the flag has no value. */
 export function parseProjectFlag(args: string[]): { value?: string; error?: string } {
@@ -15,6 +17,23 @@ export function parseProjectFlag(args: string[]): { value?: string; error?: stri
     return { value };
   }
   return {};
+}
+
+/** `--direction to-parents|to-children` (repeatable) out of the arguments of `queue push`; `error` for a missing or unknown value. */
+export function parseDirectionFlag(args: string[]): { value?: PushDirection[]; error?: string } {
+  const given: string[] = [];
+  for (let at = args.indexOf('--direction'); at !== -1; at = args.indexOf('--direction', at + 1)) {
+    const value = args[at + 1];
+    if (value === undefined || value.startsWith('-')) {
+      return { error: `--direction needs a value: ${PUSH_DIRECTIONS.join(' or ')} (repeat the flag to give both).` };
+    }
+    given.push(value);
+  }
+  if (given.length === 0) {
+    return {};
+  }
+  const checked = checkPushDirection(given);
+  return checked.ok ? { value: checked.directions } : { error: `--direction: ${checked.reason}` };
 }
 
 export type PushProject = { ok: true; project?: string; cwd?: string } | { ok: false; message: string };

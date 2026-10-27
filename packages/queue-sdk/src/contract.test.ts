@@ -9,7 +9,7 @@ import { parsePushAnswer, parseRegisterAnswer, serializePushRequest, serializeRe
 
 interface ContractCase {
   name: string;
-  request: { event: string; payload: unknown; protocol?: string; project?: string; cwd?: string };
+  request: { event: string; payload: unknown; protocol?: string; project?: string; cwd?: string; direction?: string[] };
   response: { status: string; supported?: string; eventId: 'present' | 'absent' };
 }
 

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createQueueService } from './QueueService.js';
 import { readCatalog } from '../catalog/EventCatalog.js';
-import { Wal } from '../storage/Wal.js';
+import { Wal, type WalEntry } from '../storage/Wal.js';
 import { waitFor } from '../waitFor.testUtil.js';
 import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
 import { isRecord } from '../isRecord.js';
@@ -490,5 +490,111 @@ describe('the project chain of an event (Decision #29): parents, virtual project
     const walEntries = (): Array<{ status: string; lastError?: string }> => new Wal(join(configDir, 'wal.ndjson')).readAll();
     await waitFor('the misconfigured dispatch to fail', () => walEntries().some((entry) => entry.status === 'failed') && service.isIdle());
     expect(walEntries()[0]?.lastError).toContain("'virtual-app'");
+  });
+});
+
+describe('direction of a push (protocol 1.4.0, Decision #29): to-parents, to-children', () => {
+  let registryDir: string;
+  let grandDir: string;
+  let parentDir: string;
+  const RUN = (name: string): string => `subscribers:\n  onFoo:\n    - type: cli\n      command: node -e ""\n      name: ${name}\n`;
+
+  beforeEach(() => {
+    registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+    grandDir = mkdtempSync(join(tmpdir(), 'queue-service-grand-'));
+    parentDir = mkdtempSync(join(tmpdir(), 'queue-service-parent-'));
+  });
+
+  afterEach(() => {
+    for (const dir of [registryDir, grandDir, parentDir]) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  /** grand (root) > parent > child (projectDir), each with one subscriber named after it. */
+  async function family(): Promise<{ grand: string; parent: string; child: string }> {
+    const grand = await addProject(registryDir, { name: 'grand', path: grandDir });
+    const parent = await addProject(registryDir, { name: 'parent', path: parentDir, parent: 'grand' });
+    const child = await addProject(registryDir, { name: 'child', path: projectDir, parent: 'parent' });
+    for (const [project, name] of [[grand, 'g'], [parent, 'p'], [child, 'c']] as const) {
+      writeFileSync(join(projectToolDir(registryDir, project.id, 'queue', 'config', { ensure: true }), 'subscribers.yml'), RUN(name));
+    }
+    return { grand: grand.id, parent: parent.id, child: child.id };
+  }
+
+  const walEntries = (): WalEntry[] => new Wal(join(configDir, 'wal.ndjson')).readAll();
+
+  async function pushFrom(project: string, direction?: unknown): Promise<{ status: string; reason?: string }> {
+    const service = createQueueService(configDir, { registryDir });
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, project, protocol: '1.4.0', ...(direction !== undefined && { direction }) } as never);
+    await waitFor('the dispatches to finish', () => service.isIdle());
+    return response;
+  }
+
+  it('by default (to-parents) the emitter and its ancestors fire, never the descendants', async () => {
+    const ids = await family();
+    await pushFrom(ids.parent);
+    expect(walEntries().map((entry) => entry.subscriberId).sort()).toEqual([`${ids.grand}/g`, `${ids.parent}/p`].sort());
+  });
+
+  it('to-children fires the emitter and its descendants (their own file), not the ancestors; each descendant carries its own project id and the emitter in emitterProjectId', async () => {
+    const ids = await family();
+    await pushFrom(ids.parent, ['to-children']);
+    const entries = walEntries();
+    expect(entries.map((entry) => entry.subscriberId).sort()).toEqual([`${ids.parent}/p`, `${ids.child}/c`].sort());
+    const child = entries.find((entry) => entry.subscriberId === `${ids.child}/c`)!;
+    expect(child.meta).toMatchObject({ projectId: ids.child, emitterProjectId: ids.parent });
+    const own = entries.find((entry) => entry.subscriberId === `${ids.parent}/p`)!;
+    expect(own.meta['projectId']).toBe(ids.parent);
+    expect(own.meta['emitterProjectId']).toBeUndefined();
+  });
+
+  it('both values fire the ancestors, the emitter and the descendants, each subscriber once', async () => {
+    const ids = await family();
+    await pushFrom(ids.parent, ['to-parents', 'to-children']);
+    expect(walEntries().map((entry) => entry.subscriberId).sort()).toEqual([`${ids.grand}/g`, `${ids.parent}/p`, `${ids.child}/c`].sort());
+  });
+
+  it('rejects an unknown direction with the accepted values, and records nothing', async () => {
+    const ids = await family();
+    const response = await pushFrom(ids.parent, ['sideways']);
+    expect(response.status).toBe('rejected');
+    expect(response.reason).toContain('sideways');
+    expect(response.reason).toContain('to-parents');
+    expect(response.reason).toContain('to-children');
+    expect(walEntries()).toEqual([]);
+  });
+
+  it('rejects a direction that is not a non-empty list', async () => {
+    const ids = await family();
+    for (const bad of ['to-children', [], 3]) {
+      const response = await pushFrom(ids.parent, bad);
+      expect(response.status, JSON.stringify(bad)).toBe('rejected');
+    }
+  });
+
+  it('refuses to-children for a before* event (synchronous, one answer): says so, records nothing', async () => {
+    const ids = await family();
+    const service = createQueueService(configDir, { registryDir });
+    const response = await service.commands.push({ event: 'beforeSave', payload: {}, project: ids.parent, protocol: '1.4.0', direction: ['to-children'] } as never);
+    expect(response.status).toBe('rejected');
+    expect(response.reason).toContain('before');
+    expect(walEntries()).toEqual([]);
+  });
+
+  it('refuses to-children when the event belongs to no registered project: the descendants cannot be known', async () => {
+    const service = createQueueService(configDir, { registryDir });
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir, protocol: '1.4.0', direction: ['to-children'] } as never);
+    expect(response.status).toBe('rejected');
+    expect(response.reason).toContain('registered project');
+  });
+
+  it('a descendant entry that fails for good reaches the DLQ with its own project id and the emitter id', async () => {
+    const ids = await family();
+    writeFileSync(join(projectToolDir(registryDir, ids.child, 'queue', 'config'), 'subscribers.yml'), 'subscribers:\n  onFoo:\n    - type: cli\n      command: node -e "process.exit(1)"\n      name: c\n      retries: 0\n');
+    const service = createQueueService(configDir, { registryDir });
+    await service.commands.push({ event: 'onFoo', payload: {}, project: ids.parent, protocol: '1.4.0', direction: ['to-children'] } as never);
+    await waitFor('the failed dispatch to reach the DLQ', () => listDlqEntries(configDir).length === 1 && service.isIdle());
+    expect(listDlqEntries(configDir)[0]?.meta).toMatchObject({ projectId: ids.child, emitterProjectId: ids.parent });
   });
 });

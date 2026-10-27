@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { createDaemonResolver, isPidAlive, type DaemonInfo, type Resolution } from './daemon.js';
 import { loopbackRequest, type HttpOutcome, type LoopbackRequest } from './http.js';
 import { resolveConfigDir } from './configDir.js';
-import { daemonSupportsEventCatalog, daemonSupportsPushProject, daemonSupportsPushWithoutCwd, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION, PUSH_PROJECT_MIN_VERSION, PUSH_WITHOUT_CWD_MIN_VERSION } from './protocol.js';
+import type { PushDirection } from './protocol.js';
+import { daemonSupportsEventCatalog, daemonSupportsPushProject, daemonSupportsPushDirection, daemonSupportsPushWithoutCwd, checkPushDirection, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION, PUSH_DIRECTION_MIN_VERSION, PUSH_PROJECT_MIN_VERSION, PUSH_WITHOUT_CWD_MIN_VERSION } from './protocol.js';
 import { createReporter, describeHttpError, type FailureKind, type QueueFailure, type Reporter } from './report.js';
 import { defaultStartDeps, startDaemon, type RunOutcome, type StartDeps, type StartResult } from './start.js';
 import {
@@ -34,6 +35,11 @@ export interface QueuePublisherOptions {
    * project from `cwd`. The SDK does not resolve names: resolve a name or an alias to its id first. Needs queue-cli >= push protocol 1.2.0.
    */
   project?: string;
+  /**
+   * Where every event propagates from its project: `to-parents` (the default: the project and its ancestors) and/or `to-children` (the project and its
+   * descendants, the own subscribers file of each; not for `before*` events). Needs queue-cli >= push protocol 1.4.0.
+   */
+  direction?: PushDirection[];
   /** Queue config dir. Default: QUEUE_CONFIG_DIR, else $XDG_CONFIG_HOME/queue, else ~/.config/queue. */
   configDir?: string;
   /** HTTP timeout in ms of a fire-and-forget push. Default 5000. */
@@ -58,6 +64,8 @@ export interface PublishOptions {
   cwd?: string | null;
   /** Overrides the publisher's `project` for this event. */
   project?: string;
+  /** Overrides the publisher's `direction` for this event. */
+  direction?: PushDirection[];
   /** Overrides the HTTP timeout. For `before*` events it is the request timeout sent to the daemon and 5000 ms more are waited. */
   timeoutMs?: number;
 }
@@ -346,6 +354,11 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
         `project must be the id of a registered project (8 hexadecimal characters, \`project list\` shows them), got ${JSON.stringify(project)}: resolve a name or an alias to its id first`,
       );
     }
+    const requestedDirection = call.direction ?? options.direction;
+    const direction = checkPushDirection(requestedDirection);
+    if (!direction.ok) {
+      return fail('invalid-argument', direction.reason);
+    }
     const cwd = call.cwd === undefined ? defaultCwd : call.cwd;
     if (cwd === null && project === undefined) {
       return fail('invalid-argument', 'cwd: null needs a project: without a working directory only the project says where the event comes from');
@@ -353,7 +366,7 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
     const isBefore = event.startsWith('before');
     const requestTimeout = isBefore ? call.timeoutMs : undefined;
     const httpTimeout = isBefore ? (requestTimeout ?? DAEMON_BEFORE_TIMEOUT_MS) + BEFORE_MARGIN_MS : (call.timeoutMs ?? timeoutMs);
-    const wire: PushRequest = { event, payload, ...(cwd !== null && { cwd: resolve(cwd) }), protocol: PROTOCOL_VERSION, ...(requestTimeout !== undefined && { timeout: requestTimeout }), ...(project !== undefined && { project }) };
+    const wire: PushRequest = { event, payload, ...(cwd !== null && { cwd: resolve(cwd) }), protocol: PROTOCOL_VERSION, ...(requestTimeout !== undefined && { timeout: requestTimeout }), ...(project !== undefined && { project }), ...(requestedDirection !== undefined && { direction: direction.directions }) };
     return exchange<PublishResult>({
       path: '/push',
       httpTimeout,
@@ -361,13 +374,16 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
       retryAmbiguous: false,
       body: (protocol) => serializePushRequest({ ...wire, protocol }),
       fail,
-      // An older daemon would ignore the project and file the event under the project of the cwd: drop it instead, and say why
-      ...(project !== undefined && {
+      // An older daemon would ignore the project (or the direction) and file the event elsewhere / fire fewer subscribers: drop it instead, and say why
+      ...((project !== undefined || requestedDirection !== undefined) && {
         precheck: (daemon: DaemonInfo): PublishResult | undefined => {
-          if (!daemonSupportsPushProject(daemon.protocol.version)) {
+          if (requestedDirection !== undefined && !daemonSupportsPushDirection(daemon.protocol.version)) {
+            return fail('unsupported', `the daemon speaks push protocol ${daemon.protocol.version} and the direction of an event needs ${PUSH_DIRECTION_MIN_VERSION}: it would ignore it and fire the ancestors only. Update queue-cli (\`queue cli update\`), or publish without a direction`);
+          }
+          if (project !== undefined && !daemonSupportsPushProject(daemon.protocol.version)) {
             return fail('unsupported', `the daemon speaks push protocol ${daemon.protocol.version} and the project of an event needs ${PUSH_PROJECT_MIN_VERSION}: it would ignore the project and file the event under another. Update queue-cli (\`queue cli update\`), or publish without a project`);
           }
-          if (cwd === null && !daemonSupportsPushWithoutCwd(daemon.protocol.version)) {
+          if (project !== undefined && cwd === null && !daemonSupportsPushWithoutCwd(daemon.protocol.version)) {
             return fail('unsupported', `the daemon speaks push protocol ${daemon.protocol.version} and an event without a working directory needs ${PUSH_WITHOUT_CWD_MIN_VERSION}. Update queue-cli (\`queue cli update\`), or publish with a cwd`);
           }
           return undefined;

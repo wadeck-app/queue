@@ -119,6 +119,8 @@ interface ResolveContext {
   fileDir: string | undefined;
   /** The virtual project that owns the file, to name in the problem of a subscriber that has no folder to run from. */
   virtualProject?: string;
+  /** The registered project that owns the file (absent for the global file). */
+  owner?: ProjectConfigLayer;
   /** Prefix of the ids of this file's subscribers: empty for the global file, '<project id>/' for a project file. */
   idPrefix: string;
   kind: 'global' | 'project';
@@ -209,6 +211,7 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
     name,
     file: ctx.filePath,
     scope: ctx.kind,
+    ...(ctx.owner !== undefined && { projectId: ctx.owner.projectId, projectName: ctx.owner.projectName, ...(ctx.owner.descendant === true && { fromDescendant: true as const }) }),
     ...(ctx.via !== undefined && { via: ctx.via }),
     event,
     type: raw.type,
@@ -245,6 +248,8 @@ export interface ProjectConfigLayer {
   /** Id of the project that owns the folder: it identifies the subscribers of the file. */
   projectId: string;
   projectName: string;
+  /** True for the layer of a descendant of the emitter (direction `to-children`): only its own file is read. */
+  descendant?: true;
   /** The main folder of that project: the default cwd of the subscribers of the file. Absent for a virtual project (no path). */
   folder?: string;
 }
@@ -300,9 +305,10 @@ export class ConfigLoader {
       const fileDir = registry === undefined ? dirname(filePath) : registry.folder;
       const kind = filePath === globalFile ? 'global' : 'project';
       const via = registry !== undefined ? 'registry' : undefined;
-      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'virtualProject' | 'idPrefix' | 'kind' | 'globalCwd' | 'globalEnv'> = {
+      const globalCtx: Pick<ResolveContext, 'filePath' | 'fileDir' | 'virtualProject' | 'owner' | 'idPrefix' | 'kind' | 'globalCwd' | 'globalEnv'> = {
         filePath,
         fileDir,
+        ...(registry !== undefined && { owner: registry }),
         ...(registry !== undefined && registry.folder === undefined && { virtualProject: registry.projectName }),
         idPrefix: registry === undefined ? '' : `${registry.projectId}/`,
         kind,

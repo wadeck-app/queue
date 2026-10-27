@@ -29,8 +29,10 @@ export interface HistoryEntry {
   payload?: unknown;
   /** Set when this trigger was created by `queue replay`, pointing at the eventId it replays. */
   replayOf?: string;
-  /** Working directory of the original push; absent for entries recorded before this field existed and for orphan entries. */
+  /** Working directory of the original push; absent for entries recorded before this field existed, for orphan entries and for the events of a project without folder. */
   cwd?: string;
+  /** The `direction` of the original push when it was not the default (`to-parents`), so a replay propagates the same way. */
+  direction?: string[];
 }
 
 export interface HistoryFilter {
@@ -98,6 +100,7 @@ interface Accumulator {
   payload?: unknown;
   replayOf?: string;
   cwd?: string;
+  direction?: string[];
   subscribers: HistorySubscriberOutcome[];
 }
 
@@ -131,6 +134,7 @@ export class HistoryReader {
       payload: a.payload,
       replayOf: a.replayOf,
       cwd: a.cwd,
+      ...(a.direction !== undefined && { direction: a.direction }),
     }));
 
     return entries
@@ -350,6 +354,7 @@ export class HistoryReader {
       entry.payload = record['payload'];
       entry.replayOf = record['replayOf'] as string | undefined;
       entry.cwd = record['cwd'] as string | undefined;
+      entry.direction = record['direction'] as string[] | undefined;
       return;
     }
     if (type === 'outcome') {

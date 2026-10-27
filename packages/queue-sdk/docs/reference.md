@@ -6,6 +6,7 @@
 |---|---|---|
 | `cwd` | `process.cwd()` | Project directory sent with every event; selects the registered project (its subscribers) and the project name in the history. `null`: send none, for a project that has no folder (virtual); needs `project` and push protocol 1.3.0 (an older daemon: the event is dropped as `unsupported`) |
 | `project` | - | Id of a registered project (8 hexadecimal characters, `project list`) the events are pushed on behalf of, since push protocol 1.2.0. The SDK resolves nothing: give the id, not a name. Absent: the daemon finds the project from `cwd`. On an older daemon the event is dropped (`unsupported`), never filed under another project |
+| `direction` | - | `['to-parents']` by default; `['to-children']` fires the project and its descendants (their own subscribers, each under its own project id), both values give both. Not for `before*` events. Since push protocol 1.4.0: on an older daemon the event is dropped (`unsupported`), never fired for the ancestors only |
 | `configDir` | `QUEUE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/queue`, else `~/.config/queue` | Where the queue keeps its files |
 | `timeoutMs` | `5000` | HTTP timeout of one push |
 | `maxPending` | `100` | Pushes in flight at once; the overflow is dropped and reported |
@@ -26,7 +27,7 @@ An invalid option falls back to its default and is reported through `onError`.
 | `flush()` | `Promise<void>` | Resolves when every push and declaration in flight has settled. Call it before `process.exit()`. It takes no timeout argument: each push is bounded by `timeoutMs` (plus up to 5 s when the daemon has to be started), so `flush()` is bounded too. In a synchronous shutdown hook, start it without awaiting it: pushes still in flight at exit are lost |
 | `status()` | `Promise<QueueStatus>` | `{ available, via?, daemonVersion?, protocol?, reason? }`; `via` is `daemon` (running, verified) or `queue-start` (stopped, `queue` found, it will be run on the first event) |
 
-Per-call `options`: `cwd` and `project` (override the publisher's) and `timeoutMs`.
+Per-call `options`: `cwd`, `project` and `direction` (override the publisher's) and `timeoutMs`.
 
 ## `PublishResult.status`
 
@@ -107,9 +108,9 @@ import { startFakeQueueDaemon } from '@wadeck-app/queue-sdk/testing';
 const daemon = await startFakeQueueDaemon();
 const queue = createQueuePublisher({ configDir: daemon.configDir, silent: true });
 await queue.publishAndWait('myapp.thing', { n: 1 });
-daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: '...', protocol: '1.3.0' }]
+daemon.pushes();            // [{ event: 'myapp.thing', payload: { n: 1 }, cwd: '...', protocol: '1.4.0' }]
 await queue.registerEvents('myapp', [{ name: 'myapp.thing', description: 'A thing happened.' }]);
-daemon.registrations();     // [{ source: 'myapp', events: [...], protocol: '1.3.0' }]
+daemon.registrations();     // [{ source: 'myapp', events: [...], protocol: '1.4.0' }]
 daemon.respondNextRegistration({ status: 'rejected', reason: '...', problems: [{ path: 'events[0].name', message: '...' }] });
 daemon.resetNextRegistration();   // the connection breaks on the next registration; the SDK retries once (idempotent), two breaks in a row give `unknown`
 daemon.respondNext({ status: 'aborted', reason: 'refused' });   // the next push gets this result

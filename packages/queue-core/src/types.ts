@@ -4,6 +4,8 @@ export interface EventMeta {
   projectName?: string;
   /** Id of the registered project (project-sdk) the working directory belongs to; absent when it belongs to none. */
   projectId?: string;
+  /** Set on the dispatch of a subscriber of a descendant project (push direction `to-children`): `projectId` is then the descendant's, this is the project the event was emitted in. */
+  emitterProjectId?: string;
 }
 
 export interface EventEnvelope {
@@ -19,6 +21,11 @@ export interface ResolvedSubscriber {
   subscriberId: string;
   /** The 'name' of the subscriber in subscribers.yml (required). */
   name: string;
+  /** Id and name of the registered project that owns the file (absent for the global file). */
+  projectId?: string;
+  projectName?: string;
+  /** True when the project is a descendant of the emitter (push direction `to-children`): the dispatch is filed under that project. */
+  fromDescendant?: true;
   /** The subscribers.yml it comes from, and whether that is the global one or the one of a project. */
   file: string;
   scope: 'global' | 'project';

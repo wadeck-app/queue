@@ -6,7 +6,7 @@ import { parseRange, parseVersion, satisfies, compareVersions } from './semver.j
 // included, so there is exactly one place that says what version is spoken.
 
 /** The protocol version this SDK speaks and the daemon of the same release implements. */
-export const PROTOCOL_VERSION = '1.3.0';
+export const PROTOCOL_VERSION = '1.4.0';
 /** Daemon protocol versions whose answers this SDK can read. */
 export const SDK_UNDERSTANDS = '^1.0.0';
 /** Client protocol versions the daemon accepts. While a MAJOR is deprecated, both stay listed (e.g. `^1.0.0 || ^2.0.0`). */
@@ -41,6 +41,40 @@ export const PUSH_WITHOUT_CWD_MIN_VERSION = '1.3.0';
 /** Whether a daemon that implements protocol `daemonProtocolVersion` accepts a push with a `project` and no `cwd`. */
 export function daemonSupportsPushWithoutCwd(daemonProtocolVersion: string): boolean {
   return satisfies(daemonProtocolVersion, `>=${PUSH_WITHOUT_CWD_MIN_VERSION}`);
+}
+
+/** The protocol version that added `direction` to `push`; an older daemon ignores it and would fire the ancestors only. */
+export const PUSH_DIRECTION_MIN_VERSION = '1.4.0';
+
+/** Whether a daemon that implements protocol `daemonProtocolVersion` honours the `direction` of a push. */
+export function daemonSupportsPushDirection(daemonProtocolVersion: string): boolean {
+  return satisfies(daemonProtocolVersion, `>=${PUSH_DIRECTION_MIN_VERSION}`);
+}
+
+/**
+ * The directions an event can propagate in from the project it is emitted in (the emitter's own subscribers fire in both cases):
+ * `to-parents` = the emitter and its ancestors, root first (the default); `to-children` = the emitter and its descendants (the own file of each).
+ */
+export const PUSH_DIRECTIONS = ['to-parents', 'to-children'] as const;
+export type PushDirection = (typeof PUSH_DIRECTIONS)[number];
+
+export type DirectionCheck = { ok: true; directions: PushDirection[] } | { ok: false; reason: string };
+
+/** Validates the `direction` of a push: absent is `['to-parents']`; else a non-empty list of known values (duplicates dropped). */
+export function checkPushDirection(value: unknown): DirectionCheck {
+  const accepted = PUSH_DIRECTIONS.join(', ');
+  if (value === undefined) {
+    return { ok: true, directions: ['to-parents'] };
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    return { ok: false, reason: `invalid direction ${JSON.stringify(value)}: expected a non-empty list of ${accepted}, e.g. ["to-children"]` };
+  }
+  const known = (candidate: unknown): candidate is PushDirection => PUSH_DIRECTIONS.some((direction) => direction === candidate);
+  const unknown = value.filter((item) => !known(item));
+  if (unknown.length > 0) {
+    return { ok: false, reason: `unknown direction ${unknown.map((item) => JSON.stringify(item)).join(', ')}: the accepted values are ${accepted}` };
+  }
+  return { ok: true, directions: [...new Set(value.filter(known))] };
 }
 
 /** A daemon whose GET /version has no `queueProtocol` predates versioning and speaks the original contract. */

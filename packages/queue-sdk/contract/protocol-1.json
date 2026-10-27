@@ -43,5 +43,20 @@
     "name": "1.3.0: a push with neither a cwd nor a project is rejected and nothing is recorded",
     "request": { "event": "on.contract.nothing", "payload": {}, "protocol": "1.3.0", "cwd": "<none>" },
     "response": { "status": "rejected", "eventId": "absent" }
+  },
+  {
+    "name": "1.4.0: a client asking to-children for a registered project is accepted",
+    "request": { "event": "on.contract.children", "payload": {}, "protocol": "1.4.0", "project": "<registered-project>", "direction": ["to-children"] },
+    "response": { "status": "queued", "eventId": "present" }
+  },
+  {
+    "name": "1.4.0: a client asking for both directions is accepted",
+    "request": { "event": "on.contract.both", "payload": {}, "protocol": "1.4.0", "project": "<registered-project>", "direction": ["to-parents", "to-children"] },
+    "response": { "status": "queued", "eventId": "present" }
+  },
+  {
+    "name": "1.4.0: an unknown direction is rejected and nothing is recorded",
+    "request": { "event": "on.contract.sideways", "payload": {}, "protocol": "1.4.0", "project": "<registered-project>", "direction": ["sideways"] },
+    "response": { "status": "rejected", "eventId": "absent" }
   }
 ]

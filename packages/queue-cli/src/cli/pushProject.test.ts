@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { addProject, addPath } from '@wadeck-app/project-sdk';
-import { parseProjectFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
+import { parseProjectFlag, parseDirectionFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 
 let registryDir: string;
 let work: string;
@@ -37,6 +37,28 @@ describe('parseProjectFlag', () => {
   it('refuses a flag without a value instead of ignoring it', () => {
     expect(parseProjectFlag(['onFoo', '{}', '--project'])).toMatchObject({ error: expect.stringContaining('--project needs a value') });
     expect(parseProjectFlag(['onFoo', '-p', '--timeout', '5s'])).toMatchObject({ error: expect.stringContaining('-p needs a value') });
+  });
+});
+
+describe('parseDirectionFlag', () => {
+  it('is absent without the flag: the daemon applies to-parents', () => {
+    expect(parseDirectionFlag(['evt', '{}'])).toEqual({});
+  });
+
+  it('collects the repeated flag in the order given, once each', () => {
+    expect(parseDirectionFlag(['--direction', 'to-parents', 'x', '--direction', 'to-children', '--direction', 'to-parents'])).toEqual({ value: ['to-parents', 'to-children'] });
+  });
+
+  it('refuses an unknown value, naming it and the accepted ones', () => {
+    const parsed = parseDirectionFlag(['--direction', 'sideways']);
+    expect(parsed.error).toContain('sideways');
+    expect(parsed.error).toContain('to-parents');
+    expect(parsed.error).toContain('to-children');
+  });
+
+  it('refuses a flag without a value instead of ignoring it', () => {
+    expect(parseDirectionFlag(['--direction']).error).toContain('--direction needs a value');
+    expect(parseDirectionFlag(['--direction', '--timeout', '5s']).error).toContain('--direction needs a value');
   });
 });
 

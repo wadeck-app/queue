@@ -11,7 +11,8 @@ import { PayloadFilter } from '../dispatch/PayloadFilter.js';
 import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
-import { checkClientProtocol } from '@wadeck-app/queue-sdk/protocol';
+import { checkClientProtocol, checkPushDirection } from '@wadeck-app/queue-sdk/protocol';
+import type { PushDirection } from '@wadeck-app/queue-sdk/protocol';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { countQueue, subscribersFor, removeFromDlq } from '../operations.js';
 import { validateSourceDeclaration, writeSourceDeclaration } from '../catalog/EventCatalog.js';
@@ -61,9 +62,9 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    * The subscribers of an event: the global file, then those of the registered project (its config folders); a .queue/subscribers.yml found
    * above `cwd` is refused by the loader. `lookup` is the project already found by the caller; `projectId` names it explicitly (a stored entry).
    */
-  function loadSubscribers(event: string, cwd: string | undefined, lookup?: ProjectLookup, projectId?: string): ResolvedSubscriber[] {
+  function loadSubscribers(event: string, cwd: string | undefined, lookup?: ProjectLookup, projectId?: string, directions?: readonly PushDirection[]): ResolvedSubscriber[] {
     const known = lookup ?? (projectResolver === undefined ? undefined : projectId !== undefined ? projectResolver.lookupId(projectId) : cwd === undefined ? undefined : projectResolver.lookup(cwd));
-    const source = known?.kind === 'registered' ? projectResolver?.configSource(known.project.id) : undefined;
+    const source = known?.kind === 'registered' ? projectResolver?.configSource(known.project.id, directions) : undefined;
     const subscribers = configLoader.getSubscribers(event, cwd, source);
     const registryFile = subscribers.find((sub) => sub.via === 'registry')?.file;
     if (registryFile !== undefined) {
@@ -113,6 +114,15 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       if (!protocol.ok) {
         return { status: 'rejected', reason: protocol.reason, supported: protocol.supported };
       }
+      // Same for the direction: a wrong value or a combination that cannot work is refused before anything is recorded
+      const direction = checkPushDirection(req.direction);
+      if (!direction.ok) {
+        return { status: 'rejected', reason: `${direction.reason}; the event was not recorded` };
+      }
+      const toChildren = direction.directions.includes('to-children');
+      if (toChildren && req.event.startsWith('before')) {
+        return { status: 'rejected', reason: "a 'before*' event is dispatched synchronously and answers once: it cannot propagate to-children. Fix: push it without direction (to-parents), or use an 'on*' event; the event was not recorded" };
+      }
       // An explicit project is checked before anything is recorded: a wrong id must not file the event under nothing, silently
       let explicit: ProjectLookup | undefined;
       if (req.project !== undefined) {
@@ -138,6 +148,9 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           saidOnce.add(problem);
           eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: problem });
         }
+        if (toChildren && lookup?.kind !== 'registered') {
+          return { status: 'rejected', reason: `direction to-children needs the event to belong to a registered project (its descendants come from the project registry), and ${lookup?.kind === 'unavailable' ? lookup.problem : lookup?.kind === 'unregistered' ? lookup.warning : 'no registry is available'}; the event was not recorded` };
+        }
         const envelope: EventEnvelope = {
           id: crypto.randomUUID(),
           timestamp: new Date().toISOString(),
@@ -152,7 +165,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
         let subscribers: ResolvedSubscriber[];
         try {
-          subscribers = loadSubscribers(req.event, cwd, lookup);
+          subscribers = loadSubscribers(req.event, cwd, lookup, undefined, direction.directions);
         } catch (err) {
           // Invalid subscribers.yml: surface it to the caller AND to the log file
           const reason = getErrorMessage(err);
@@ -160,11 +173,33 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           return { status: 'aborted', reason, eventId: envelope.id };
         }
 
+        // A subscriber of a descendant (to-children) is dispatched under its own project: its envelope shares the event id and carries the emitter
+        const descendantEnvelopes = new Map<string, EventEnvelope>();
+        const envelopeFor = (sub: ResolvedSubscriber): EventEnvelope => {
+          if (sub.fromDescendant !== true || sub.projectId === undefined) {
+            return envelope;
+          }
+          let own = descendantEnvelopes.get(sub.projectId);
+          if (own === undefined) {
+            own = {
+              ...envelope,
+              meta: {
+                ...envelope.meta,
+                projectId: sub.projectId,
+                ...(sub.projectName !== undefined && { projectName: sub.projectName }),
+                ...(envelope.meta.projectId !== undefined && { emitterProjectId: envelope.meta.projectId }),
+              },
+            };
+            descendantEnvelopes.set(sub.projectId, own);
+          }
+          return own;
+        };
+
         const filtered = subscribers.filter(sub => {
           if (!sub.when) {
             return true;
           }
-          const evaluation = PayloadFilter.evaluate(sub.when, envelope);
+          const evaluation = PayloadFilter.evaluate(sub.when, envelopeFor(sub));
           if (!evaluation.matched) {
             // Durable trace: the daemon's stderr is discarded, a `when:` typo would be invisible
             eventLogger.logFilterMiss({
@@ -198,6 +233,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           payload: req.payload,
           replayOf: req.replayOf,
           cwd: req.cwd,
+          ...(!(direction.directions.length === 1 && direction.directions[0] === 'to-parents') && { direction: direction.directions }),
         });
 
         if (req.event.startsWith('before')) {
@@ -217,7 +253,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
             timestamp: new Date().toISOString(),
             event: req.event,
             payload: req.payload,
-            meta: envelope.meta,
+            meta: envelopeFor(sub).meta,
             subscriberId: sub.subscriberId,
             status: 'pending',
             attempts: 0,
@@ -227,9 +263,16 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         }
 
         // Fire and forget
-        asyncDispatcher.dispatch(filtered, envelope, walEntries).catch((err: unknown) => {
-          eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `AsyncDispatcher error for event ${req.event}: ${getErrorMessage(err)}` });
-        });
+        const groups = new Map<EventEnvelope, ResolvedSubscriber[]>();
+        for (const sub of filtered) {
+          const groupEnvelope = envelopeFor(sub);
+          groups.set(groupEnvelope, [...(groups.get(groupEnvelope) ?? []), sub]);
+        }
+        for (const [groupEnvelope, groupSubscribers] of groups) {
+          asyncDispatcher.dispatch(groupSubscribers, groupEnvelope, walEntries).catch((err: unknown) => {
+            eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `AsyncDispatcher error for event ${req.event}: ${getErrorMessage(err)}` });
+          });
+        }
 
         return { status: 'queued', subscriberCount: filtered.length, eventId: envelope.id };
       } finally {

@@ -5,4 +5,5 @@ export type { PublishOptions, QueuePublisher, QueuePublisherOptions, QueueStatus
 export type { FailureKind, QueueFailure } from './report.js';
 export type { EventDeclaration, PublishResult, RegisterResult } from './wire.js';
 export { PROTOCOL_VERSION } from './protocol.js';
+export type { PushDirection } from './protocol.js';
 export { resolveConfigDir } from './configDir.js';

@@ -1020,6 +1020,34 @@ describe('publishing on behalf of a project (push protocol 1.2.0)', () => {
     expect(h.fake!.pushes()).toEqual([]);
   });
 
+  it('sends the direction of the publisher or of the call (to-children), and none by default', async () => {
+    const h = await setup({ daemon: current, publisher: { project: ID } });
+    await h.publisher.publishAndWait('app.thing', {});
+    await h.publisher.publishAndWait('app.thing', {}, { direction: ['to-children'] });
+    const bodies = h.fake!.pushes().map((request) => JSON.parse(request.body) as { direction?: string[] });
+    expect(bodies[0]).not.toHaveProperty('direction');
+    expect(bodies[1]?.direction).toEqual(['to-children']);
+  });
+
+  it('refuses an unknown direction naming the accepted ones, sending nothing', async () => {
+    const h = await setup({ daemon: current, publisher: { project: ID } });
+    const result = await h.publisher.publishAndWait('app.thing', {}, { direction: ['sideways'] as never });
+    expect(result.status).toBe('dropped');
+    expect(h.failures[0]?.kind).toBe('invalid-argument');
+    expect(h.failures[0]?.message).toContain('to-children');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
+  it('drops an event with a direction when the daemon is older than protocol 1.4.0: it would fire the ancestors only', async () => {
+    const h = await setup({ daemon: { queueProtocol: { version: '1.3.0', accepts: '^1.0.0' } }, publisher: { project: ID } });
+    const result = await h.publisher.publishAndWait('app.thing', {}, { direction: ['to-children'] });
+    expect(result.status).toBe('dropped');
+    expect(h.failures[0]?.kind).toBe('unsupported');
+    expect(h.failures[0]?.message).toContain('1.4.0');
+    expect(h.failures[0]?.message).toContain('queue-cli');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
   it('a project the daemon refuses is reported with the daemon reason, not as a protocol mismatch', async () => {
     const h = await setup({ daemon: current, publisher: { project: ID } });
     h.fake!.script.push({ kind: 'answer', result: { status: 'rejected', reason: "no registered project has the id '569c412d'. Fix: project list shows the registered projects and their ids; the event was not recorded" } });

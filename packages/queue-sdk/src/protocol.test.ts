@@ -10,12 +10,15 @@ import {
   daemonSupportsEventCatalog,
   daemonSupportsPushProject,
   daemonSupportsPushWithoutCwd,
+  daemonSupportsPushDirection,
+  checkPushDirection,
+  PUSH_DIRECTIONS,
 } from './protocol.js';
 import { satisfies } from './semver.js';
 
 describe('protocol constants', () => {
   it('start at 1.1.0 and are consistent with each other', () => {
-    expect(PROTOCOL_VERSION).toBe('1.3.0');
+    expect(PROTOCOL_VERSION).toBe('1.4.0');
     expect(satisfies(PROTOCOL_VERSION, DAEMON_ACCEPTS)).toBe(true);
     expect(satisfies(PROTOCOL_VERSION, SDK_UNDERSTANDS)).toBe(true);
   });
@@ -135,6 +138,40 @@ describe('daemonSupportsEventCatalog (the event catalog arrived with protocol 1.
     ['1.4.2', true],
   ])('a daemon at %s: %s', (version, expected) => {
     expect(daemonSupportsEventCatalog(version)).toBe(expected);
+  });
+});
+
+describe('daemonSupportsPushDirection (a direction needs protocol 1.4.0)', () => {
+  it.each([
+    ['1.3.0', false],
+    ['1.4.0', true],
+    ['1.10.0', true],
+  ])('a daemon speaking %s -> %s', (version, expected) => {
+    expect(daemonSupportsPushDirection(version)).toBe(expected);
+  });
+});
+
+describe('checkPushDirection', () => {
+  it('absent means to-parents', () => {
+    expect(checkPushDirection(undefined)).toEqual({ ok: true, directions: ['to-parents'] });
+  });
+
+  it('accepts one or both values, once each, in the order given', () => {
+    expect(checkPushDirection(['to-children'])).toEqual({ ok: true, directions: ['to-children'] });
+    expect(checkPushDirection(['to-children', 'to-parents', 'to-children'])).toEqual({ ok: true, directions: ['to-children', 'to-parents'] });
+  });
+
+  it('refuses an unknown value naming it and listing the accepted ones', () => {
+    const checked = checkPushDirection(['to-parents', 'sideways']);
+    expect(checked.ok).toBe(false);
+    expect(!checked.ok && checked.reason).toContain('sideways');
+    for (const accepted of PUSH_DIRECTIONS) {
+      expect(!checked.ok && checked.reason).toContain(accepted);
+    }
+  });
+
+  it.each([[[]], ['to-children'], [3], [null], [{}]])('refuses %j: it must be a non-empty list', (value) => {
+    expect(checkPushDirection(value).ok).toBe(false);
   });
 });
 
