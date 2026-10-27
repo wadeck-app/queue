@@ -33,7 +33,7 @@ queue <command> [options]
 | `cli self-check` | Validate installation |
 | `cli update` | Apply a pending update immediately |
 
-The daemon auto-starts on any command that needs it; `queue start` is only needed to pre-warm it.
+The daemon auto-starts on any command that needs it; `queue start` is only needed to pre-warm it. `QUEUE_PROJECT` is the default project of `push`; `history`, `status` and `dlq list` are global views and filter on an explicit `--project` only.
 
 ## Waiting instead of polling
 

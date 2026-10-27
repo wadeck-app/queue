@@ -48,7 +48,7 @@ const VERSION = getVersion();
 
 const DLQ_GROUP_HELP = `queue dlq - Dead Letter Queue management
 Usage:
-  queue dlq list [--project <name|alias|id>]
+  queue dlq list [--project <name|alias|id>]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
 `;
@@ -130,7 +130,7 @@ Concepts:
               with what outcome; spans all available days
 
 Usage:
-  queue push <event> <json> [--project <name|alias|id>] [--direction to-parents|to-children]... [--timeout <duration>]
+  queue push <event> <json> [--project <name|alias|id>] [--direction to-parents|to-children]... [--timeout <duration>]   (QUEUE_PROJECT is the default project of a push)
   queue retry --event <id>
   queue replay <eventId> [--cwd <directory>]   Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>, run in the directory recorded with it (--cwd names another). For manual testing, not delivery guarantees.
@@ -139,9 +139,9 @@ Usage:
   queue events show <name> [--json]   Schema, example, payload paths for 'queue wait --when' and a ready command
   queue events register --source <s> --file <events.json> [--json]   Declare the events of a program that does not use the Node SDK
   queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done
-  queue status [--project <name|alias|id>] [--json]
+  queue status [--project <name|alias|id>] [--json]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
   queue list-subscribers [event] [--json]
-  queue dlq list [--project <name|alias|id>]
+  queue dlq list [--project <name|alias|id>]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
   queue dlq replay --id <id>
   queue dlq clear [--id <id>]
   queue sub list [event] [--json] [--scope global|project]
@@ -153,7 +153,7 @@ Usage:
   queue stop
   queue relay start|stop|status [--json]   Webhook relay client (reads relay.yml from QUEUE_CONFIG_DIR)
   queue logs [--follow]
-  queue history [--event <name>] [--subscriber <id>] [--project <name|alias|id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]
+  queue history [--event <name>] [--subscriber <id>] [--project <name|alias|id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]   (--project: the flag only, QUEUE_PROJECT does not narrow a view)
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
