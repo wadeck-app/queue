@@ -41,3 +41,9 @@ Nothing. Subscriber names are required: the real config was cleaned (test subscr
 - Tests of the CLI that read the registry set `XDG_CONFIG_HOME` to a temp dir.
 - A daemon stops itself when the WAL is empty; after a CLI update the running daemon keeps the old code until `queue stop`.
 - Do not run `queue wait ci` for the personal account repositories (exit 3 is expected).
+
+## Candidates (optional, from project-owner Decision #30, project-sdk 2026.10.27-014; not requested by the user)
+
+- `findProjectIncludingDeleted(registryDir, id)`: show the name of a removed project in the dashboard project selector and history (cheapest, most useful).
+- Project-qualified ids `<project>/<id>` (`formatQualifiedId`, `parseQualifiedId`, `resolveQualifiedId`) for `queue replay` and `queue dlq`: needs an argument-parsing design first.
+- `Origin { tool, at, projectId?, projectName?, cwd? }` (`buildOrigin`, `formatOrigin`): adds nothing queue records today beyond `projectId` / `emitterProjectId`.
