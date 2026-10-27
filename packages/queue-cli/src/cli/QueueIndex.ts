@@ -266,14 +266,11 @@ export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json
     }
   }
 
-  let projectRef: string | undefined;
-  const projectFlag = ['--project', '-p'].find((flag) => isFlagPresent(args, flag));
-  if (projectFlag !== undefined) {
-    projectRef = getArg(projectFlag);
-    if (projectRef === undefined) {
-      errors.push('--project requires a value');
-    }
+  const project = parseProjectFlag(args);
+  if (project.error !== undefined) {
+    errors.push(project.error);
   }
+  const projectRef = project.value;
 
   if (isFlagPresent(args, '--subscriber')) {
     const subscriberVal = getArg('--subscriber');
@@ -416,11 +413,12 @@ export async function runFollowMode(deps: {
 }
 
 async function queueHistoryCommand(configDir: string, args: string[]): Promise<void> {
+  // The project option (any of its three forms) is read by parseHistoryFlags through the project-sdk; the unknown-argument check sees the rest
   warnUnknownArgs(
-    args,
-    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f', '--limit', '-n', '--offset', '--project', '-p'],
+    parseProjectFlag(args).args,
+    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f', '--limit', '-n', '--offset'],
     'queue history',
-    new Set(['--event', '--subscriber', '--status', '--since', '--limit', '-n', '--offset', '--project', '-p']),
+    new Set(['--event', '--subscriber', '--status', '--since', '--limit', '-n', '--offset']),
   );
   const { filter, json, limit, offset, errors, projectRef } = parseHistoryFlags(args);
   if (errors.length > 0) {
@@ -833,8 +831,14 @@ async function main(): Promise<void> {
   try {
 
   if (command === 'push') {
-    const event = rest[0];
-    const jsonArg = rest[1];
+    // The project option is read by the project-sdk wherever it is (before or after the event and the payload)
+    const pushProject = parseProjectFlag(rest, process.env);
+    if (pushProject.error !== undefined) {
+      process.stderr.write(`[fail] ${pushProject.error}\n`);
+      process.exit(1);
+    }
+    const event = pushProject.args[0];
+    const jsonArg = pushProject.args[1];
 
     if (!event || !jsonArg) {
       process.stderr.write('Usage: queue push <event> <json> [--project <name|alias|id>] [--direction to-parents|to-children]... [--timeout <duration>]\n');
@@ -861,18 +865,13 @@ async function main(): Promise<void> {
     }
 
     // --project / -p, else QUEUE_PROJECT: the project is resolved here (name, alias or id) and the push carries its id
-    const projectFlag = parseProjectFlag(rest);
-    if (projectFlag.error !== undefined) {
-      process.stderr.write(`[fail] ${projectFlag.error}\n`);
-      process.exit(1);
-    }
     // --direction (repeatable): where the event propagates from its project; absent = to-parents (the project and its ancestors)
     const directionFlag = parseDirectionFlag(rest);
     if (directionFlag.error !== undefined) {
       process.stderr.write(`[fail] ${directionFlag.error}\n`);
       process.exit(1);
     }
-    const target = resolvePushProject({ ...(projectFlag.value !== undefined && { flag: projectFlag.value }), cwd: process.cwd(), registryDir: defaultRegistryDir(process.env), env: process.env });
+    const target = resolvePushProject({ argv: rest, cwd: process.cwd(), registryDir: defaultRegistryDir(process.env), env: process.env });
     if (!target.ok) {
       process.stderr.write(`[fail] ${target.message}\n`);
       process.exit(1);

@@ -185,8 +185,20 @@ describe('parseHistoryFlags', () => {
       expect(parseHistoryFlags(['history', '-p', 'app']).projectRef).toBe('app');
     });
 
+    it('--project=<ref> is read too (the form of the project-sdk parser)', () => {
+      expect(parseHistoryFlags(['history', '--project=app']).projectRef).toBe('app');
+    });
+
     it('without a value pushes an error instead of listing every project', () => {
-      expect(parseHistoryFlags(['history', '--project']).errors).toContain('--project requires a value');
+      const errors = parseHistoryFlags(['history', '--project']).errors;
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('--project needs a value');
+    });
+
+    it('given twice pushes an error instead of picking one', () => {
+      const result = parseHistoryFlags(['history', '-p', 'a', '--project', 'b']);
+      expect(result.errors[0]).toContain('twice');
+      expect(result.projectRef).toBeUndefined();
     });
 
     it('is absent without the flag', () => {
