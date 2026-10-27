@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
-import { HistoryLog } from '../storage/HistoryLog.js';
+import { HistoryLog, projectRefsOf } from '../storage/HistoryLog.js';
 import { ConfigLoader, resolveProjectName } from '../ConfigLoader.js';
 import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
@@ -217,6 +217,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
               subscriberId: sub.subscriberId,
               filter: sub.when,
               actual: evaluation.actual,
+              ...projectRefsOf(envelopeFor(sub).meta),
             });
           }
           return evaluation.matched;

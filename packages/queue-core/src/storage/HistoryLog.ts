@@ -1,7 +1,13 @@
+import type { EventMeta } from '../types.js';
 import { existsSync, mkdirSync, appendFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 const DATE_FILE = /^(\d{4}-\d{2}-\d{2})\.ndjson$/;
+
+/** The project fields an outcome or a filtered record carries, from the meta of the envelope it was dispatched with. */
+export function projectRefsOf(meta: EventMeta): { projectId?: string; emitterProjectId?: string } {
+  return { ...(meta.projectId !== undefined && { projectId: meta.projectId }), ...(meta.emitterProjectId !== undefined && { emitterProjectId: meta.emitterProjectId }) };
+}
 
 export interface TriggerHistoryEntry {
   eventId: string;
@@ -28,6 +34,10 @@ export interface OutcomeHistoryEntry {
   status: 'success' | 'failed' | 'dlq';
   /** Resolved command or URL, so a failing/dlq'd outcome in `queue history` says what actually ran. */
   target?: string;
+  /** The project the dispatch is filed under (the one of its WAL entry): the descendant's for a subscriber reached with direction `to-children`, else the emitter's. */
+  projectId?: string;
+  /** Set with `to-children`: the project the event was emitted in. */
+  emitterProjectId?: string;
 }
 
 export interface FilteredHistoryEntry {
@@ -38,6 +48,9 @@ export interface FilteredHistoryEntry {
   filter: string;
   /** Value actually found at the filter's path, when one was found. path/expected are already in `filter`, so they aren't duplicated here. */
   actual?: string;
+  /** Same as on an outcome: the project the dispatch would have been filed under. */
+  projectId?: string;
+  emitterProjectId?: string;
 }
 
 /**

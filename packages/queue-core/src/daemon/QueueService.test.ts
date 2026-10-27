@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createQueueService } from './QueueService.js';
 import { readCatalog } from '../catalog/EventCatalog.js';
 import { Wal, type WalEntry } from '../storage/Wal.js';
+import { HistoryReader } from '../storage/HistoryReader.js';
 import { waitFor } from '../waitFor.testUtil.js';
 import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
 import { isRecord } from '../isRecord.js';
@@ -553,6 +554,16 @@ describe('direction of a push (protocol 1.4.0, Decision #29): to-parents, to-chi
     const ids = await family();
     await pushFrom(ids.parent, ['to-parents', 'to-children']);
     expect(walEntries().map((entry) => entry.subscriberId).sort()).toEqual([`${ids.grand}/g`, `${ids.parent}/p`, `${ids.child}/c`].sort());
+  });
+
+  it('files the history under the descendant too: its outcome carries its project id and the emitter, and the project filter finds the event', async () => {
+    const ids = await family();
+    await pushFrom(ids.parent, ['to-children']);
+    const reader = new HistoryReader(join(configDir, 'history'));
+    const [entry] = reader.read({ projectId: ids.child });
+    expect(entry?.subscribers.find((sub) => sub.subscriberId === `${ids.child}/c`)).toMatchObject({ projectId: ids.child, emitterProjectId: ids.parent });
+    expect(reader.read({ projectId: ids.parent }).map((found) => found.eventId)).toEqual([entry?.eventId]);
+    expect(reader.read({ projectId: ids.grand })).toEqual([]);
   });
 
   it('rejects an unknown direction with the accepted values, and records nothing', async () => {

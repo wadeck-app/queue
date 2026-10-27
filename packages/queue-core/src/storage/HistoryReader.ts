@@ -9,6 +9,10 @@ export interface HistorySubscriberOutcome {
   /** The raw `when:` expression, for filtered outcomes. */
   filter?: string;
   actual?: string;
+  /** The project the dispatch was filed under; with `to-children` the descendant's. Absent before this field existed and for events of no registered project. */
+  projectId?: string;
+  /** Set with `to-children`: the project the event was emitted in. */
+  emitterProjectId?: string;
 }
 
 export interface HistoryEntry {
@@ -364,6 +368,7 @@ export class HistoryReader {
         subscriberId: record['subscriberId'] as string,
         status: record['status'] as HistorySubscriberOutcome['status'],
         target: record['target'] as string | undefined,
+        ...projectRefsOfRecord(record),
       });
       return;
     }
@@ -375,6 +380,7 @@ export class HistoryReader {
         status: 'filtered',
         filter: record['filter'] as string | undefined,
         actual: record['actual'] as string | undefined,
+        ...projectRefsOfRecord(record),
       });
     }
   }
@@ -383,7 +389,8 @@ export class HistoryReader {
     if (filter.event && entry.event !== filter.event) {
       return false;
     }
-    if (filter.projectId && entry.projectId !== filter.projectId) {
+    // The project of the push, or of any subscriber the event was dispatched to (a descendant reached with to-children, a retry with no trigger)
+    if (filter.projectId && entry.projectId !== filter.projectId && !entry.subscribers.some((s) => s.projectId === filter.projectId)) {
       return false;
     }
     if (filter.sinceMs !== undefined && Date.parse(entry.ts) < filter.sinceMs) {
@@ -397,4 +404,10 @@ export class HistoryReader {
     }
     return true;
   }
+}
+
+function projectRefsOfRecord(record: Record<string, unknown>): { projectId?: string; emitterProjectId?: string } {
+  const projectId = record['projectId'];
+  const emitterProjectId = record['emitterProjectId'];
+  return { ...(typeof projectId === 'string' && { projectId }), ...(typeof emitterProjectId === 'string' && { emitterProjectId }) };
 }

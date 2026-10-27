@@ -2,7 +2,7 @@ import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
 import { OutputCapture } from './OutputCapture.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
-import type { HistoryWriter } from '../storage/HistoryLog.js';
+import { projectRefsOf, type HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 
 export interface SyncResult {
@@ -73,7 +73,7 @@ export class SyncDispatcher {
           this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
         }
         // History records every successful outcome, unlike logDispatch's noise-reduction above
-        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target });
+        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
         continue;
       }
 
@@ -92,14 +92,14 @@ export class SyncDispatcher {
       }
 
       if (parsed.action === 'abort') {
-        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target });
+        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
         return { action: 'aborted', reason: parsed.reason ?? 'aborted by subscriber' };
       }
 
       if (captured.stderr !== undefined) {
         this.logger.logDispatch({ event: sub.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
       }
-      this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target });
+      this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
 
       if (parsed.payload !== undefined) {
         currentPayload = parsed.payload;
@@ -128,7 +128,7 @@ export class SyncDispatcher {
       error: reason,
       ...captured,
     });
-    this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed', target: resolvedTarget });
+    this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed', target: resolvedTarget, ...projectRefsOf(envelope.meta) });
     return { action: 'aborted', reason };
   }
 }

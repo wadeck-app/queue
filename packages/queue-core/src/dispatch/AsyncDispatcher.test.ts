@@ -250,6 +250,16 @@ describe('AsyncDispatcher - diagnosability', () => {
     }));
   });
 
+  it('files every outcome under the project of the dispatch, and the emitter for a descendant', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: true, stdout: '', durationMs: 1 });
+    const envelope = makeEnvelope();
+    const descendant = { ...envelope, meta: { ...envelope.meta, projectId: 'bbbbbbbb', emitterProjectId: 'aaaaaaaa' } };
+
+    await dispatcher.dispatch([makeSub('sub-1')], descendant, new Map([['sub-1', makeWalEntry('sub-1')]]));
+
+    expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ subscriberId: 'sub-1', status: 'success', projectId: 'bbbbbbbb', emitterProjectId: 'aaaaaaaa' }));
+  });
+
   it('http subscriber without url is logged as failed', async () => {
     const sub: ResolvedSubscriber = { ...makeSub('sub-1'), type: 'http', command: undefined, url: undefined };
     const w = makeWalEntry('sub-1');

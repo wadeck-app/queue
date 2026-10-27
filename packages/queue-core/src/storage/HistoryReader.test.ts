@@ -22,6 +22,51 @@ function writeDay(historyDir: string, date: string, records: object[]): void {
   writeFileSync(join(historyDir, `${date}.ndjson`), content, 'utf-8');
 }
 
+describe('HistoryReader: the project of the outcomes (direction to-children)', () => {
+  let historyDir: string;
+
+  beforeEach(() => {
+    historyDir = join(tmpdir(), `queue-history-reader-test-${crypto.randomUUID()}`);
+    mkdirSync(historyDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(historyDir, { recursive: true, force: true });
+  });
+
+  const records = [
+    { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-a', event: 'onFoo', matchedCount: 2, totalCount: 2, projectId: 'aaaaaaaa' },
+    { ts: '2026-01-01T10:00:01.000Z', type: 'outcome', eventId: 'ev-a', event: 'onFoo', subscriberId: 'aaaaaaaa/p', status: 'success', projectId: 'aaaaaaaa' },
+    { ts: '2026-01-01T10:00:02.000Z', type: 'outcome', eventId: 'ev-a', event: 'onFoo', subscriberId: 'bbbbbbbb/c', status: 'failed', projectId: 'bbbbbbbb', emitterProjectId: 'aaaaaaaa' },
+    { ts: '2026-01-01T10:00:02.500Z', type: 'filtered', eventId: 'ev-a', event: 'onFoo', subscriberId: 'cccccccc/g', filter: 'payload.x=1', projectId: 'cccccccc', emitterProjectId: 'aaaaaaaa' },
+  ];
+
+  it('keeps the project each subscriber was dispatched under, and the emitter for a descendant', () => {
+    writeDay(historyDir, '2026-01-01', records);
+    const [entry] = new HistoryReader(historyDir).read();
+    const own = entry!.subscribers.find((sub) => sub.subscriberId === 'aaaaaaaa/p');
+    const descendant = entry!.subscribers.find((sub) => sub.subscriberId === 'bbbbbbbb/c');
+    expect(own).toMatchObject({ projectId: 'aaaaaaaa' });
+    expect(own).not.toHaveProperty('emitterProjectId');
+    expect(descendant).toMatchObject({ projectId: 'bbbbbbbb', emitterProjectId: 'aaaaaaaa' });
+    expect(entry!.subscribers.find((sub) => sub.status === 'filtered')).toMatchObject({ projectId: 'cccccccc' });
+  });
+
+  it('the project filter finds an event under the project of the emitter AND under each descendant that ran or filtered a subscriber', () => {
+    writeDay(historyDir, '2026-01-01', records);
+    const reader = new HistoryReader(historyDir);
+    expect(reader.read({ projectId: 'aaaaaaaa' }).map((entry) => entry.eventId)).toEqual(['ev-a']);
+    expect(reader.read({ projectId: 'bbbbbbbb' }).map((entry) => entry.eventId)).toEqual(['ev-a']);
+    expect(reader.read({ projectId: 'cccccccc' }).map((entry) => entry.eventId)).toEqual(['ev-a']);
+    expect(reader.read({ projectId: 'dddddddd' })).toEqual([]);
+  });
+
+  it('a retry outcome (no trigger record) is found under the project it carries', () => {
+    writeDay(historyDir, '2026-01-01', [{ ts: '2026-01-01T10:00:02.000Z', type: 'outcome', eventId: 'ev-r', event: 'onFoo', subscriberId: 'bbbbbbbb/c', status: 'success', projectId: 'bbbbbbbb' }]);
+    expect(new HistoryReader(historyDir).read({ projectId: 'bbbbbbbb' }).map((entry) => entry.eventId)).toEqual(['ev-r']);
+  });
+});
+
 describe('HistoryReader', () => {
   let historyDir: string;
 
