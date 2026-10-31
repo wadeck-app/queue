@@ -2,6 +2,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { checkLauncherPackage } from './launcherPackage.js';
 import { mkdirSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync, openSync, readSync, closeSync, statSync } from 'node:fs';
 import { join as pathJoin, dirname as pathDirname } from 'node:path';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
@@ -1203,6 +1204,7 @@ async function main(): Promise<void> {
           name: `version: ${VERSION}`,
           ok: VERSION !== 'undefined' && !VERSION.startsWith('0.0.0-dev'),
         }),
+        async () => checkLauncherPackage({ version: VERSION, platform: process.platform, arch: process.arch, resolve: (r) => require.resolve(r) }),
         async () => ({
           name: 'config-dir',
           ok: isConfigDirWritable(configDir),

@@ -129,6 +129,11 @@ jobs:
                     (cd "packages/$pkg" && npm pkg set version="${{ steps.version.outputs.version }}")
                   done
 
+            # The range ">=0.0.0-0" generated for the main package never refreshes an installed platform package (the Go launcher):
+            # every optionalDependency must name exactly the version published here
+            - name: Pin platform package versions in the main package
+              run: node packages/queue-cli/ci/scripts/pin-platform-versions.mjs packages/queue-cli-dist/package.json "${{ steps.version.outputs.version }}"
+
             - name: Publish platform packages
               run: |
                   for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64; do
