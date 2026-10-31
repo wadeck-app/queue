@@ -50,9 +50,23 @@ function resolveStdio(rawArgs, stdinIsTTY) {
   return { stdio: stdio, args: args, auto: auto, notice: notice };
 }
 
+// Build the command that installs the platform package at the bundle's OWN exact version.
+// Never 'latest': an unversioned install leaves a top-level copy that drifts from this bundle.
+// @param {string} pkgName - platform package name
+// @param {unknown} version - version field of this package's package.json
+// @returns {string} the npm install command
+// @throws {Error} when the version is missing or not a plain version string
+function buildInstallCommand(pkgName, version) {
+  if (typeof version !== 'string' || !/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(version)) {
+    throw new Error('cannot read a valid version from this package\'s package.json (got ' + JSON.stringify(version) + ')');
+  }
+  return 'npm install -g ' + pkgName + '@' + version;
+}
+
 // Export for testing
 if (typeof module !== 'undefined' && module.exports) {
   module.exports.resolveStdio = resolveStdio;
+  module.exports.buildInstallCommand = buildInstallCommand;
 }
 
 // Execute only when run as a script, not when required
@@ -77,21 +91,31 @@ if (require.main === module) {
   try {
     launcherPath = require.resolve(`${pkgName}/{{CLI_NAME}}${ext}`);
   } catch {
-    process.stderr.write(`{{CLI_NAME}}: platform package ${pkgName} missing -- installing...\n`);
+    let installCmd;
     try {
-      const out = execSync(`npm install -g ${pkgName}`, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      installCmd = buildInstallCommand(pkgName, require('../package.json').version);
+    } catch (verErr) {
+      process.stderr.write(
+        `{{CLI_NAME}}: platform package ${pkgName} missing and it cannot be installed automatically: ${verErr.message}. ` +
+        `Fix: reinstall with npm install -g @wadeck-app/{{PKG_PREFIX}}\n`
+      );
+      process.exit(1);
+    }
+    process.stderr.write(`{{CLI_NAME}}: platform package ${pkgName} missing -- running: ${installCmd}\n`);
+    try {
+      const out = execSync(installCmd, { encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       if (out) process.stdout.write(out);
     } catch (installErr) {
       if (installErr.stdout) process.stdout.write(installErr.stdout);
       if (installErr.stderr) process.stderr.write(installErr.stderr);
-      process.stderr.write(`{{CLI_NAME}}: install failed (exit ${installErr.status})\n`);
+      process.stderr.write(`{{CLI_NAME}}: install failed (exit ${installErr.status}). Run it yourself: ${installCmd}\n`);
       process.exit(1);
     }
     try {
       launcherPath = require.resolve(`${pkgName}/{{CLI_NAME}}${ext}`);
     } catch {
       process.stderr.write(
-        `{{CLI_NAME}}: installed ${pkgName} but cannot resolve binary -- try: npm install -g @wadeck-app/{{PKG_PREFIX}}\n`
+        `{{CLI_NAME}}: ran ${installCmd} but cannot resolve the binary. Fix: npm install -g @wadeck-app/{{PKG_PREFIX}}\n`
       );
       process.exit(1);
     }

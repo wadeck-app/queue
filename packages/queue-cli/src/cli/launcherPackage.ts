@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 export interface LauncherCheck {
   name: string;
   ok: boolean;
   detail?: string;
+  /** Non-fatal findings: the check still passes (the shared self-check runner has no warn level), the caller must print them. */
+  warnings?: string[];
 }
 
 export interface LauncherCheckDeps {
@@ -14,6 +17,29 @@ export interface LauncherCheckDeps {
   /** Resolves a module path (require.resolve); throws when not found. */
   resolve: (request: string) => string;
   readFile?: (path: string) => string;
+  /** Directory of the running queue-cli package (where queue.cjs lives); enables the shadowed-copy warning. */
+  packageDir?: string;
+}
+
+/**
+ * A same-named platform package of ANOTHER version in the `@wadeck-app` directory next to queue-cli (typically a stale
+ * top-level copy left by an unversioned install, shadowed by the right nested one). Harmless today, bites if resolution changes.
+ */
+function findShadowedCopy(pkg: string, packageDir: string, version: string, readFile: (p: string) => string): string | undefined {
+  const scopeDir = dirname(packageDir);
+  if (basename(scopeDir) !== '@wadeck-app') return undefined;
+  const otherDir = join(scopeDir, pkg.slice('@wadeck-app/'.length));
+  let other: string;
+  try {
+    const parsed = JSON.parse(readFile(join(otherDir, 'package.json'))) as { version?: unknown };
+    if (typeof parsed.version !== 'string') return undefined;
+    other = parsed.version;
+  } catch {
+    // Absent copy is the normal case
+    return undefined;
+  }
+  if (other === version) return undefined;
+  return `a stale ${pkg} ${other} sits at ${otherDir} (queue-cli ${version} is at ${packageDir}); it is not used today but can shadow the right one. Cleanup: npm uninstall -g ${pkg}`;
 }
 
 /**
@@ -47,5 +73,8 @@ export function checkLauncherPackage(deps: LauncherCheckDeps): LauncherCheck {
       detail: `${pkg} is ${installed} but queue-cli is ${deps.version}: the launcher is stale. Fix: npm install -g ${pkg}@${deps.version}`,
     };
   }
-  return { name, ok: true, detail: `${pkg} ${installed}` };
+  const result: LauncherCheck = { name, ok: true, detail: `${pkg} ${installed}` };
+  const shadow = deps.packageDir ? findShadowedCopy(pkg, deps.packageDir, deps.version, readFile) : undefined;
+  if (shadow) result.warnings = [shadow];
+  return result;
 }

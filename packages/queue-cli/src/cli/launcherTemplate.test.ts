@@ -344,3 +344,32 @@ describe('launcherTemplate resolveStdio', () => {
     });
   });
 });
+
+describe('launcherTemplate buildInstallCommand', () => {
+  const tpl = fs.readFileSync(path.join(__dirname, '../../ci/templates/bin-launcher.js.tmpl'), 'utf8')
+    .replace(/{{CLI_NAME}}/g, 'queue')
+    .replace(/{{PKG_PREFIX}}/g, 'queue-cli');
+  const load = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-install-'));
+    const file = path.join(dir, 'launcher.js');
+    fs.writeFileSync(file, tpl, 'utf8');
+    try {
+      return createRequire(file)(file) as { buildInstallCommand: (p: string, v: unknown) => string };
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it('pins the platform package to the exact bundle version', () => {
+    expect(load().buildInstallCommand('@wadeck-app/queue-cli-win32-x64', '2026.10.31-244-cb188647'))
+      .toBe('npm install -g @wadeck-app/queue-cli-win32-x64@2026.10.31-244-cb188647');
+  });
+
+  it.each([undefined, '', 42, '1.0 && calc', 'latest; x'])('refuses an invalid version %j instead of installing latest', (v) => {
+    expect(() => load().buildInstallCommand('@wadeck-app/queue-cli-win32-x64', v)).toThrow(/valid version/);
+  });
+
+  it('never emits an unversioned install in the template', () => {
+    expect(tpl).not.toMatch(/npm install -g ${pkgName}`/);
+  });
+});

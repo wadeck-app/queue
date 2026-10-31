@@ -1204,7 +1204,18 @@ async function main(): Promise<void> {
           name: `version: ${VERSION}`,
           ok: VERSION !== 'undefined' && !VERSION.startsWith('0.0.0-dev'),
         }),
-        async () => checkLauncherPackage({ version: VERSION, platform: process.platform, arch: process.arch, resolve: (r) => require.resolve(r) }),
+        async () => {
+          const launcher = checkLauncherPackage({
+            version: VERSION,
+            platform: process.platform,
+            arch: process.arch,
+            resolve: (r) => require.resolve(r),
+            packageDir: pathDirname(fileURLToPath(import.meta.url)),
+          });
+          // The shared runner has no warn level: print warnings here, the check keeps its exit code
+          for (const w of launcher.warnings ?? []) process.stderr.write(`[warn] ${launcher.name} — ${w}\n`);
+          return launcher;
+        },
         async () => ({
           name: 'config-dir',
           ok: isConfigDirWritable(configDir),
