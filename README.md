@@ -37,7 +37,7 @@ The daemon auto-starts on any command that needs it; `queue start` is only neede
 
 ## Waiting instead of polling
 
-`queue wait <event>` and `queue wait ci` block until an event or a commit's CI is done, so an agent does not poll. An agent finds the event names and payload paths with `queue events list|show` (output kept even without a TTY); an undeclared name still waits but warns, `--strict` refuses it (exit 4). See [docs/wait.md](docs/wait.md).
+`queue wait <event>` and `queue wait ci` block until an event or a commit's CI is done, so an agent does not poll. An agent finds the event names and payload paths with `queue events list|show` (output kept even without a TTY); an undeclared name still waits but warns, `--strict` refuses it (exit 4). `<event>` may be a quoted pattern (`queue wait "dep.published.*"`; `*` one segment, `>` the rest; always double-quote, unquoted `>` is a shell redirect). See [docs/wait.md](docs/wait.md).
 
 ## Pushing events from your own program
 

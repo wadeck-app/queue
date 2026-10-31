@@ -1,3 +1,4 @@
+import { isEventPattern } from '@wadeck-app/queue-core';
 import { registerWaiter, unregisterWaiter, markOnDemand, DEFAULT_IDLE_GRACE_MS } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
 
 /**
@@ -6,6 +7,16 @@ import { registerWaiter, unregisterWaiter, markOnDemand, DEFAULT_IDLE_GRACE_MS }
  */
 export function isRelaySourcedEvent(eventName: string): boolean {
   return /^on\.[^.]+\.\S+$/.test(eventName);
+}
+
+/** A pattern that can only match relayed events: it starts with `on.` (`on.github.*`, `on.>`). A bare `>` does not count. */
+export function isRelayPattern(target: string): boolean {
+  return isEventPattern(target) && target.startsWith('on.');
+}
+
+/** Does waiting for this target (an exact name or a pattern) need the relay client? */
+export function targetNeedsRelay(target: string): boolean {
+  return isRelaySourcedEvent(target) || isRelayPattern(target);
 }
 
 export interface RelayOnDemandDeps {

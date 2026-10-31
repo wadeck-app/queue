@@ -134,7 +134,7 @@ Usage:
   queue retry --event <id>
   queue replay <eventId> [--cwd <directory>]   Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>, run in the directory recorded with it (--cwd names another). For manual testing, not delivery guarantees.
-  queue wait <event> [--when <expr>] [--since <d>] [--timeout <d>] [--json] [--strict]   Block until a matching queue event is recorded (see 'queue wait --help')
+  queue wait <event|"pattern"> [--when <expr>] [--since <d>] [--timeout <d>] [--json] [--strict]   Block until a matching queue event is recorded; quote a pattern like "dep.>" (see 'queue wait --help')
   queue events list [--source <s>] [--prefix <p>] [--match <pattern>] [--declared-only] [--terminal] [--json]   Event catalog: names, payloads, last seen
   queue events show <name> [--json]   Schema, example, payload paths for 'queue wait --when' and a ready command
   queue events register --source <s> --file <events.json> [--json]   Declare the events of a program that does not use the Node SDK

@@ -49,7 +49,7 @@ export interface ListEventsOptions {
   source?: string;
   /** Names that start with this text. */
   prefix?: string;
-  /** A subscribers.yml pattern: `*` is one segment, `**` or `>` the rest. */
+  /** A subscribers.yml pattern: `*` is one segment, `>` the rest (`**` is an alias). */
   match?: string;
   declaredOnly?: boolean;
   /** Only the events that end the thing they are about. */

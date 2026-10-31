@@ -79,7 +79,7 @@ if (declared.status !== 'registered') {
 
 How to write a `description`: say when the event fires, whether it can fire several times for one entity (a step started again on each retry), and what does NOT fire it.
 
-Why `correlationKey`, `terminal` and `outcome` matter: `queue wait` matches an exact event name and filters with `--when payload.path=value`. From these fields an agent derives "wait for job X to finish" (`job.completed` and `job.failed`, `--when "payload.jobId=X"`) instead of guessing.
+Why `correlationKey`, `terminal` and `outcome` matter: `queue wait` matches an event name (or a quoted pattern with `*` / `>`, such as `"job.*"`) and filters with `--when payload.path=value`. From these fields an agent derives "wait for job X to finish" (`job.completed` and `job.failed`, `--when "payload.jobId=X"`) instead of guessing.
 
 ### `RegisterResult.status`
 

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeSourceDeclaration } from '@wadeck-app/queue-core';
-import { checkDeclaration, lastSeenAtOf, refuseUndeclared, undeclaredWarning } from './eventWaitCatalog.js';
+import { checkDeclaration, lastSeenAtOf, lastSeenEventOf, patternMatchesKnownEvent, patternWarning, refuseUndeclared, undeclaredWarning } from './eventWaitCatalog.js';
 
 const NOW = Date.parse('2026-10-24T12:00:00.000Z');
 
@@ -64,6 +64,48 @@ describe('lastSeenAtOf', () => {
   it('is null for a name that was not pushed in the last 7 days', () => {
     pushes([['job.completed', NOW - 60_000]]);
     expect(lastSeenAtOf(configDir, 'job.complete', NOW)).toBeNull();
+  });
+});
+
+describe('lastSeenAtOf / lastSeenEventOf with a pattern', () => {
+  it('is the latest push among the matching names (the list is not sorted by time)', () => {
+    pushes([['dep.a', NOW - 10_000], ['dep.b', NOW - 60_000], ['dep.a.b', NOW - 1000], ['other', NOW - 500]]);
+    expect(lastSeenAtOf(configDir, 'dep.*', NOW)).toBe(new Date(NOW - 10_000).toISOString());
+    expect(lastSeenEventOf(configDir, 'dep.*', NOW)).toBe('dep.a');
+    expect(lastSeenEventOf(configDir, 'dep.>', NOW)).toBe('dep.a.b');
+  });
+
+  it('is null when no name matches', () => {
+    pushes([['other', NOW - 1000]]);
+    expect(lastSeenAtOf(configDir, 'dep.*', NOW)).toBeNull();
+    expect(lastSeenEventOf(configDir, 'dep.*', NOW)).toBeNull();
+  });
+});
+
+describe('patternMatchesKnownEvent / patternWarning', () => {
+  it('a declared name that was never pushed counts as known', () => {
+    declare('orchestrator', ['dep.published.api']);
+    expect(patternMatchesKnownEvent(configDir, 'dep.published.*', NOW)).toEqual({ known: true, catalogEmpty: false });
+  });
+
+  it('a name only seen in the history counts as known', () => {
+    declare('orchestrator', ['job.completed']);
+    pushes([['dep.published.web', NOW - 1000]]);
+    expect(patternMatchesKnownEvent(configDir, 'dep.>', NOW).known).toBe(true);
+  });
+
+  it('no match is unknown, and the catalog is not empty', () => {
+    declare('orchestrator', ['job.completed']);
+    expect(patternMatchesKnownEvent(configDir, 'dep.*', NOW)).toEqual({ known: false, catalogEmpty: false });
+  });
+
+  it('no source and no history is an empty catalog', () => {
+    expect(patternMatchesKnownEvent(configDir, 'dep.*', NOW)).toEqual({ known: false, catalogEmpty: true });
+  });
+
+  it('the warning is a [warn] naming the pattern, the empty catalog gives a softer [info]', () => {
+    expect(patternWarning('dep.*', { known: false, catalogEmpty: false })).toMatch(/^\[warn\] no known event matches "dep\.\*"/);
+    expect(patternWarning('dep.*', { known: false, catalogEmpty: true })).toMatch(/^\[info\] /);
   });
 });
 

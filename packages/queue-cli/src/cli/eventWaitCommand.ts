@@ -6,7 +6,7 @@
  * once for an event that happened since `--since` before the command started -- no subscribe-before-push race.
  */
 
-import { PayloadFilter, type EventEnvelope, type HistoryEntry } from '@wadeck-app/queue-core';
+import { PayloadFilter, isEventPattern, type EventEnvelope, type HistoryEntry } from '@wadeck-app/queue-core';
 
 export const WAIT_EXIT = {
   MATCHED: 0,
@@ -45,7 +45,9 @@ export interface EventWaitDeps {
   declaration?: Record<string, { declared: boolean; suggestions: string[] }>;
   /** ISO time that name was last pushed (null: not in the last 7 days), read at the moment of a timeout. */
   lastSeenAt?: (event: string) => string | null;
-  /** Entries of `event` recorded at or after `sinceMs`. */
+  /** For a pattern target: the concrete name behind `lastSeenAt` (null when none). */
+  lastSeenEvent?: (pattern: string) => string | null;
+  /** Entries of `event` (an exact name, or a pattern: then every entry whose name matches) recorded at or after `sinceMs`. */
   readEntries: (event: string, sinceMs: number) => HistoryEntry[];
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -78,6 +80,12 @@ export function findMatch(entries: HistoryEntry[], whens: string[]): HistoryEntr
 
 function describeTarget(target: EventWaitTarget): string {
   return target.whens.length === 0 ? target.event : `${target.event} where ${target.whens.join(' and ')}`;
+}
+
+/** For the timeout message: a pattern reads "event matching "dep.*"", a name stays as is. */
+function describeOpenTarget(target: EventWaitTarget): string {
+  const subject = isEventPattern(target.event) ? `event matching "${target.event}"` : target.event;
+  return target.whens.length === 0 ? subject : `${subject} where ${target.whens.join(' and ')}`;
 }
 
 function declarationFieldsOf(deps: EventWaitDeps, event: string): { declared?: boolean; suggestions?: string[] } {
@@ -140,9 +148,13 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
       const seconds = Math.round(options.timeoutMs / 1000);
       const open = targets.map((target, i) => ({ target, i })).filter(({ i }) => matches[i] === null);
       if (options.json) {
-        const lastSeen = (event: string): { lastSeenAt?: string | null } => {
+        const lastSeen = (event: string): { lastSeenAt?: string | null; lastSeenEvent?: string } => {
           const at = deps.lastSeenAt?.(event);
-          return at === undefined ? {} : { lastSeenAt: at };
+          if (at === undefined) {
+            return {};
+          }
+          const seenEvent = at !== null && isEventPattern(event) ? deps.lastSeenEvent?.(event) : undefined;
+          return { lastSeenAt: at, ...(seenEvent != null && { lastSeenEvent: seenEvent }) };
         };
         // One target: the shape agents already read (event, whens at the top). Several: the same fields for each in `targets`.
         const first = targets[0]!;
@@ -151,7 +163,7 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
               matched: false,
               timedOut: true,
               mode: options.mode,
-              targets: targets.map((target, i) => ({ event: target.event, whens: target.whens, matched: matches[i] !== null, ...declarationFieldsOf(deps, target.event), ...(matches[i] === null && lastSeen(target.event)) })),
+              targets: targets.map((target, i) => ({ event: target.event, whens: target.whens, ...(isEventPattern(target.event) && { pattern: true }), matched: matches[i] !== null, ...declarationFieldsOf(deps, target.event), ...(matches[i] === null && lastSeen(target.event)) })),
             }
           : { matched: false, timedOut: true, event: first.event, whens: first.whens, ...declarationFieldsOf(deps, first.event), ...lastSeen(first.event) };
         io.stdout.write(JSON.stringify(body) + '\n');
@@ -159,11 +171,19 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
       if (options.mode === 'all' && several) {
         io.stderr.write(`[timeout] ${targets.length - open.length} of ${targets.length} waits were satisfied within ${seconds}s; still waiting for: ${open.map(({ target }) => describeTarget(target)).join('; ')}.\n`);
       } else {
-        io.stderr.write(`[timeout] No ${open.map(({ target }) => describeTarget(target)).join(' and no ')} was recorded within ${seconds}s.\n`);
+        io.stderr.write(`[timeout] No ${open.map(({ target }) => describeOpenTarget(target)).join(' and no ')} was recorded within ${seconds}s.\n`);
       }
       for (const { target } of open) {
         const lastSeenAt = deps.lastSeenAt?.(target.event);
-        if (lastSeenAt === null) {
+        if (isEventPattern(target.event)) {
+          const list = `"queue events list --match \"${target.event}\"" shows the known names`;
+          if (lastSeenAt === null) {
+            io.stderr.write(`[timeout] no event matching "${target.event}" in the last 7 days: check the pattern or that its producers run (${list}).\n`);
+          } else if (lastSeenAt !== undefined) {
+            const seenEvent = deps.lastSeenEvent?.(target.event);
+            io.stderr.write(`[timeout] last matching event ${seenEvent ? `"${seenEvent}" ` : ''}at ${lastSeenAt}: the pattern is known, the producer is slow or stopped (${list}).\n`);
+          }
+        } else if (lastSeenAt === null) {
           io.stderr.write(`[timeout] "${target.event}" was never seen in the last 7 days: check the name (a typo or a rename?) or that its producer runs.\n`);
         } else if (lastSeenAt !== undefined) {
           io.stderr.write(`[timeout] "${target.event}" was last seen at ${lastSeenAt}: the name exists, the producer is slow or stopped.\n`);

@@ -1,6 +1,6 @@
 /** What `queue wait <event>` learns from the event catalog (read-only): is the name declared, what looks like it, when was it last pushed. */
 
-import { listEvents, nearestEventNames } from '@wadeck-app/queue-core';
+import { EventMatcher, isEventPattern, listEvents, nearestEventNames } from '@wadeck-app/queue-core';
 
 export interface DeclarationCheck {
   declared: boolean;
@@ -21,9 +21,52 @@ export function checkDeclaration(configDir: string, name: string, nowMs: number)
   };
 }
 
-/** ISO time of the last push of that name within the last 7 days, null when none. */
+/** The latest push, within the last 7 days, of the name or (for a pattern) of any name matching it. */
+export function lastSeenOf(configDir: string, name: string, nowMs: number): { at: string; event: string } | null {
+  const pattern = isEventPattern(name);
+  const candidates = listEvents(configDir, pattern ? { nowMs, match: name } : { nowMs }).events.filter((event) => pattern || event.name === name);
+  // The list is sorted by source then name, not by time
+  let latest: { at: string; event: string } | null = null;
+  for (const { lastSeenAt, name: eventName } of candidates) {
+    if (lastSeenAt !== null && (latest === null || lastSeenAt > latest.at)) {
+      latest = { at: lastSeenAt, event: eventName };
+    }
+  }
+  return latest;
+}
+
+/** ISO time of the last push of that name (or of a name matching that pattern) within the last 7 days, null when none. */
 export function lastSeenAtOf(configDir: string, name: string, nowMs: number): string | null {
-  return listEvents(configDir, { nowMs }).events.find((event) => event.name === name)?.lastSeenAt ?? null;
+  return lastSeenOf(configDir, name, nowMs)?.at ?? null;
+}
+
+/** The concrete name behind `lastSeenAtOf` for a pattern, null when none. */
+export function lastSeenEventOf(configDir: string, pattern: string, nowMs: number): string | null {
+  return lastSeenOf(configDir, pattern, nowMs)?.event ?? null;
+}
+
+export interface PatternCheck {
+  /** A declared name or a name pushed in the last 7 days matches the pattern. */
+  known: boolean;
+  /** No program declared anything and nothing was pushed: an unmatched pattern proves nothing. */
+  catalogEmpty: boolean;
+}
+
+/** Does any declared or recently pushed event name match this pattern? */
+export function patternMatchesKnownEvent(configDir: string, pattern: string, nowMs: number): PatternCheck {
+  const listing = listEvents(configDir, { nowMs });
+  return {
+    known: listing.events.some((event) => EventMatcher.matches(pattern, event.name)),
+    catalogEmpty: listing.sources.length === 0 && listing.events.length === 0,
+  };
+}
+
+/** The stderr line for a pattern that matches no known name (no trailing newline). Not a refusal: names may come later. */
+export function patternWarning(pattern: string, check: PatternCheck): string {
+  if (check.catalogEmpty) {
+    return `[info] No program declared its events yet and nothing was pushed in the last 7 days, so the pattern "${pattern}" cannot be checked (see "queue events --help").`;
+  }
+  return `[warn] no known event matches "${pattern}" (declared, or pushed in the last 7 days): check the pattern, or ignore this if its producers have not run yet. "queue events list" shows the known names.`;
 }
 
 /** The stderr line for an undeclared name (no trailing newline). */

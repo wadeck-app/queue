@@ -6,6 +6,7 @@ export { isRecord } from './isRecord.js';
 export { getQueueConfigDir } from './configDir.js';
 export { getQueueProtocolInfo } from './protocolInfo.js';
 export { PROTOCOL_VERSION } from '@wadeck-app/queue-sdk/protocol';
+export { EventMatcher, isEventPattern, eventPatternProblem } from './dispatch/EventMatcher.js';
 export { validateSourceDeclaration, writeSourceDeclaration, readCatalog, MAX_EVENTS_PER_SOURCE, EVENT_OUTCOMES } from './catalog/EventCatalog.js';
 export type { EventDeclaration, SourceDeclaration, CatalogProblem, Validation, StoredSource, Catalog, EventOutcome } from './catalog/EventCatalog.js';
 export { listEvents, listEventDetails, getEventDetail, nearestEventNames, OBSERVED_WINDOW_DAYS } from './catalog/EventListing.js';

@@ -11,6 +11,32 @@ Blocks until a queue event of that name is recorded (any `queue push`, even with
 - `--timeout <duration>` gives up after that long (default 30m; `30s`, `15m`, `2h`).
 - A name like `on.github.workflow_run` is a relayed event and needs the relay (see below).
 
+### Patterns
+
+A name containing a segment that is exactly `*` or `>` is a pattern, matched like `subscribers.yml`. It also matches names that appear later.
+
+| Token | Matches |
+|---|---|
+| `*` | exactly one segment |
+| `>` | one or more remaining segments; last position only |
+
+| Pattern | Matches | Does not match |
+|---|---|---|
+| `dep.*` | `dep.a` | `dep`, `dep.a.b` |
+| `dep.>` | `dep.a`, `dep.a.b` | `dep` |
+| `*.published` | `dep.published` | `published`, `a.b.published` |
+| `>` | every event | |
+
+- Names with dots (`dep.a.b`, `on.github.workflow_run`): use `>` to cover every depth; `*` stops at one.
+- ALWAYS double-quote: `queue wait "dep.>"`. Unquoted, `>` is a shell redirect (stdout goes to a file named after the next word, and the command receives `dep.`, which exits 4 with a hint) and `*` is globbed.
+- `**` (an alias of `>` in `subscribers.yml`) exits 4: `"dep.**": "**" is not accepted by "queue wait"; use ">" instead: "dep.>"`.
+- A wildcard inside a segment (`dep.pub*`), an empty segment, a trailing dot or a non-last `>` exits 4.
+- `--all`: each pattern is satisfied by any one matching name.
+- `--strict` never refuses a pattern (its names may come later).
+- No declared or recently pushed name matches: `[warn]` on stderr (`[info]` when the catalog and history are empty). Find names with `queue events list --match "dep.>"`.
+- A pattern starting with `on.` (`on.github.*`) starts the relay; a bare `>` does not (`[info]` on stderr).
+- `--json`: the result's `event` is the concrete name that matched. A pattern has no `declared` / `suggestions`. A timeout adds `lastSeenEvent` (latest matching name) and, with several targets, `"pattern": true`.
+
 ### Several events at once
 
 Write the events one after the other; a `--when` belongs to the event written before it, so each has its own filters (the same event may appear twice with different filters).
