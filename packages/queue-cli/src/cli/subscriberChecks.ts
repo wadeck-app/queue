@@ -30,8 +30,13 @@ export function undeclaredEventWarning(entry: SubscriberConfig, actions: ActionR
   if (entry.type !== 'action' || entry.action === undefined) {
     return undefined;
   }
-  const emitted = actions.get(entry.action)?.emits?.(entry.with ?? {});
+  const plugin = actions.get(entry.action);
+  const emitted = plugin?.emits?.(entry.with ?? {});
   if (emitted === undefined) {
+    return undefined;
+  }
+  // The plugin declares its own events in the catalog when the daemon starts: nothing for the user to declare
+  if (plugin?.events?.some((declared) => declared.name === emitted)) {
     return undefined;
   }
   const catalog = readCatalog(configDir);
@@ -40,7 +45,7 @@ export function undeclaredEventWarning(entry: SubscriberConfig, actions: ActionR
   }
   return (
     `the action emits '${emitted}', which no program has declared in the events catalog (queue events list). It still works; ` +
-    `a program that consumes it should declare it (queue events register) so that 'queue events show ${emitted}' and 'queue wait' know it.`
+    `the program that owns this event should declare it (queue events register) so that 'queue events show ${emitted}' and 'queue wait' know it.`
   );
 }
 

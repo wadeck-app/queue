@@ -67,6 +67,12 @@ describe('checks that read the disk', () => {
       expect(undeclaredEventWarning(emitEntry('a', 'agent.message'), actions, configDir)).toBeUndefined();
       expect(undeclaredEventWarning({ type: 'cli', command: 'x' }, actions, configDir)).toBeUndefined();
     });
+
+    // agent-wake declares agent.message itself when the daemon starts: nothing for the user to declare, even with an empty catalog
+    it('says nothing for an action whose plugin declares the event it emits', () => {
+      const entry: SubscriberConfig = { type: 'action', name: 'a', action: 'agent-wake', with: { to: 'project:demo', text: 'hello' } };
+      expect(undeclaredEventWarning(entry, actions, configDir)).toBeUndefined();
+    });
   });
 
   describe('checkActionLoops', () => {
