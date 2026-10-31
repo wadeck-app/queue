@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { CommandTemplateError, findCmdMetacharacter, findTemplateProblem, hasPlaceholders, substituteToken, tokenizeTemplate, valueToArgument } from './commandTemplate.js';
 
 /** Argument texts of a template once the placeholders are replaced by the payload values. */
@@ -250,5 +250,18 @@ describe('findCmdMetacharacter', () => {
 
   it('accepts ordinary text, spaces, unicode and shell characters cmd ignores', () => {
     expect(findCmdMetacharacter("hello world ünï 😀 a=b *.txt $(x) ; ' ( ) { } ~ #")).toBeUndefined();
+  });
+});
+
+describe('findTemplateProblem - program names keep their case outside Windows', () => {
+  const realPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform });
+  });
+
+  // Rscript is the real (mixed-case) name of the binary: the rule must match it on POSIX, where names are not lowercased
+  it.each(['linux', 'darwin', 'win32'])('rejects Rscript -e on %s', (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform });
+    expect(findTemplateProblem(`Rscript -e 'cat("{{ x }}")'`)).toContain('Fix:');
   });
 });

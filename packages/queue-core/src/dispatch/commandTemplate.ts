@@ -329,6 +329,8 @@ const INTERPRETER_ALIASES: ReadonlyArray<{ pattern: RegExp; rule: string }> = [
   { pattern: /^py$/, rule: 'python' },
   { pattern: /^pwsh(?:-preview)?$/, rule: 'powershell' },
   { pattern: /^powershell_ise$/, rule: 'powershell' },
+  // The real binary is "Rscript"; names keep their case outside Windows, so the lowercase rule key would never match it there
+  { pattern: /^Rscript$/, rule: 'rscript' },
 ];
 
 const PROGRAM_EXTENSION = /\.(?:exe|cmd|bat)$/i;
