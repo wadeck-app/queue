@@ -105,6 +105,22 @@ describe('CliTransport - command with {{ }}: values reach the program as single,
     expect(result.error).toContain('Fix:');
   });
 
+  it.skipIf(!IS_WINDOWS)('Windows only: a shell built-in (echo, dir, copy, ...) is a program that is not found: permanent failure with the program name and a Fix', async () => {
+    const result = await run('queue-test-no-such-builtin hello {{ v }}', { v: 'x' });
+    expect(result.success).toBe(false);
+    expect(result.permanent).toBe(true);
+    expect(result.error).toContain("subscriber 'notify'");
+    expect(result.error).toContain("program 'queue-test-no-such-builtin' was not found");
+    expect(result.error).toContain('Fix: install it, put it on PATH, or give its full path in the command.');
+  });
+
+  it.skipIf(IS_WINDOWS)('POSIX only: a missing program fails with ENOENT, the subscriber and a Fix (not flagged permanent: spawn reports it)', async () => {
+    const result = await run('queue-test-no-such-program {{ v }}', { v: 'x' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("subscriber 'notify'");
+    expect(result.error).toContain('the program was not found');
+  });
+
   it('applies the timeout', async () => {
     const sleeper = join(workDir, 'sleeper.js');
     writeFileSync(sleeper, 'setTimeout(() => {}, 20000);');

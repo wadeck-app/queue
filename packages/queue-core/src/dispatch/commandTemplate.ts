@@ -205,6 +205,10 @@ export function findTemplateProblem(command: string): string | undefined {
       `Fix: name the program literally and pass the value as an argument.`
     );
   }
+  const interpreterProblem = findInterpreterProblem(result.tokens);
+  if (interpreterProblem !== undefined) {
+    return interpreterProblem;
+  }
   if (result.hazards.length > 0) {
     const unique = [...new Map(result.hazards.map((h) => [h.text, h])).values()];
     const listed = unique.map((h) => `'${h.text}' (${h.meaning})`).join(', ');
@@ -214,6 +218,190 @@ export function findTemplateProblem(command: string): string | undefined {
       `Fix: read the event envelope on stdin (it is always sent as one JSON line) and move the shell logic into a script, ` +
       `or remove the shell syntax. To pass such a character literally, put it in single quotes. See docs/subscribers.md.`
     );
+  }
+  return undefined;
+}
+
+/**
+ * Which arguments a code flag turns into code: `self` the flag token only (`--eval=...`), `next` the flag and the argument after it,
+ * `rest` the flag and every argument after it (cmd.exe joins them all into one command line).
+ */
+type CodeScope = 'self' | 'next' | 'rest';
+
+interface CodeFlag {
+  /** Matched against the literal text of an argument (a placeholder counts as empty text). */
+  pattern: RegExp;
+  scope: CodeScope;
+}
+
+interface InterpreterRule {
+  /** Arguments that make the program read the next text as code. */
+  codeFlags: ReadonlyArray<CodeFlag>;
+  /**
+   * When set, the program treats its arguments as code unless one of them matches this pattern (PowerShell runs the first plain argument as a command
+   * unless `-File` is given): then any placeholder is refused.
+   */
+  codeUnless?: RegExp;
+  /** The safe form shown in the error. */
+  safeForm: string;
+}
+
+const POSIX_SHELL_RULE: InterpreterRule = {
+  // -c, -lc, -ec, ... (a lowercase c in an option cluster); fish also accepts --command
+  codeFlags: [{ pattern: /^(?:-[A-Za-z]*c[A-Za-z]*|--command)$/, scope: 'next' }],
+  safeForm: `pass the value as a separate argument after the script and read it as a positional parameter, e.g. bash -c 'echo "$1"' _ {{ x }}`,
+};
+
+const GENERIC_EVAL_SAFE_FORM = (example: string): string => `pass the value as a separate argument after the code and read it from the program's argument list, e.g. ${example}`;
+
+/** Programs that run one of their arguments as code, by name (lowercase, no extension). Best-effort denylist: see docs/subscribers.md. */
+const INTERPRETER_RULES: Readonly<Record<string, InterpreterRule>> = {
+  sh: POSIX_SHELL_RULE,
+  bash: POSIX_SHELL_RULE,
+  zsh: POSIX_SHELL_RULE,
+  dash: POSIX_SHELL_RULE,
+  ksh: POSIX_SHELL_RULE,
+  mksh: POSIX_SHELL_RULE,
+  ash: POSIX_SHELL_RULE,
+  fish: POSIX_SHELL_RULE,
+  csh: POSIX_SHELL_RULE,
+  tcsh: POSIX_SHELL_RULE,
+  cmd: {
+    codeFlags: [{ pattern: /^[/-][ckr]/i, scope: 'rest' }],
+    safeForm: 'cmd.exe has no safe way to receive a value; start a real program or a script file instead (e.g. node script.js {{ x }}), or read the event envelope on stdin',
+  },
+  powershell: {
+    codeFlags: [],
+    codeUnless: /^[/-]f(?:i(?:l(?:e)?)?)?$/i,
+    safeForm: 'run a script file with -File and pass the value after it, e.g. powershell -NoProfile -File script.ps1 {{ x }}, or read the event envelope on stdin',
+  },
+  node: {
+    codeFlags: [
+      { pattern: /^(?:-e|-p|-pe|-ep|--eval|--print)$/, scope: 'next' },
+      { pattern: /^--(?:eval|print)=/, scope: 'self' },
+    ],
+    safeForm: GENERIC_EVAL_SAFE_FORM('node -e "console.log(process.argv[1])" {{ x }}'),
+  },
+  bun: {
+    codeFlags: [
+      { pattern: /^(?:-e|-p|--eval|--print)$/, scope: 'next' },
+      { pattern: /^--(?:eval|print)=/, scope: 'self' },
+    ],
+    safeForm: GENERIC_EVAL_SAFE_FORM('bun -e "console.log(process.argv[2])" {{ x }}'),
+  },
+  deno: {
+    codeFlags: [{ pattern: /^eval$/, scope: 'next' }],
+    safeForm: 'run a script file and pass the value after it (deno run script.ts {{ x }}), or read the event envelope on stdin',
+  },
+  python: {
+    codeFlags: [{ pattern: /^-[A-Za-z]*c$/, scope: 'next' }],
+    safeForm: GENERIC_EVAL_SAFE_FORM('python -c "import sys; print(sys.argv[1])" {{ x }}'),
+  },
+  perl: {
+    codeFlags: [{ pattern: /^-[A-Za-z]*[eE]$/, scope: 'next' }],
+    safeForm: GENERIC_EVAL_SAFE_FORM('perl -e \'print $ARGV[0]\' {{ x }}'),
+  },
+  ruby: {
+    codeFlags: [{ pattern: /^-[A-Za-z]*e$/, scope: 'next' }],
+    safeForm: GENERIC_EVAL_SAFE_FORM('ruby -e \'puts ARGV[0]\' {{ x }}'),
+  },
+  php: {
+    codeFlags: [{ pattern: /^-r$/, scope: 'next' }],
+    safeForm: GENERIC_EVAL_SAFE_FORM('php -r \'echo $argv[1];\' -- {{ x }}'),
+  },
+  lua: {
+    codeFlags: [{ pattern: /^-e$/, scope: 'next' }],
+    safeForm: GENERIC_EVAL_SAFE_FORM('lua -e "print(arg[1])" {{ x }}'),
+  },
+  rscript: {
+    codeFlags: [{ pattern: /^-e$/, scope: 'next' }],
+    safeForm: GENERIC_EVAL_SAFE_FORM('Rscript -e "commandArgs(TRUE)" {{ x }}'),
+  },
+  osascript: {
+    codeFlags: [{ pattern: /^-e$/, scope: 'next' }],
+    safeForm: 'run a script file and pass the value after it (osascript script.scpt {{ x }}), or read the event envelope on stdin',
+  },
+};
+
+/** Other names of a rule, by pattern on the normalised program name (versioned or suffixed binaries). */
+const INTERPRETER_ALIASES: ReadonlyArray<{ pattern: RegExp; rule: string }> = [
+  { pattern: /^(?:python|pypy)[\d.]*w?$/, rule: 'python' },
+  { pattern: /^py$/, rule: 'python' },
+  { pattern: /^pwsh(?:-preview)?$/, rule: 'powershell' },
+  { pattern: /^powershell_ise$/, rule: 'powershell' },
+];
+
+const PROGRAM_EXTENSION = /\.(?:exe|cmd|bat)$/i;
+
+/** Program name as matched against the rules: last path segment, without .exe/.cmd/.bat, lowercase on Windows. */
+function normalizeProgramName(program: string): string {
+  const base = program.slice(Math.max(program.lastIndexOf('/'), program.lastIndexOf('\\')) + 1).replace(PROGRAM_EXTENSION, '');
+  return process.platform === 'win32' ? base.toLowerCase() : base;
+}
+
+function findInterpreterRule(program: string): { name: string; rule: InterpreterRule } | undefined {
+  const name = normalizeProgramName(program);
+  // Own keys only: a program named `constructor` or `toString` is not a rule
+  if (Object.hasOwn(INTERPRETER_RULES, name)) {
+    return { name, rule: INTERPRETER_RULES[name]! };
+  }
+  const alias = INTERPRETER_ALIASES.find((entry) => entry.pattern.test(name));
+  return alias === undefined ? undefined : { name, rule: INTERPRETER_RULES[alias.rule]! };
+}
+
+function literalText(token: TemplateToken): string {
+  return token.map((part) => (part.kind === 'literal' ? part.text : '')).join('');
+}
+
+function hasField(token: TemplateToken | undefined): boolean {
+  return token !== undefined && token.some((part) => part.kind === 'field');
+}
+
+/**
+ * Problem when the program is a known shell or interpreter and a placeholder lands in the text it runs as code (the value would be interpreted,
+ * which the no-shell mode exists to prevent). A placeholder in a separate argument after the code stays allowed. Best-effort denylist: wrappers
+ * (env, sudo, xargs, ssh, docker, ...) and programs missing from INTERPRETER_RULES are not detected (docs/subscribers.md).
+ */
+function findInterpreterProblem(tokens: TemplateToken[]): string | undefined {
+  const programToken = tokens[0];
+  if (programToken === undefined) {
+    return undefined;
+  }
+  const program = literalText(programToken);
+  const found = findInterpreterRule(program);
+  if (found === undefined) {
+    return undefined;
+  }
+  const { rule } = found;
+  const args = tokens.slice(1);
+  const fix = `Fix: ${rule.safeForm}. This check is a best-effort list of known shells and interpreters (docs/subscribers.md).`;
+
+  if (rule.codeUnless !== undefined) {
+    const safe = args.some((token) => rule.codeUnless!.test(literalText(token)));
+    if (!safe && args.some((token) => hasField(token))) {
+      return `'${program}' runs its arguments as PowerShell code unless a script is given with -File, so a {{ }} placeholder would be run as code. ${fix}`;
+    }
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    const text = literalText(args[i]!);
+    const flag = rule.codeFlags.find((candidate) => candidate.pattern.test(text));
+    if (flag === undefined) {
+      continue;
+    }
+    const last = flag.scope === 'rest' ? args.length - 1 : flag.scope === 'next' ? i + 1 : i;
+    for (let j = i; j <= last && j < args.length; j++) {
+      if (hasField(args[j])) {
+        return (
+          `'${program}' runs the argument after '${text}' as code (${found.name === 'cmd' ? 'a command line' : 'a script'}), so a {{ }} placeholder there would be interpreted ` +
+          `instead of staying data. ${fix}`
+        );
+      }
+    }
+    // The code is found; what follows is data for it (positional parameters)
+    if (flag.scope !== 'rest') {
+      return undefined;
+    }
   }
   return undefined;
 }

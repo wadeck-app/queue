@@ -144,6 +144,105 @@ describe('findTemplateProblem (load-time guard)', () => {
   });
 });
 
+describe('findTemplateProblem - shells and interpreters (value would land in code)', () => {
+  it.each([
+    ['bash -c', `bash -c 'echo {{ x }}'`],
+    ['bash -c, double quotes', 'bash -c "echo {{ x }}"'],
+    ['bash -c, placeholder alone', 'bash -c {{ x }}'],
+    ['bash -lc', `bash -lc 'echo {{ x }}'`],
+    ['bash -x -c', `bash -x -c 'echo {{ x }}'`],
+    ['bash -o pipefail -c', `bash -o pipefail -c 'echo {{ x }}'`],
+    ['sh -c', `sh -c 'echo {{ x }}'`],
+    ['zsh -c', `zsh -c 'echo {{ x }}'`],
+    ['fish --command', `fish --command 'echo {{ x }}'`],
+    ['absolute path', `/usr/bin/bash -c 'echo {{ x }}'`],
+    ['quoted absolute Windows path with .exe', `"C:\\Program Files\\Git\\bin\\bash.exe" -c 'echo {{ x }}'`],
+    ['cmd /c', 'cmd /c echo {{ x }}'],
+    ['cmd.exe /d /s /c', 'cmd.exe /d /s /c "echo {{ x }}"'],
+    ['cmd /k', 'cmd /k echo {{ x }}'],
+    ['cmd /c, placeholder in a later argument (joined into the command line)', 'cmd /c echo hello {{ x }}'],
+    ['powershell -Command', 'powershell -Command "Write-Host {{ x }}"'],
+    ['powershell -c', 'powershell -c "Write-Host {{ x }}"'],
+    ['pwsh -c', 'pwsh -c "Write-Host {{ x }}"'],
+    ['pwsh -NoProfile -Command', 'pwsh -NoProfile -Command Write-Host {{ x }}'],
+    ['pwsh without -Command (implicit command)', 'pwsh Write-Host {{ x }}'],
+    ['pwsh -EncodedCommand', 'pwsh -EncodedCommand {{ x }}'],
+    ['node -e', 'node -e "console.log({{ x }})"'],
+    ['node -p', 'node -p "{{ x }}"'],
+    ['node --eval', 'node --eval "{{ x }}"'],
+    ['node --eval=', 'node --eval={{ x }}'],
+    ['bun -e', 'bun -e "{{ x }}"'],
+    ['deno eval', 'deno eval "{{ x }}"'],
+    ['python -c', `python -c 'print("{{ x }}")'`],
+    ['python3.11 -c', `python3.11 -c 'print("{{ x }}")'`],
+    ['py -c', `py -c 'print("{{ x }}")'`],
+    ['perl -e', `perl -e 'print "{{ x }}"'`],
+    ['perl -lne', `perl -lne 'print "{{ x }}"'`],
+    ['ruby -e', `ruby -e 'puts "{{ x }}"'`],
+    ['php -r', `php -r 'echo "{{ x }}";'`],
+    ['lua -e', `lua -e 'print("{{ x }}")'`],
+    ['Rscript -e', `Rscript -e 'cat("{{ x }}")'`],
+    ['osascript -e', `osascript -e 'say "{{ x }}"'`],
+  ])('rejects %s', (_label, command) => {
+    const problem = findTemplateProblem(command);
+    expect(problem).toBeDefined();
+    expect(problem).toContain('Fix:');
+    expect(problem).toContain('best-effort');
+  });
+
+  it('names the program as written and shows the safe form', () => {
+    const problem = findTemplateProblem(`bash -c 'echo {{ x }}'`);
+    expect(problem).toContain("'bash'");
+    expect(problem).toContain(`bash -c 'echo "$1"' _ {{ x }}`);
+    expect(findTemplateProblem('node -e "{{ x }}"')).toContain('process.argv[1]');
+    expect(findTemplateProblem('cmd /c echo {{ x }}')).toContain('stdin');
+  });
+
+  it.each([
+    ['bash -c', `bash -c 'echo "$1"' _ {{ x }}`],
+    ['bash -c, several positional arguments', `bash -c 'echo "$1" "$2"' _ {{ x }} {{ y }}`],
+    ['bash -c, a later literal -c is data', `bash -c 'echo "$@"' _ -c {{ x }}`],
+    ['sh -c', `sh -c 'echo "$1"' _ {{ x }}`],
+    ['node -e', 'node -e "console.log(process.argv[1])" {{ x }}'],
+    ['node script', 'node script.js --id {{ x }}'],
+    ['node --eval=', 'node --eval=console.log(1) {{ x }}'],
+    ['python -c', `python -c 'import sys; print(sys.argv[1])' {{ x }}`],
+    ['python script', 'python script.py {{ x }}'],
+    ['perl -e', `perl -e 'print $ARGV[0]' {{ x }}`],
+    ['ruby -e', `ruby -e 'puts ARGV[0]' {{ x }}`],
+    ['php -r', `php -r 'echo $argv[1];' -- {{ x }}`],
+    ['pwsh -File', 'pwsh -NoProfile -File script.ps1 {{ x }}'],
+    ['powershell -File', 'powershell -File script.ps1 --id {{ x }}'],
+    ['cmd without a command flag', 'cmd /d {{ x }}'],
+    ['a shell name as an argument, not as the program', 'tool bash -c {{ x }}'],
+    ['a program whose name only starts like a shell', 'bashful -c {{ x }}'],
+    ['a code flag with literal-only code', `bash -c 'echo hi'`],
+    ['an inherited property name as the program', 'constructor -c {{ x }}'],
+  ])('accepts %s', (_label, command) => {
+    expect(findTemplateProblem(command)).toBeUndefined();
+  });
+
+  it('ignores a command without placeholders (it runs in a shell as written)', () => {
+    expect(findTemplateProblem(`bash -c 'echo hi'`)).toBeUndefined();
+  });
+
+  it.skipIf(process.platform !== 'win32')('Windows only: matches the program and the cmd/PowerShell flags case-insensitively', () => {
+    expect(findTemplateProblem('BASH.EXE -c "{{ x }}"')).toBeDefined();
+    expect(findTemplateProblem('CMD.EXE /C echo {{ x }}')).toBeDefined();
+    expect(findTemplateProblem('PowerShell.exe -COMMAND "{{ x }}"')).toBeDefined();
+    expect(findTemplateProblem('C:\\Windows\\System32\\cmd.EXE /c echo {{ x }}')).toBeDefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('POSIX only: program names are case-sensitive', () => {
+    expect(findTemplateProblem('BASH -c "{{ x }}"')).toBeUndefined();
+  });
+
+  it('matches cmd and PowerShell flags case-insensitively on every platform', () => {
+    expect(findTemplateProblem('cmd /C echo {{ x }}')).toBeDefined();
+    expect(findTemplateProblem('pwsh -COMMAND "{{ x }}"')).toBeDefined();
+  });
+});
+
 describe('findCmdMetacharacter', () => {
   it.each(['&', '|', '<', '>', '^', '%', '!', '"', '`', '\r', '\n'])('flags %j', (char) => {
     expect(findCmdMetacharacter(`ab${char}cd`)).toBeDefined();
