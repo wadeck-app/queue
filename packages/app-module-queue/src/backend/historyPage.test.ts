@@ -215,7 +215,8 @@ describe('history-page.yaml payload row expansion', () => {
 
 describe('history-page.yaml filters', () => {
 	const sections = (yaml.load(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../dsl-views/history-page.yaml'), 'utf-8')) as { sections: Array<Record<string, unknown>> }).sections;
-	const bar = sections[0] as { items: Array<Record<string, unknown>> };
+	// The filter bar is the stack holding the SearchBar inputs (the project header slot comes before it)
+	const bar = sections.find((section) => section.$type === 'HorizontalStack' && Array.isArray(section.items) && section.items.some((item) => asRecord(item).$type === 'SearchBar')) as { items: Array<Record<string, unknown>> };
 
 	it('offers event, subscriber and outcome inputs bound to the URL params the source reads', () => {
 		expect(bar.items.map((item) => [item.$type, item.urlParam])).toEqual([
@@ -248,5 +249,20 @@ describe('history-page.yaml filters', () => {
 	it('offers exactly the outcomes the route accepts', () => {
 		const select = bar.items.find((item) => item.urlParam === 'status') as { options: Array<{ value: string }> };
 		expect(select.options.map((option) => option.value)).toEqual(['success', 'failed', 'dlq', 'filtered']);
+	});
+});
+
+describe('history-page.yaml project header (slot queue:project-header)', () => {
+	const doc = yaml.load(readFileSync(join(__dirname, '../dsl-views/history-page.yaml'), 'utf-8')) as YamlDoc;
+	const sources = asRecord(doc.$sources);
+
+	it('reads the project of the URL through the project-scope route and the contributions through the slot route', () => {
+		expect(asRecord(sources.projectScope)).toEqual({ url: 'GET /api/modules/queue/project-scope', params: { project: '$urlParam.project' } });
+		expect(asRecord(sources.projectHeader)).toEqual({ url: 'GET /api/slots/queue:project-header' });
+	});
+
+	it('embeds the ExtensionSlot once, shown only for a known project', () => {
+		const slots = (doc.sections as Section[]).filter((section) => section.$type === 'ExtensionSlot');
+		expect(slots).toEqual([{ $type: 'ExtensionSlot', $if: '$sources.projectScope.found', items: '$sources.projectHeader' }]);
 	});
 });

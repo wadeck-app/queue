@@ -7,6 +7,13 @@ $sources:
     url: GET /api/modules/queue/projects
   daemon:
     url: GET /api/modules/queue/daemon
+  # The project the page is scoped to by ?project=, and the contributions of other modules to queue:project-header (an empty list when nobody contributes)
+  projectScope:
+    url: GET /api/modules/queue/project-scope
+    params:
+      project: $urlParam.project
+  projectHeader:
+    url: GET /api/slots/queue:project-header
 
 # {id} is the id of the clicked row (the renderer percent-encodes it).
 $actions:
@@ -27,6 +34,10 @@ sections:
   - $type: PageHeader
     title: Dead-letter queue
     subtitle: Dispatches that failed after all their retries.
+  # Header of the project the page is filtered on: other modules add their link to it (slot queue:project-header). Hidden without a known project.
+  - $type: ExtensionSlot
+    $if: $sources.projectScope.found
+    items: $sources.projectHeader
   - $type: Badge
     $if: $sources.daemon.hint
     label: $sources.daemon.hint

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
@@ -22,6 +22,8 @@ const {
   mockGiveUpStuck,
   mockListSubscribers,
   mockListProjectOptions,
+  mockGetRelatedForProject,
+  mockGetProjectScope,
   mockPushEvent,
   mockGetLogs,
   mockGetEvents,
@@ -51,6 +53,8 @@ const {
   mockGiveUpStuck: vi.fn(),
   mockListSubscribers: vi.fn(),
   mockListProjectOptions: vi.fn(),
+  mockGetRelatedForProject: vi.fn(),
+  mockGetProjectScope: vi.fn(),
   mockPushEvent: vi.fn(),
   mockGetLogs: vi.fn(),
   mockGetEvents: vi.fn(),
@@ -74,7 +78,10 @@ vi.mock('./history.js', () => ({ listHistory: mockListHistory, getHistoryEntry: 
 vi.mock('./replay.js', () => ({ replayEvent: mockReplayEvent }));
 vi.mock('./dlq.js', () => ({ listDlq: mockListDlq, replayDlqEntry: mockReplayDlqEntry, clearDlqEntry: mockClearDlqEntry }));
 vi.mock('./subscribers.js', () => ({ listSubscribers: mockListSubscribers }));
-vi.mock('./projects.js', () => ({ listProjectOptions: mockListProjectOptions }));
+// assertProjectId stays the real one: it is the shared 400 wording of /dlq and /related/project/:projectId
+vi.mock('./projects.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./projects.js')>()), listProjectOptions: mockListProjectOptions }));
+vi.mock('./related.js', () => ({ getRelatedForProject: mockGetRelatedForProject }));
+vi.mock('./projectScope.js', () => ({ getProjectScope: mockGetProjectScope }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
 vi.mock('./events.js', () => ({ getEvents: mockGetEvents, getEventPage: mockGetEventPage, pushTestEvent: mockPushTestEvent, validateEventPayload: mockValidateEventPayload }));
@@ -154,6 +161,8 @@ describe('backend', () => {
       'POST /dlq/:id/replay',
       'POST /dlq/:id/clear',
       'GET /projects',
+      'GET /project-scope',
+      'GET /related/project/:projectId',
       'GET /subscribers',
       'POST /push',
     ]);
@@ -492,6 +501,22 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ entries: [entry] });
   });
 
+  it('GET /dlq filters on a well formed ?project= and answers 400 with the shared wording for a malformed or repeated one', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListDlq.mockReturnValue([]);
+    const ok = fakeReply();
+    await routes.get('GET /dlq')!(fakeReq({ query: { project: '64f4ae91' } }), asReply(ok));
+    expect(mockListDlq).toHaveBeenCalledWith(expect.any(String), '64f4ae91');
+    expect(ok.code).toHaveBeenCalledWith(200);
+    for (const bad of ['nope', ['64f4ae91', '64f4ae91']]) {
+      const reply = fakeReply();
+      await routes.get('GET /dlq')!(fakeReq({ query: { project: bad } }), asReply(reply));
+      expect(reply.code).toHaveBeenCalledWith(400);
+      expect(reply.send).toHaveBeenCalledWith({ error: expect.stringContaining('project must be the id of a registered project (8 hexadecimal characters, project list shows them)') });
+    }
+  });
+
   it('GET /dlq returns 500 with the reason when reading the DLQ fails (the daemon is not involved)', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
@@ -520,6 +545,66 @@ describe('backend', () => {
     await routes.get('GET /projects')!(fakeReq(), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(500);
     expect(reply.send).toHaveBeenCalledWith({ error: 'registry is not valid JSON' });
+  });
+
+  it('GET /project-scope answers the scope of the ?project= query', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetProjectScope.mockReturnValue({ id: '64f4ae91', name: 'app', found: true });
+    const reply = fakeReply();
+    await routes.get('GET /project-scope')!(fakeReq({ query: { project: '64f4ae91' } }), asReply(reply));
+    expect(mockGetProjectScope).toHaveBeenCalledWith(expect.any(String), '64f4ae91');
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ id: '64f4ae91', name: 'app', found: true });
+  });
+
+  it('GET /project-scope hands an absent query to the scope (found: false, never a 400)', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetProjectScope.mockReturnValue({ id: '', name: '', found: false });
+    const reply = fakeReply();
+    await routes.get('GET /project-scope')!(fakeReq(), asReply(reply));
+    expect(mockGetProjectScope).toHaveBeenCalledWith(expect.any(String), undefined);
+    expect(reply.code).toHaveBeenCalledWith(200);
+  });
+
+  it('GET /project-scope returns 500 with the reason when the registry cannot be read', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetProjectScope.mockImplementation(() => { throw new Error('registry is not valid JSON'); });
+    const reply = fakeReply();
+    await routes.get('GET /project-scope')!(fakeReq({ query: { project: '64f4ae91' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'registry is not valid JSON' });
+  });
+
+  it('GET /related/project/:projectId answers the related card of the project in the route param', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const card = { title: 'Queue', count: 2, items: [], moreUrl: '/modules/queue/history?project=64f4ae91' };
+    mockGetRelatedForProject.mockReturnValue(card);
+    const reply = fakeReply();
+    await routes.get('GET /related/project/:projectId')!(fakeReq({ params: { projectId: '64f4ae91' } }), asReply(reply));
+    expect(mockGetRelatedForProject).toHaveBeenCalledWith(expect.any(String), expect.any(String), '64f4ae91');
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith(card);
+  });
+
+  it('GET /related/project/:projectId maps a malformed id to 400, an unknown id to 404 and anything else to 500, always with { error }', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const cases: Array<[Error, number]> = [
+      [new InvalidQueryError('project must be the id of a registered project'), 400],
+      [new UnknownProjectError('No project with id deadbeef in the registry'), 404],
+      [new Error('registry is not valid JSON'), 500],
+    ];
+    for (const [error, status] of cases) {
+      mockGetRelatedForProject.mockImplementation(() => { throw error; });
+      const reply = fakeReply();
+      await routes.get('GET /related/project/:projectId')!(fakeReq({ params: { projectId: 'deadbeef' } }), asReply(reply));
+      expect(reply.code).toHaveBeenCalledWith(status);
+      expect(reply.send).toHaveBeenCalledWith({ error: error.message });
+    }
   });
 
   it('GET /subscribers returns 500 with the reason for an invalid subscribers.yml', async () => {

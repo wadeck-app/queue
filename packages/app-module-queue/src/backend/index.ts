@@ -8,7 +8,7 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
@@ -19,7 +19,9 @@ import { getDaemonState } from './daemon.js';
 import { getRelayInfo } from './relay.js';
 import { listWebhooks, listDeliveries } from './relayWebhooks.js';
 import { listSubscribers } from './subscribers.js';
-import { listProjectOptions } from './projects.js';
+import { listProjectOptions, assertProjectId } from './projects.js';
+import { getRelatedForProject } from './related.js';
+import { getProjectScope } from './projectScope.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery, validateSingleString } from './historyQuery.js';
@@ -285,13 +287,10 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('GET', '/dlq', (req, reply) => {
     try {
       const project = (req as { query?: QueryParams }).query?.['project'];
-      if (project !== undefined && project !== '' && (typeof project !== 'string' || !/^[0-9a-f]{8}$/.test(project))) {
-        return reply.code(400).send({ error: `project must be the id of a registered project (8 hexadecimal characters, project list shows them), got: ${JSON.stringify(project)}` });
-      }
-      const entries = listDlq(configDir, project === undefined || project === '' ? undefined : project);
+      const entries = listDlq(configDir, project === undefined || project === '' ? undefined : assertProjectId(project));
       return reply.code(200).send({ entries });
     } catch (err) {
-      return reply.code(500).send({ error: getErrorMessage(err) });
+      return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -319,6 +318,27 @@ export default function (ctx: ModuleContext): void {
       return reply.code(200).send({ options: listProjectOptions(defaultRegistryDir(process.env)) });
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // The project a page is scoped to by ?project=<id>, for the contributors of the queue:project-header slot: found is false (never an error) for an id the page cannot use
+  ctx.registerRoute('GET', '/project-scope', (req, reply) => {
+    const query = (req as { query?: QueryParams }).query ?? {};
+    try {
+      return reply.code(200).send(getProjectScope(defaultRegistryDir(process.env), query['project']));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // What the Queue module has about one project, for the detail page of the project module: 400 malformed id, 404 id in no registry (live or deleted), 500 unreadable registry or queue files
+  ctx.registerRoute('GET', '/related/project/:projectId', (req, reply) => {
+    const { projectId } = req.params;
+    try {
+      return reply.code(200).send(getRelatedForProject(configDir, defaultRegistryDir(process.env), projectId));
+    } catch (err) {
+      const status = err instanceof InvalidQueryError ? 400 : err instanceof UnknownProjectError ? 404 : 500;
+      return reply.code(status).send({ error: getErrorMessage(err) });
     }
   });
 

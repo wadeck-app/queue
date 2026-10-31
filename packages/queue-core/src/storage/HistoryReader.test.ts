@@ -649,3 +649,53 @@ describe('HistoryReader breakdowns (events and subscribers over a window)', () =
     expect(Object.fromEntries(reader.countOutcomesBySubscriber(Date.now(), HOUR))).toEqual({ 'onFoo[0]': { success: 1, failed: 0, dlq: 0 } });
   });
 });
+
+describe('HistoryReader.readProject (the pruned read of one project)', () => {
+  let historyDir: string;
+
+  beforeEach(() => {
+    historyDir = join(tmpdir(), `queue-history-reader-project-${crypto.randomUUID()}`);
+    mkdirSync(historyDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(historyDir, { recursive: true, force: true });
+  });
+
+  it('answers exactly what read({ projectId }) answers, also for an entry whose records are in two day files and for a to-children dispatch', () => {
+    writeDay(historyDir, '2026-01-01', [
+      { ts: '2026-01-01T23:59:59.000Z', type: 'trigger', eventId: 'ev-night', event: 'onNight', matchedCount: 1, totalCount: 1, projectId: 'aaaaaaaa' },
+      { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-down', event: 'onDown', matchedCount: 1, totalCount: 1, projectId: 'bbbbbbbb', payload: { note: 'no project here' } },
+      { ts: '2026-01-01T10:00:01.000Z', type: 'trigger', eventId: 'ev-other', event: 'onOther', matchedCount: 1, totalCount: 1, projectId: 'cccccccc' },
+      { ts: '2026-01-01T10:00:02.000Z', type: 'outcome', eventId: 'ev-other', event: 'onOther', subscriberId: 'cccccccc/s', status: 'success', projectId: 'cccccccc' },
+    ]);
+    writeDay(historyDir, '2026-01-02', [
+      { ts: '2026-01-02T00:00:01.000Z', type: 'outcome', eventId: 'ev-night', event: 'onNight', subscriberId: 'aaaaaaaa/s', status: 'success', projectId: 'aaaaaaaa' },
+      { ts: '2026-01-02T00:00:02.000Z', type: 'outcome', eventId: 'ev-down', event: 'onDown', subscriberId: 'aaaaaaaa/c', status: 'success', projectId: 'aaaaaaaa', emitterProjectId: 'bbbbbbbb' },
+      // a retry: no trigger, an outcome of the project under the id of the WAL entry
+      { ts: '2026-01-02T01:00:00.000Z', type: 'outcome', eventId: 'wal-1', event: 'onRetry', subscriberId: 'aaaaaaaa/s', status: 'success', projectId: 'aaaaaaaa' },
+    ]);
+    const reader = new HistoryReader(historyDir);
+    for (const id of ['aaaaaaaa', 'bbbbbbbb', 'cccccccc', 'dddddddd']) {
+      expect(reader.readProject(id)).toEqual(reader.read({ projectId: id }));
+    }
+    expect(reader.readProject('aaaaaaaa').map((entry) => entry.eventId)).toEqual(['wal-1', 'ev-night', 'ev-down']);
+    expect(reader.readProject('dddddddd')).toEqual([]);
+  });
+
+  it('rejects an entry that only mentions the id in its payload', () => {
+    writeDay(historyDir, '2026-01-01', [
+      { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-text', event: 'onText', matchedCount: 0, totalCount: 0, projectId: 'bbbbbbbb', payload: { text: 'see project aaaaaaaa' } },
+    ]);
+    expect(new HistoryReader(historyDir).readProject('aaaaaaaa')).toEqual([]);
+  });
+
+  it('is empty without a history folder', () => {
+    expect(new HistoryReader(join(historyDir, 'nothing')).readProject('aaaaaaaa')).toEqual([]);
+  });
+
+  it('names the file and the line of a record that is not JSON when it mentions the id, like read() does', () => {
+    writeFileSync(join(historyDir, '2026-01-01.ndjson'), 'aaaaaaaa {broken\n');
+    expect(() => new HistoryReader(historyDir).readProject('aaaaaaaa')).toThrow(/Malformed history record in 2026-01-01\.ndjson/);
+  });
+});

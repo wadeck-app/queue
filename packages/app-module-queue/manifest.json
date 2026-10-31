@@ -1,5 +1,10 @@
 {
   "id": "queue",
+  "expose": {
+    "slots": {
+      "project-header": { "accepts": ["Badge", "Link", "ButtonLink"] }
+    }
+  },
   "extensionPoints": [
     {
       "kind": "widget",

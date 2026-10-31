@@ -71,6 +71,7 @@ const OUTCOME_STATUS = /"status":"(success|failed|dlq)"/;
 // `event` / `subscriberId` come right after `ts`, `type` and `eventId`, before any payload: look at the start of the line only
 const KEY_SEARCH_CHARS = 400;
 const EVENT_KEY = /"event":"((?:[^"\\]|\\.)*)"/;
+const EVENT_ID_KEY = /"eventId":"((?:[^"\\]|\\.)*)"/;
 const SUBSCRIBER_KEY = /"subscriberId":"((?:[^"\\]|\\.)*)"/;
 
 /** A JSON string body (still escaped) back to text. */
@@ -125,7 +126,59 @@ export class HistoryReader {
       }
     }
 
-    const entries: HistoryEntry[] = Array.from(acc.values()).map(a => ({
+    return this.toEntries(acc)
+      .filter(e => this.matches(e, filter))
+      .sort((a, b) => b.ts.localeCompare(a.ts));
+  }
+
+  /**
+   * The same entries as `read({ projectId })` (newest first), without paying a JSON.parse per line of every day file: a project that
+   * ran nothing is the common case of a project page, and a full read of a busy history takes seconds. Pass 1 finds the event ids of the
+   * lines that mention the id at all (a raw substring test, so a payload that merely contains the text only adds a candidate that
+   * `matches` then rejects); pass 2 parses only the lines of those events, so the entry is complete wherever its records are.
+   * Does not use the file cache: it is meant for one-shot reads.
+   */
+  readProject(projectId: string): HistoryEntry[] {
+    // Bytes, not text: a search for an ASCII id needs no decoding, and a project with nothing in the history never decodes a file
+    const files = this.listFiles().map((file) => ({ file, bytes: readFileSync(join(this.historyDir, file)) }));
+    const needle = Buffer.from(projectId, 'utf-8');
+    const candidates = new Set<string>();
+    for (const { file, bytes } of files) {
+      let from = 0;
+      for (let hit = bytes.indexOf(needle, from); hit !== -1; hit = bytes.indexOf(needle, from)) {
+        const lineStart = bytes.lastIndexOf(10, hit) + 1;
+        const lineEnd = bytes.indexOf(10, hit);
+        const line = bytes.toString('utf-8', lineStart, lineEnd === -1 ? bytes.length : lineEnd);
+        const body = EVENT_ID_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
+        const eventId = body !== undefined ? unescapeJson(body) : (parseRecordLine(file, line)?.['eventId'] as string | undefined);
+        if (eventId) {
+          candidates.add(eventId);
+        }
+        // The rest of this line cannot add anything: go to the next one
+        from = lineEnd === -1 ? bytes.length : lineEnd + 1;
+      }
+    }
+    const acc = new Map<string, Accumulator>();
+    if (candidates.size > 0) {
+      for (const { file, bytes } of files) {
+        for (const line of bytes.toString('utf-8').split('\n')) {
+          const body = EVENT_ID_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
+          if (body !== undefined && candidates.has(unescapeJson(body))) {
+            const record = parseRecordLine(file, line);
+            if (record !== undefined) {
+              this.applyRecord(acc, record);
+            }
+          }
+        }
+      }
+    }
+    return this.toEntries(acc)
+      .filter(e => this.matches(e, { projectId }))
+      .sort((a, b) => b.ts.localeCompare(a.ts));
+  }
+
+  private toEntries(acc: Map<string, Accumulator>): HistoryEntry[] {
+    return Array.from(acc.values()).map(a => ({
       ts: a.ts ?? new Date(0).toISOString(),
       eventId: a.eventId,
       event: a.event ?? '(unknown)',
@@ -140,10 +193,6 @@ export class HistoryReader {
       cwd: a.cwd,
       ...(a.direction !== undefined && { direction: a.direction }),
     }));
-
-    return entries
-      .filter(e => this.matches(e, filter))
-      .sort((a, b) => b.ts.localeCompare(a.ts));
   }
 
   /** Looks up a single entry by its exact eventId, for `queue replay <eventId>`. */
@@ -403,6 +452,19 @@ export class HistoryReader {
       return false;
     }
     return true;
+  }
+}
+
+/** One line of a day file as a record; an empty line is none, a line that is not JSON throws (as {@link HistoryReader.read} does). */
+function parseRecordLine(file: string, line: string): Record<string, unknown> | undefined {
+  const trimmed = line.trim();
+  if (trimmed === '') {
+    return undefined;
+  }
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(`Malformed history record in ${file}: ${trimmed} (${(err as Error).message})`);
   }
 }
 

@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { addProject, removeProject } from '@wadeck-app/project-sdk';
 
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
@@ -27,6 +28,10 @@ let child: ChildProcess;
 let workDir: string;
 let configDir: string;
 let baseUrl: string;
+// The project registry the server reads (XDG_CONFIG_HOME/project), and the ids of the projects written in it
+let registryDir: string;
+let appProjectId: string;
+let deletedProjectId: string;
 
 function writeHistory(): void {
   mkdirSync(join(configDir, 'history'), { recursive: true });
@@ -78,7 +83,7 @@ function startServer(builtModule: string): Promise<string> {
     child = spawn(process.execPath, [cliEntry, 'dev', builtModule], {
       windowsHide: true,
       // Port 0: a free port, never the developer's real app-core on 4850. QUEUE_CONFIG_DIR: the fixture history.
-      env: { ...process.env, APP_CORE_PORT: '0', QUEUE_CONFIG_DIR: configDir },
+      env: { ...process.env, APP_CORE_PORT: '0', QUEUE_CONFIG_DIR: configDir, XDG_CONFIG_HOME: join(workDir, 'xdg') },
     });
     const onData = (chunk: Buffer): void => {
       output += chunk.toString();
@@ -107,12 +112,22 @@ describe('the packaged module through a real app-core server', () => {
     configDir = join(workDir, 'queue-config');
     const builtModule = join(workDir, 'module');
     writeHistory();
+    registryDir = join(workDir, 'xdg', 'project');
+    mkdirSync(join(workDir, 'app-folder'));
+    appProjectId = (await addProject(registryDir, { name: 'app', path: join(workDir, 'app-folder') })).id;
+    deletedProjectId = (await addProject(registryDir, { name: 'gone' })).id;
+    await removeProject(registryDir, deletedProjectId);
     packageModule(builtModule);
     baseUrl = await startServer(builtModule);
   });
 
-  afterAll(() => {
-    child?.kill();
+  afterAll(async () => {
+    // Wait for the server to be gone: on Windows it still holds its files for a moment after kill(), and the removal below then fails with EPERM
+    if (child && child.exitCode === null) {
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      child.kill();
+      await exited;
+    }
     rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
@@ -178,6 +193,38 @@ describe('the packaged module through a real app-core server', () => {
     const { status, body } = await call('POST', '/dlq/some-id/clear');
     expect(status).toBe(200);
     expect(body['cleared']).toBe(0);
+  });
+
+  it('GET /related/project/:projectId answers 200 with the card of a registered project', async () => {
+    const { status, body } = await call('GET', `/related/project/${appProjectId}`);
+    expect(status).toBe(200);
+    expect(body).toEqual({ title: 'Queue', count: 0, items: [], moreUrl: `/modules/queue/history?project=${appProjectId}` });
+  });
+
+  it('GET /related/project/:projectId answers 200 for a soft-deleted project', async () => {
+    expect((await call('GET', `/related/project/${deletedProjectId}`)).status).toBe(200);
+  });
+
+  it('GET /related/project/:projectId answers 404 with { error } naming an unknown id, and 400 with { error } for a malformed one', async () => {
+    const unknown = await call('GET', '/related/project/deadbeef');
+    expect(unknown.status).toBe(404);
+    expect(String(unknown.body['error'])).toContain('deadbeef');
+    const malformed = await call('GET', '/related/project/not-an-id');
+    expect(malformed.status).toBe(400);
+    expect(String(malformed.body['error'])).toContain('not-an-id');
+  });
+
+  it('GET /project-scope reads the ?project= query: found for a registered or deleted project, found false (200) for anything else', async () => {
+    expect(await call('GET', `/project-scope?project=${appProjectId}`)).toEqual({ status: 200, body: { id: appProjectId, name: 'app', found: true } });
+    expect(await call('GET', `/project-scope?project=${deletedProjectId}`)).toEqual({ status: 200, body: { id: deletedProjectId, name: 'gone', found: true } });
+    expect(await call('GET', '/project-scope?project=deadbeef')).toEqual({ status: 200, body: { id: 'deadbeef', name: '', found: false } });
+    expect(await call('GET', '/project-scope')).toEqual({ status: 200, body: { id: '', name: '', found: false } });
+  });
+
+  it('GET /api/slots/queue:project-header answers an empty list when no module contributes, so the ExtensionSlot of the pages renders nothing', async () => {
+    const response = await fetch(`${baseUrl}/api/slots/queue:project-header`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 
   it('the read routes work without any daemon', async () => {

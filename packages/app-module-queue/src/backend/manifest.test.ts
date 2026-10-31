@@ -8,6 +8,7 @@ const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf
   id?: string;
   version?: unknown;
   backendEntryPath?: unknown;
+  expose?: { slots?: Record<string, { accepts: string[] }> };
   extensionPoints: { view: { type: string; value: string } }[];
 };
 
@@ -39,5 +40,14 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
     const listed = manifest.extensionPoints.map((point) => point.view.value.replace('./src/dsl-views/', '')).sort();
     const present = readdirSync(join(packageDir, 'src/dsl-views')).sort();
     expect(listed).toEqual(present);
+  });
+
+  // Contributors are checked against this list by `app-core-cli check` and at load; the types are components the shell registers (Badge with href: relay-badge.yaml)
+  it('exposes the project-header slot, which accepts only link-like roots (queue:project-header)', () => {
+    expect(manifest.expose).toEqual({ slots: { 'project-header': { accepts: ['Badge', 'Link', 'ButtonLink'] } } });
+  });
+
+  it('does not expose a slot named nav (reserved by app-core)', () => {
+    expect(Object.keys(manifest.expose?.slots ?? {})).not.toContain('nav');
   });
 });

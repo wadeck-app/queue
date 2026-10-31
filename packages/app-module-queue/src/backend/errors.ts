@@ -19,3 +19,6 @@ export class InvalidPayloadError extends Error {}
 export class TestPayloadNotFoundError extends Error {}
 
 export class RelayNotConfiguredError extends Error {}
+
+/** A route asked about a project id that is in no registry, live or soft-deleted. */
+export class UnknownProjectError extends Error {}

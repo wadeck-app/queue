@@ -11,6 +11,13 @@ $sources:
       project: $urlParam.project
   projects:
     url: GET /api/modules/queue/projects
+  # The project the page is scoped to by ?project=, and the contributions of other modules to queue:project-header (an empty list when nobody contributes)
+  projectScope:
+    url: GET /api/modules/queue/project-scope
+    params:
+      project: $urlParam.project
+  projectHeader:
+    url: GET /api/slots/queue:project-header
 
 # {eventId} is the event id of the clicked row (the renderer percent-encodes it). The replay runs the subscribers again.
 $actions:
@@ -23,6 +30,10 @@ $actions:
 
 $type: PageContent
 sections:
+  # Header of the project the page is filtered on: other modules add their link to it (slot queue:project-header). Hidden without a known project.
+  - $type: ExtensionSlot
+    $if: $sources.projectScope.found
+    items: $sources.projectHeader
   # Same filters as `queue history --event / --subscriber / --status`; they need dsl-ui >= 2026.10.19-117 (urlParam on SearchBar and CompactSelect); resetUrlParams needs dsl-ui >= 2026.10.22-124 (a narrower filter or a new page size goes back to page 1)
   - $type: HorizontalStack
     gap: gap-3
