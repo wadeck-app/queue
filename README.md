@@ -45,5 +45,5 @@ Use [`@wadeck-app/queue-sdk`](packages/queue-sdk/README.md): it finds and starts
 
 ## Configuration and updates
 
-Config dir: `~/.config/queue/` (override: `QUEUE_CONFIG_DIR` env)
+Config dir: `QUEUE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/queue`, else `~/.config/queue/`. The Go launcher and the Node side resolve it the same way (the launcher also accepts `--config <dir>`, which wins over the variable); the launcher template is `packages/queue-cli/ci/launcher-main.go.tmpl`.
 Auto-updates in background on every invocation. Manual: `queue cli update`

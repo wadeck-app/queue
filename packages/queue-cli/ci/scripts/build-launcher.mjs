@@ -20,15 +20,20 @@ const sdkPkg = require.resolve('@wadeck-app/singleton-daemon-kit/package.json');
 const SDK_DIR = path.dirname(sdkPkg);
 const BUILD_SH = path.join(SDK_DIR, 'go-launcher', 'build.sh');
 const QUEUE_CONFIG = path.join(CI_DIR, 'launcher-queue.config.json');
-const OUT_DIR = path.join(PACKAGE_DIR, 'launcher-go', 'dist');
+// Custom template: the SDK default does not read QUEUE_CONFIG_DIR (see the header of the template).
+const QUEUE_TEMPLATE = path.join(CI_DIR, 'launcher-main.go.tmpl');
+// QUEUE_LAUNCHER_OUT_DIR lets the regression test build into a throwaway dir instead of launcher-go/dist.
+const OUT_DIR = process.env.QUEUE_LAUNCHER_OUT_DIR || path.join(PACKAGE_DIR, 'launcher-go', 'dist');
 
-if (!fs.existsSync(BUILD_SH)) {
-	console.error(`build.sh not found at ${BUILD_SH}`);
-	process.exit(1);
+for (const required of [BUILD_SH, QUEUE_TEMPLATE]) {
+	if (!fs.existsSync(required)) {
+		console.error(`Launcher build input not found: ${required}`);
+		process.exit(1);
+	}
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const toUnix = p => p.replace(/\\/g, '/');
 console.log('Building queue launchers...');
-execFileSync('bash', [toUnix(BUILD_SH), toUnix(QUEUE_CONFIG), toUnix(OUT_DIR)], { stdio: 'inherit', windowsHide: true });
+execFileSync('bash', [toUnix(BUILD_SH), toUnix(QUEUE_CONFIG), toUnix(OUT_DIR), toUnix(QUEUE_TEMPLATE)], { stdio: 'inherit', windowsHide: true });

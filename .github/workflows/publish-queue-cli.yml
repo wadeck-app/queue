@@ -33,6 +33,11 @@ jobs:
                   registry-url: 'https://npm.pkg.github.com'
                   scope: '@wadeck-app'
 
+            # The launcher regression test (launcherConfigDir.integration.test.ts) builds the Go launcher
+            - uses: actions/setup-go@v5
+              with:
+                  go-version: '1.26'
+
             - name: Install dependencies
               run: npm install --prefer-offline
               env:
