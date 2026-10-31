@@ -198,7 +198,7 @@ describe('the packaged module through a real app-core server', () => {
   it('GET /related/project/:projectId answers 200 with the card of a registered project', async () => {
     const { status, body } = await call('GET', `/related/project/${appProjectId}`);
     expect(status).toBe(200);
-    expect(body).toEqual({ title: 'Queue', count: 0, items: [], moreUrl: `/modules/queue/history?project=${appProjectId}` });
+    expect(body).toEqual({ title: 'Queue', count: 0, countLabel: 'pending or in the dead-letter queue', items: [], moreUrl: `/modules/queue/history?project=${appProjectId}` });
   });
 
   it('GET /related/project/:projectId answers 200 for a soft-deleted project', async () => {
