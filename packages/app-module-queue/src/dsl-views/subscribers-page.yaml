@@ -19,6 +19,7 @@ sections:
       - { key: "name", label: "Name", nowrap: true }
       - { key: "subscriberId", label: "Id", mono: true, nowrap: true }
       - { key: "type", label: "Type" }
+      - { key: "action", label: "Action", mono: true }
       - { key: "command", label: "Command", mono: true }
       - { key: "url", label: "URL", mono: true }
       - { key: "when", label: "When", mono: true }

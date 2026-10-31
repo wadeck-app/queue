@@ -1,3 +1,4 @@
+import type { EventDeclaration } from '../catalog/EventCatalog.js';
 import type { EventEnvelope } from '../types.js';
 
 /** The `with:` block of a `type: action` subscriber, as written in subscribers.yml (values are not rendered yet). */
@@ -52,6 +53,11 @@ export interface ActionPlugin {
   name: string;
   /** Other names that select the same plugin. */
   aliases?: string[];
+  /**
+   * The events this plugin emits, with their documentation. The daemon files them in the event catalog at start, under the source `action-<name>`,
+   * so `queue events list|show` and `queue wait` know them (the emitter declares its events, like any program that pushes events).
+   */
+  events?: readonly EventDeclaration[];
   /** Checks the `with:` block when the configuration is loaded. Returns the problem (what is wrong and what to write), or undefined when it is fine. Must not throw. */
   validate(config: ActionConfig, context: ActionValidationContext): string | undefined;
   /** The concrete event name this configuration pushes, when it is known without running (lets `queue sub add` warn about an undeclared event and detect loops). */

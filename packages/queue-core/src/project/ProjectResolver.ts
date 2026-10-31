@@ -63,6 +63,15 @@ export class ProjectResolver {
     return { projectId, layers };
   }
 
+  /** The config source (default direction) of every registered project, for the checks that look at all subscribers.ymls at once. Throws when the registry cannot be read. */
+  allConfigSources(): ProjectConfigSource[] {
+    const registry = loadRegistry(this.registryDir);
+    return registry.projects.flatMap((project) => {
+      const source = this.configSource(project.id);
+      return source === undefined ? [] : [source];
+    });
+  }
+
   /** A project named by its id (the explicit `project` of a push). `unregistered` here means: no project of that id. */
   lookupId(id: string): ProjectLookup {
     let registry;

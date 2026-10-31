@@ -46,3 +46,6 @@ export { renderActionTemplate, findActionTemplateProblem, ActionTemplateError, M
 export type { DispatchResult } from './dispatch/DispatchResult.js';
 export { targetOf } from './dispatch/runSubscriber.js';
 export { ConfigLoader } from './ConfigLoader.js';
+export { findActionCycles } from './actions/findActionCycles.js';
+export type { ActionCycleFinding, ActionCycleOptions, CycleSubscriber } from './actions/findActionCycles.js';
+export { MAX_ACTION_HOPS } from './actions/hopCap.js';

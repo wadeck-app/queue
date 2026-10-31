@@ -859,3 +859,67 @@ describe('type action: the emit action and the daemon wiring', () => {
     });
   });
 });
+
+describe('action loop diagnostic at start', () => {
+  const logText = (): string => {
+    const dir = join(configDir, 'logs');
+    return existsSync(dir) ? readdirSync(dir).map((f) => readFileSync(join(dir, f), 'utf8')).join('\n') : '';
+  };
+
+  it('logs a diagnostic line for a cycle between action subscribers and does not abort', () => {
+    writeFileSync(join(configDir, 'subscribers.yml'), [
+      'subscribers:',
+      '  onA:',
+      '    - { type: action, name: a, action: emit, with: { event: onB } }',
+      '  onB:',
+      '    - { type: action, name: b, action: emit, with: { event: onA } }',
+      '',
+    ].join('\n'));
+    const service = createQueueService(configDir);
+    expect(() => service.onStart()).not.toThrow();
+    expect(logText()).toContain('action loop: ');
+    expect(logText()).toContain("'a' (listens to 'onA', emits 'onB')");
+  });
+
+  it('logs nothing about loops when there is none, and says when a file could not be checked', () => {
+    writeFileSync(join(configDir, 'subscribers.yml'), 'subscribers:\n  onA:\n    - { type: action, name: a, action: emit, with: { event: onB } }\n');
+    const clean = createQueueService(configDir);
+    clean.onStart();
+    expect(logText()).not.toContain('loop');
+
+    writeFileSync(join(configDir, 'subscribers.yml'), 'subscribers: [not, a, mapping]\n');
+    const broken = createQueueService(configDir);
+    expect(() => broken.onStart()).not.toThrow();
+    expect(logText()).toContain('action loop check skipped the global subscribers');
+  });
+});
+
+describe('events declared by an action plugin', () => {
+  const plugin = (events: unknown): ActionPlugin => ({
+    name: 'declarer',
+    validate: () => undefined,
+    emits: () => 'declared.event',
+    events: events as ActionPlugin['events'],
+    run: async () => ({ success: true }),
+  });
+
+  it('files them in the event catalog at start, under the source action-<name>', () => {
+    const service = createQueueService(configDir, { actions: createActionRegistry([plugin([{ name: 'declared.event', description: 'declared by the plugin' }])]) });
+    service.onStart();
+    const catalog = readCatalog(configDir);
+    expect(catalog.sources.map((source) => source.source)).toEqual(['action-declarer']);
+    expect(catalog.sources[0]!.events).toEqual([expect.objectContaining({ name: 'declared.event', description: 'declared by the plugin' })]);
+  });
+
+  it('writes nothing for a plugin without events, and says a declaration it cannot store without aborting the start', () => {
+    createQueueService(configDir, { actions: createActionRegistry() }).onStart();
+    expect(readCatalog(configDir).sources).toEqual([]);
+
+    const broken = createQueueService(configDir, { actions: createActionRegistry([plugin([{ name: 'not valid', description: 'x' }])]) });
+    expect(() => broken.onStart()).not.toThrow();
+    expect(readCatalog(configDir).sources).toEqual([]);
+    const dir = join(configDir, 'logs');
+    const logs = readdirSync(dir).map((f) => readFileSync(join(dir, f), 'utf8')).join('\n');
+    expect(logs).toContain("could not declare the events of the action 'declarer'");
+  });
+});

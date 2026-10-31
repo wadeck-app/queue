@@ -96,3 +96,80 @@ Other extensions found on `PATHEXT` (`.ps1`, `.js`, ...) cannot be started witho
 - A value that starts with `-` is still an option for the program (`--help`). Write `--title={{ title }}` or use the program's `--` separator.
 - A batch file that re-expands its own arguments unquoted in `if (...)` blocks is the batch author's responsibility.
 - Threat model: [.claude/threat-model.md](../.claude/threat-model.md).
+
+## Action subscribers
+
+`type: action` runs a plugin inside the daemon instead of a command or an HTTP call. Available actions: `emit` (pushes any event) and `agent-wake` (wakes a Claude Code session). An unknown name lists the available ones.
+
+```yaml
+subscribers:
+  on.github.check_run:
+    - type: action
+      name: wake-owner
+      action: agent-wake
+      when: payload.check_run.conclusion=failure
+      with:
+        to: "project:my-app"
+        text: "CI failed on {{ payload.check_run.name }}"
+        mode: passive
+```
+
+CLI: `queue sub add <event> --name <n> --type action --action <name> --set key=value ...` (repeatable; split on the first `=`; a dotted key nests, `--set payload.text=hi`; values are text).
+
+### Fields
+
+- `with` is the plugin's settings; the plugin validates it when the file loads, with no silent stripping. A bad `with` aborts the push of that event with the plugin's message.
+- `command`, `url`, `method`, `headers`, `cwd` and `env` are refused on an action. `timeout`, `retries`, `backoff` and `when` apply.
+- `emit`: `with.event` is a literal concrete event name (no placeholder, no wildcard); `with.payload` is a mapping whose string values are templates.
+- `agent-wake` always emits `agent.message { to, text, from, mode, ref }`:
+
+| Field | Rule |
+|---|---|
+| `to` | Required. A session id (UUID) or `project:` + 1-200 characters, no control characters or line breaks (spaces, parentheses, accents allowed). A placeholder is allowed; the rendered value is checked again. |
+| `text` | Required, at most 16 KB once rendered, not empty. |
+| `from` | Default `queue:{{ event }}`; one line, at most 200 characters. |
+| `mode` | `wake` (default) or `passive`; literal only. |
+| `ref` | Default `{{ id }}`; at most 200 characters. |
+
+### Templates in `with` values
+
+Rendered in Node, never in a shell, in one pass. Differences with `cli`:
+
+| | `cli` | action |
+|---|---|---|
+| Payload field | `{{ title }}` | `{{ payload.title }}`; nested `{{ payload.a.b }}` (own properties only) |
+| Envelope | n/a | `{{ event }}`, `{{ id }}`, `{{ timestamp }}`, `{{ payload }}` (whole payload as JSON) |
+| Bare `{{ x }}` | payload field | **load-time error**: write `payload.x` |
+| Shell metacharacters | refused | allowed (no shell) |
+
+Objects render as JSON; a NUL character refuses the delivery; each rendered field is capped at 64 KB. A render or validation failure after substitution is permanent: straight to the DLQ on the first attempt, with a message naming the field (never the value).
+
+YAML pitfall: an unquoted `text: {{ payload.x }}` parses as a flow mapping. Always quote: `text: "{{ payload.x }}"`.
+
+### Delivery and idempotence
+
+- Delivery is at-least-once: a retry, `queue dlq replay` or a daemon restart can emit the same message again.
+- `{{ id }}` renders the id of the first push (`meta.eventId`), not the per-attempt WAL id, so it is stable across retries and replays. `agent-wake` defaults `ref` to it: the consumer ignores a `ref` it has seen.
+- `{{ timestamp }}` is the timestamp of the attempt's envelope; do not use it as a key.
+
+### Where the emitted event goes
+
+- Filed under the project (and working directory) of the event the action received; for a `to-children` descendant, that descendant's project. It is pushed with the default direction.
+- `queue wait` filters by event name and time, not by project.
+
+### Loop guards
+
+- Runtime: each emitted event carries a hop counter (set by the daemon only, never read from the wire); an action whose source is already at 5 hops is refused, permanently.
+- Static: `queue sub add|edit` refuses a change that closes a cycle of actions with no `when:`, and warns when a `when:` may break it. The daemon logs the same findings at start and never aborts. Only the real delivery chain counts: the global file and the emitter's project and its ancestors, not descendants.
+- An action cannot emit an event starting with `before` (permanent failure).
+- `queue replay` goes through the push RPC and resets the counter to 0.
+
+### `before*` events
+
+An action on a `before*` pattern only passes through: it never answers the pusher (its stdout is empty) and its result is not a verdict.
+
+### Compatibility and upgrades
+
+- A daemon without action support rejects the whole file (`aborted` with the reason): update the daemon first.
+- The registry is built at daemon start: after installing a new action plugin, restart the daemon (`queue stop`, then any command) before it is known. Until then the subscriber fails alone, to the DLQ, with the list of available actions.
+- `agent-wake` declares `agent.message` in the event catalog (source `action-agent-wake`) at each daemon start.

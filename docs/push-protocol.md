@@ -140,6 +140,10 @@ curl -s -X POST http://127.0.0.1:47910/push \
 
 The port above is the default (47910); the daemon takes the next free one up to 47920, so read `config.port`.
 
+## Actions
+
+`type: action` subscribers (see [subscribers.md](subscribers.md)) change only the `subscribers.yml` schema. The wire is unchanged: an action emits through the daemon's internal push, which has the `/push` semantics, and the hop counter is never a request field.
+
 ## History
 
 | Version | Change |

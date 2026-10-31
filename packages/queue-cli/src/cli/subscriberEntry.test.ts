@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSubscriberEntry, locateSubscriber, parseSubFlags, renameSubscriber, unnamedLine } from './subscriberEntry.js';
+import { buildSubscriberEntry, locateSubscriber, parseSubFlags, renameSubscriber, subscriberTarget, unnamedLine } from './subscriberEntry.js';
 
 describe('parseSubFlags --name', () => {
   it('reads the name', () => {
@@ -109,5 +109,83 @@ describe('unnamedLine', () => {
 
   it('adds the scope when it is the project one', () => {
     expect(unnamedLine('onFoo', 0, 'project')).toMatch(/--name <name> --scope project$/);
+  });
+});
+
+describe('parseSubFlags --type action', () => {
+  it('reads the action and every --set, split on the first =', () => {
+    const { config, errors } = parseSubFlags(['--type', 'action', '--action', 'agent-wake', '--set', 'to=project:my app', '--set', 'text=a=b and {{ payload.x }}', '--name', 'wake']);
+    expect(errors).toEqual([]);
+    expect(config).toMatchObject({ type: 'action', action: 'agent-wake', name: 'wake', with: { to: 'project:my app', text: 'a=b and {{ payload.x }}' } });
+  });
+
+  it('a dotted key nests, so the payload of emit can be written', () => {
+    const { config, errors } = parseSubFlags(['--type', 'action', '--action', 'emit', '--set', 'event=agent.message', '--set', 'payload.text={{ payload.msg }}', '--set', 'payload.to=x']);
+    expect(errors).toEqual([]);
+    expect(config.with).toEqual({ event: 'agent.message', payload: { text: '{{ payload.msg }}', to: 'x' } });
+  });
+
+  it.each([
+    [['--set', 'novalue'], 'expected key=value'],
+    [['--set', '=x'], 'empty'],
+    [['--set', 'a..b=x'], 'empty'],
+    [['--set', '__proto__.x=1'], 'not allowed'],
+    [['--set', 'a=1', '--set', 'a=2'], 'set twice'],
+    [['--set', 'a=1', '--set', 'a.b=2'], 'plain value'],
+    [['--set'], 'needs a key=value'],
+    [['--set', '--when'], 'needs a key=value'],
+  ])('refuses %j and says what to write', (flags, expected) => {
+    const { errors } = parseSubFlags(['--type', 'action', '--action', 'emit', ...flags]);
+    expect(errors.join(' ')).toContain(expected);
+  });
+
+  it('reports a --action without a value', () => {
+    expect(parseSubFlags(['--type', 'action', '--action']).errors.join(' ')).toContain('--action needs the name');
+  });
+
+  it.each(['--command', '--url', '--method', '--header'])('refuses %s on an action instead of ignoring it', (flag) => {
+    const { errors } = parseSubFlags(['--type', 'action', '--action', 'emit', flag, 'x:y']);
+    expect(errors.join(' ')).toContain(`${flag} does not apply to --type action`);
+  });
+
+  it('refuses --action and --set on a cli subscriber', () => {
+    expect(parseSubFlags(['--type', 'cli', '--command', 'x', '--action', 'emit']).errors.join(' ')).toContain('only apply to --type action');
+    expect(parseSubFlags(['--type', 'http', '--url', 'http://x', '--set', 'a=b']).errors.join(' ')).toContain('only apply to --type action');
+  });
+
+  it('says the three types when --type is wrong', () => {
+    expect(parseSubFlags(['--type', 'grpc']).errors[0]).toContain('cli, http or action');
+  });
+});
+
+describe('buildSubscriberEntry: action', () => {
+  it('writes action and with, and keeps timeout, retries, backoff and when', () => {
+    expect(buildSubscriberEntry({ type: 'action', name: 'wake', action: 'emit', with: { event: 'x' }, retries: 2, when: 'payload.a=1', timeout: '5s', backoff: 'linear' })).toEqual({
+      type: 'action', name: 'wake', action: 'emit', with: { event: 'x' }, timeout: '5s', retries: 2, backoff: 'linear', when: 'payload.a=1',
+    });
+  });
+
+  it('switching a cli entry to an action drops its command, cwd and env (the loader would refuse them) but keeps the name', () => {
+    const previous = { type: 'cli' as const, name: 'notify', command: 'echo', cwd: 'sub', env: { A: '1' } };
+    const entry = buildSubscriberEntry({ type: 'action', action: 'emit', with: { event: 'x' } }, previous);
+    expect(entry).toEqual({ type: 'action', name: 'notify', action: 'emit', with: { event: 'x' } });
+  });
+
+  it('switching an action entry back to cli drops action and with', () => {
+    const previous = { type: 'action' as const, name: 'wake', action: 'emit', with: { event: 'x' } };
+    expect(buildSubscriberEntry({ type: 'cli', command: 'echo hi' }, previous)).toEqual({ type: 'cli', name: 'wake', command: 'echo hi' });
+  });
+
+  it('an action without --set gets an empty with, so the plugin says what is missing', () => {
+    expect(buildSubscriberEntry({ type: 'action', name: 'a', action: 'agent-wake' }).with).toEqual({});
+  });
+});
+
+describe('subscriberTarget', () => {
+  it('prints the command, the url or action:<name>', () => {
+    expect(subscriberTarget({ type: 'cli', command: 'echo' })).toBe('echo');
+    expect(subscriberTarget({ type: 'http', url: 'http://x' })).toBe('http://x');
+    expect(subscriberTarget({ type: 'action', action: 'emit' })).toBe('action:emit');
+    expect(subscriberTarget({ type: 'action' })).toBe('action:?');
   });
 });

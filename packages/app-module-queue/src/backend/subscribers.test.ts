@@ -52,6 +52,32 @@ describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () 
     expect(JSON.stringify(subscriber)).not.toContain('secret');
   });
 
+  it('lists an action subscriber and masks every value of its with block, whatever the type, but keeps the keys', async () => {
+    await writeProjectSubscribers(
+      [
+        'subscribers:',
+        '  onFoo:',
+        '    - type: action',
+        '      name: wake',
+        '      action: emit',
+        '      with:',
+        '        event: agent.message',
+        '        payload:',
+        '          to: project:secret-folder',
+        '          text: "token abc123"',
+        '          n: 42',
+        '',
+      ].join('\n'),
+    );
+    const [subscriber] = listSubscribers(configDir, projectDir, undefined, registryDir);
+    expect(subscriber).toMatchObject({ type: 'action', action: 'emit', name: 'wake' });
+    expect(subscriber?.with).toEqual({ event: '***', payload: '***' });
+    expect(JSON.stringify(subscriber)).not.toContain('abc123');
+    expect(JSON.stringify(subscriber)).not.toContain('secret-folder');
+    expect(subscriber?.command).toBeUndefined();
+    expect(subscriber?.url).toBeUndefined();
+  });
+
   it('has no headers or env in the answer when the subscriber has none', async () => {
     await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
     const [subscriber] = listSubscribers(configDir, projectDir, undefined, registryDir);

@@ -3,7 +3,7 @@ import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
 import { HistoryLog, projectRefsOf } from '../storage/HistoryLog.js';
-import { ConfigLoader, resolveProjectName } from '../ConfigLoader.js';
+import { ConfigLoader, resolveProjectName, type ProjectConfigSource } from '../ConfigLoader.js';
 import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
 import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
@@ -12,7 +12,9 @@ import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import { ActionTransport } from '../dispatch/ActionTransport.js';
 import type { ActionRegistry } from '../actions/ActionRegistry.js';
 import { createActionRegistry } from '../actions/createActionRegistry.js';
+import { MAX_ACTION_HOPS } from '../actions/hopCap.js';
 import type { ActionPushRequest, ActionPushResult } from '../actions/ActionPlugin.js';
+import { findActionCycles, type CycleSubscriber } from '../actions/findActionCycles.js';
 import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
 import { checkClientProtocol, checkPushDirection } from '@wadeck-app/queue-sdk/protocol';
@@ -41,8 +43,7 @@ export interface QueueServiceOptions {
   actions?: ActionRegistry;
 }
 
-/** An action chain (an action emits an event whose subscriber emits again...) is cut at this many hops: the event that would exceed it is refused. */
-export const MAX_ACTION_HOPS = 5;
+export { MAX_ACTION_HOPS };
 /** Largest payload an action may emit, serialized as JSON, in bytes. */
 export const MAX_EMITTED_PAYLOAD_BYTES = 64 * 1024;
 
@@ -361,6 +362,67 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     }
 }
 
+  /**
+   * A diagnostic line per cycle between the action subscribers of the global file and of every registered project. Informational: the runtime hop cap is the guard,
+   * and an unreadable file is said, never an abort (the push of an event reports its own configuration error).
+   */
+  function reportActionCycles(): void {
+    const source = 'QueueDaemon.onStart';
+    const sources: Array<ProjectConfigSource | undefined> = [undefined];
+    try {
+      sources.push(...(projectResolver?.allConfigSources() ?? []));
+    } catch (err) {
+      eventLogger.logDiagnostic({ source, message: `action loop check: only the global subscribers.yml was checked, the project registry could not be read: ${getErrorMessage(err)}` });
+    }
+    const seen = new Map<string, CycleSubscriber>();
+    const chains = new Map<string, string[]>();
+    for (const projectSource of sources) {
+      try {
+        for (const list of configLoader.load(undefined, projectSource).values()) {
+          for (const sub of list) {
+            seen.set(`${sub.file} ${sub.event} ${sub.subscriberId}`, sub);
+          }
+        }
+        if (projectSource !== undefined) {
+          chains.set(projectSource.projectId, projectSource.layers.map((layer) => layer.projectId));
+        }
+      } catch (err) {
+        eventLogger.logDiagnostic({
+          source,
+          message: `action loop check skipped ${projectSource === undefined ? 'the global subscribers' : `the subscribers of the project ${projectSource.projectId}`}: ${getErrorMessage(err)}`,
+        });
+      }
+    }
+    try {
+      for (const finding of findActionCycles([...seen.values()], actions, { chains })) {
+        eventLogger.logDiagnostic({ source, message: `${finding.severity === 'error' ? 'error' : 'warning'}: ${finding.message}` });
+      }
+    } catch (err) {
+      eventLogger.logDiagnostic({ source, message: `action loop check failed: ${getErrorMessage(err)}` });
+    }
+  }
+
+  /**
+   * Files the events the action plugins emit in the event catalog (source `action-<plugin>`), replacing what the previous run wrote.
+   * A declaration that cannot be stored is said in the log; the daemon starts anyway (the catalog is documentation).
+   */
+  function declareActionEvents(): void {
+    for (const plugin of actions.list()) {
+      if (plugin.events === undefined || plugin.events.length === 0) {
+        continue;
+      }
+      try {
+        const checked = validateSourceDeclaration({ source: `action-${plugin.name}`, events: plugin.events });
+        if (!checked.ok) {
+          throw new Error(checked.problems.map((problem) => `${problem.path || 'declaration'}: ${problem.message}`).join('; '));
+        }
+        writeSourceDeclaration(configDir, checked.declaration);
+      } catch (err) {
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `could not declare the events of the action '${plugin.name}' in the event catalog: ${getErrorMessage(err)}` });
+      }
+    }
+  }
+
   const commands: QueueCommands = {
     async push(payload?: unknown): Promise<PushResponse> {
       options.onActivity?.();
@@ -518,6 +580,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     eventLogger,
     isIdle: () => wal.pendingCount() === 0 && activeDispatches === 0,
     onStart: () => {
+      declareActionEvents();
+      reportActionCycles();
       // Startup scan: reschedule pending WAL entries
       const pending = wal.readAll().filter(e => e.status === 'pending');
       for (const entry of pending) {

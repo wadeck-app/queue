@@ -90,7 +90,8 @@ describe('@wadeck-app/queue-sdk against the real queue daemon', () => {
     expect(declared).toEqual({ status: 'registered', count: 2 });
 
     const listing = listEvents(configDir);
-    expect(listing.sources).toMatchObject([{ source: 'sdk-it', eventCount: 2 }]);
+    // The built-in agent-wake action declares its own agent.message at every daemon start, next to the program's declaration
+    expect(listing.sources).toMatchObject([{ source: 'action-agent-wake', eventCount: 1 }, { source: 'sdk-it', eventCount: 2 }]);
     // sdk.it.hello was pushed by the first test of this file: declared AND seen
     expect(listing.events.find((event) => event.name === 'sdk.it.hello')).toMatchObject({ declared: true, source: 'sdk-it', count24h: 1 });
     expect(listing.events.find((event) => event.name === 'sdk.it.done')).toMatchObject({ declared: true, terminal: true, outcome: 'success', correlationKey: ['payload.runId'], count24h: 0 });

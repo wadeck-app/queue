@@ -28,7 +28,9 @@ import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSch
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
-import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine } from './subscriberEntry.js';
+import { parseSubFlags, buildSubscriberEntry, locateSubscriber, renameSubscriber, unnamedLine, subscriberTarget } from './subscriberEntry.js';
+import { actionEntryProblems, checkActionLoops, undeclaredEventWarning } from './subscriberChecks.js';
+import { createBuiltinActionRegistry } from '../actions/builtinActions.js';
 import { parseProjectFlag, parseDirectionFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 import { subscribersFileFor } from './subscribersFile.js';
 import { readDaemonVersion, versionMismatchWarning } from './daemonVersion.js';
@@ -99,8 +101,9 @@ Usage:
   queue sub list [event] [--json] [--scope global|project]
   queue sub add <event> --name <name> --type cli --command "<cmd>" [options]
   queue sub add <event> --name <name> --type http --url "<url>" [options]
+  queue sub add <event> --name <name> --type action --action <name> [--set key=value ...] [options]
   queue sub remove <event> --index <N>|--name <name> [--scope global|project]
-  queue sub edit <event> --index <N>|--name <name> --type cli|http [options]
+  queue sub edit <event> --index <N>|--name <name> --type cli|http|action [options]
 
 Options:
   --scope global|project   File target: global=$QUEUE_CONFIG_DIR/subscribers.yml (default)
@@ -111,6 +114,8 @@ Options:
   --when <expr>            Filter: payload.field=value or JSONPath $.field
   --header "key:value"     HTTP only; repeatable for multiple headers
   --method <verb>          HTTP only (default: POST)
+  --action <name>          Action only: the plugin the daemon runs (emit, agent-wake...). An unknown name lists the available ones
+  --set key=value          Action only; repeatable. Split on the first '='; a dotted key nests (--set payload.text=hi). Values are text; {{ payload.x }}, {{ event }}, {{ id }}, {{ timestamp }} are rendered when the action runs
   --name <name>            Who this subscriber is, e.g. notify (lowercase letters, digits, . _ -); it stays the same when the list is reordered. Kept by edit
   --index <N>              0-based subscriber index (remove/edit take --index or --name; with both, edit renames)
 
@@ -148,8 +153,9 @@ Usage:
   queue sub list [event] [--json] [--scope global|project]
   queue sub add <event> --name <name> --type cli --command "<cmd>" [options] [--scope global|project]
   queue sub add <event> --name <name> --type http --url "<url>" [options] [--scope global|project]
+  queue sub add <event> --name <name> --type action --action <name> [--set key=value ...] [options] [--scope global|project]
   queue sub remove <event> --index <N>|--name <name> [--scope global|project]
-  queue sub edit <event> --index <N>|--name <name> --type cli|http [options] [--scope global|project]
+  queue sub edit <event> --index <N>|--name <name> --type cli|http|action [options] [--scope global|project]
   queue start
   queue stop
   queue relay start|stop|status [--json]   Webhook relay client (reads relay.yml from QUEUE_CONFIG_DIR)
@@ -173,6 +179,8 @@ Sub add/edit options:
   --when <expr>                 Filter: payload.field=value or JSONPath $.field
   --header "key:value"          HTTP only, repeatable
   --method <verb>               HTTP only (default: POST)
+  --action <name>               Action only: the plugin the daemon runs (emit, agent-wake...)
+  --set key=value               Action only, repeatable: a setting of the action; a dotted key nests (--set payload.text=hi)
 
 Status --json fields:
   daemonRunning, pendingCount, dlqCount, uptimeSec, pid, orchAvailable
@@ -762,6 +770,54 @@ function readSubsYmlOrExit(filePath: string): { subscribers: Record<string, Subs
   return result.data as { subscribers: Record<string, SubscriberConfig[]> };
 }
 
+/**
+ * What `queue sub add|edit` checks for an action subscriber before the file is written: the registry (unknown action, `with` block), a warning for an
+ * undeclared emitted event, and loops with the other action subscribers (a certain loop refuses the change, a possible one is a warning). Exits on a refusal.
+ */
+function checkActionEntryOrExit(
+  entry: SubscriberConfig,
+  event: string,
+  where: { configDir: string; scope: 'global' | 'project'; filePath: string; after: Record<string, SubscriberConfig[]> },
+): void {
+  if (entry.type !== 'action') {
+    return;
+  }
+  const actions = createBuiltinActionRegistry();
+  const problems = actionEntryProblems(entry, event, actions);
+  if (problems.length > 0) {
+    for (const problem of problems) {
+      process.stderr.write(`[fail] ${problem}\n`);
+    }
+    process.exit(1);
+  }
+  const loops = checkActionLoops({
+    configDir: where.configDir,
+    registryDir: defaultRegistryDir(process.env),
+    cwd: process.cwd(),
+    scope: where.scope,
+    filePath: where.filePath,
+    after: where.after,
+    changed: { event, name: entry.name ?? '' },
+    actions,
+  });
+  for (const note of loops.notes) {
+    process.stderr.write(`[warn] ${note}\n`);
+  }
+  if (loops.errors.length > 0) {
+    for (const message of loops.errors) {
+      process.stderr.write(`[fail] ${message}\n`);
+    }
+    process.exit(1);
+  }
+  for (const message of loops.warnings) {
+    process.stderr.write(`[warn] ${message}\n`);
+  }
+  const undeclared = undeclaredEventWarning(entry, actions, where.configDir);
+  if (undeclared !== undefined) {
+    process.stderr.write(`[warn] ${undeclared}\n`);
+  }
+}
+
 function writeSubsYmlOrExit(filePath: string, data: { subscribers: Record<string, SubscriberConfig[]> }): void {
   const result = SubscribersYmlSchema.safeParse(data);
   if (!result.success) {
@@ -1040,8 +1096,7 @@ async function main(): Promise<void> {
         process.stdout.write('[ok] no subscribers\n');
       } else {
         for (const sub of response.subscribers) {
-          const target = sub.type === 'cli' ? sub.command : sub.url;
-          process.stdout.write(`[ok] ${sub.subscriberId}  ${sub.type}  ${target ?? '?'}\n`);
+          process.stdout.write(`[ok] ${sub.subscriberId}  ${sub.type}  ${subscriberTarget(sub) ?? '?'}\n`);
         }
       }
     } else {
@@ -1321,8 +1376,7 @@ async function main(): Promise<void> {
             process.stdout.write('[ok] no subscribers\n');
           } else {
             for (const s of response.subscribers) {
-              const target = s.type === 'cli' ? s.command : s.url;
-              process.stdout.write(`[ok] ${s.subscriberId}  ${s.type}  ${target ?? '?'}\n`);
+              process.stdout.write(`[ok] ${s.subscriberId}  ${s.type}  ${subscriberTarget(s) ?? '?'}\n`);
             }
           }
         } else {
@@ -1334,14 +1388,22 @@ async function main(): Promise<void> {
       // --scope provided: read YAML file directly
       const filePath = resolveSubsFile(configDir, scope);
       const data = readSubsYmlOrExit(filePath);
-      const entries: Array<{ subscriberId: string; event: string; type: string; command?: string; url?: string }> = [];
+      const entries: Array<{ subscriberId: string; event: string; type: string; command?: string; url?: string; action?: string; with?: Record<string, unknown> }> = [];
       for (const [evtPattern, subs] of Object.entries(data.subscribers)) {
         if (eventArg && evtPattern !== eventArg) {
           continue;
         }
         for (let i = 0; i < subs.length; i++) {
           const s = subs[i]!;
-          entries.push({ subscriberId: s.name ?? `(unnamed: ${evtPattern} index ${i})`, event: evtPattern, type: s.type, command: s.command, url: s.url });
+          entries.push({
+            subscriberId: s.name ?? `(unnamed: ${evtPattern} index ${i})`,
+            event: evtPattern,
+            type: s.type,
+            command: s.command,
+            url: s.url,
+            ...(s.action !== undefined && { action: s.action }),
+            ...(s.with !== undefined && { with: s.with }),
+          });
           if (s.name === undefined) {
             process.stderr.write(`${unnamedLine(evtPattern, i, scope)}\n`);
           }
@@ -1352,8 +1414,7 @@ async function main(): Promise<void> {
           process.stdout.write('[ok] no subscribers\n');
         } else {
           for (const e of entries) {
-            const target = e.type === 'cli' ? e.command : e.url;
-            process.stdout.write(`[ok] ${e.subscriberId}  ${e.type}  ${target ?? '?'}\n`);
+            process.stdout.write(`[ok] ${e.subscriberId}  ${e.type}  ${subscriberTarget(e) ?? '?'}\n`);
           }
         }
       } else {
@@ -1380,7 +1441,7 @@ async function main(): Promise<void> {
         process.exit(1);
       }
       if (!config.type) {
-        process.stderr.write(`[fail] --type cli|http is required\nUsage: queue sub add <event> --type cli|http ...\n`);
+        process.stderr.write(`[fail] --type cli|http|action is required\nUsage: queue sub add <event> --type cli|http|action ...\n`);
         process.exit(1);
       }
       if (config.name === undefined) {
@@ -1420,6 +1481,7 @@ async function main(): Promise<void> {
       }
       const newEntry = buildSubscriberEntry(config);
       data.subscribers[event] = [...existing, newEntry];
+      checkActionEntryOrExit(newEntry, event, { configDir, scope, filePath, after: data.subscribers });
       writeSubsYmlOrExit(filePath, data);
       process.stdout.write(`[ok] Added subscriber '${config.name}' to '${event}' (index ${existing.length}) in ${filePath}\n`);
       return;
@@ -1479,7 +1541,7 @@ async function main(): Promise<void> {
         return;
       }
       if (!config.type) {
-        process.stderr.write(`[fail] --type cli|http is required (or only --name, to name the subscriber and keep the rest)\nUsage: queue sub edit <event> --index <N> --type cli|http ...\n`);
+        process.stderr.write(`[fail] --type cli|http|action is required (or only --name, to name the subscriber and keep the rest)\nUsage: queue sub edit <event> --index <N> --type cli|http|action ...\n`);
         process.exit(1);
       }
       if (config.type === 'cli' && !config.command) {
@@ -1498,6 +1560,7 @@ async function main(): Promise<void> {
       }
       const newEntry = buildSubscriberEntry(config, subs[index]);
       data.subscribers[event] = subs.map((s, i) => (i === index ? newEntry : s));
+      checkActionEntryOrExit(newEntry, event, { configDir, scope, filePath, after: data.subscribers });
       writeSubsYmlOrExit(filePath, data);
       process.stdout.write(`[ok] Updated subscriber at index ${index} for '${event}' in ${filePath}\n`);
       return;

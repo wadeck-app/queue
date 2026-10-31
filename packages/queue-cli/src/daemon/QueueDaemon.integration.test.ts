@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getQueueProtocolInfo } from '@wadeck-app/queue-core';
+import { HistoryReader, getQueueProtocolInfo } from '@wadeck-app/queue-core';
+import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
 import { startDaemon } from './QueueDaemon.js';
 import { waitFor } from '../testWaitFor.js';
 
@@ -101,5 +102,102 @@ describe('queue daemon over HTTP', () => {
     const answer = await call(port, 'POST', '/push', { token, body: { event: 'it.future', payload: {}, cwd: projectDir, protocol: '9.0.0' } });
     expect(answer.status).toBe(200);
     expect(answer.body).toMatchObject({ ok: true, result: { status: 'rejected', supported: getQueueProtocolInfo().accepts } });
+  });
+});
+
+describe('queue daemon: a type: action subscriber emits an event (end to end over HTTP)', () => {
+  let configDir: string;
+  let projectDir: string;
+  let xdgDir: string;
+  let previousXdg: string | undefined;
+  let projectId: string;
+  let port: number;
+  let token: string;
+
+  beforeAll(async () => {
+    configDir = mkdtempSync(join(tmpdir(), 'queue-daemon-action-config-'));
+    projectDir = mkdtempSync(join(tmpdir(), 'queue-daemon-action-project-'));
+    // The daemon reads the project registry from XDG_CONFIG_HOME: a throwaway one, so the test sees (and touches) nothing of the machine
+    xdgDir = mkdtempSync(join(tmpdir(), 'queue-daemon-action-xdg-'));
+    previousXdg = process.env['XDG_CONFIG_HOME'];
+    process.env['XDG_CONFIG_HOME'] = xdgDir;
+    const registryDir = join(xdgDir, 'project');
+    const project = await addProject(registryDir, { name: 'action-app', path: projectDir });
+    projectId = project.id;
+    writeFileSync(
+      join(projectToolDir(registryDir, projectId, 'queue', 'config', { ensure: true }), 'subscribers.yml'),
+      [
+        'subscribers:',
+        '  it.source:',
+        '    - type: action',
+        '      name: relay',
+        '      action: emit',
+        '      with:',
+        '        event: it.emitted',
+        '        payload:',
+        '          text: "{{ payload.text }}"',
+        '          from: "queue:{{ event }}"',
+        '          ref: "{{ id }}"',
+        '  it.emitted:',
+        '    - type: action',
+        '      name: relay2',
+        '      action: emit',
+        '      with:',
+        '        event: it.final',
+        '        payload: { text: "{{ payload.text }}" }',
+        '',
+      ].join('\n'),
+    );
+    await startDaemon(configDir, { port: 0, version: RELEASE });
+    port = (JSON.parse(await waitForFile(join(configDir, 'config.port'))) as { port: number }).port;
+    token = (await waitForFile(join(configDir, 'health_token'))).trim();
+  });
+
+  afterAll(async () => {
+    await call(port, 'POST', '/quit', { token });
+    await waitFor(() => !existsSync(join(configDir, 'config.port')), 'the daemon to remove its port file after /quit');
+    if (previousXdg === undefined) {
+      delete process.env['XDG_CONFIG_HOME'];
+    } else {
+      process.env['XDG_CONFIG_HOME'] = previousXdg;
+    }
+    for (const dir of [configDir, projectDir, xdgDir]) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it('runs the builtin emit action in the daemon, files the emitted events under the project of the source event and chains a second hop', async () => {
+    const answer = await call(port, 'POST', '/push', { token, body: { event: 'it.source', payload: { text: 'hello' }, cwd: projectDir } });
+    expect(answer.body).toMatchObject({ ok: true, result: { status: 'queued', subscriberCount: 1 } });
+    const sourceId = (answer.body as { result: { eventId: string } }).result.eventId;
+
+    const history = new HistoryReader(join(configDir, 'history'));
+    const emitted = await waitFor(() => {
+      const found = history.read({ event: 'it.emitted' });
+      return found.length === 1 && found[0]!.subscribers.some((sub) => sub.status === 'success') ? found[0] : undefined;
+    }, 'the emitted event it.emitted to be recorded with its own action delivered');
+    const final = await waitFor(() => {
+      const found = history.read({ event: 'it.final' });
+      return found.length === 1 ? found[0] : undefined;
+    }, 'the second hop it.final to be recorded');
+
+    // The source event: its action subscriber ended as a success, shown as action:emit
+    const source = history.read({ event: 'it.source' });
+    expect(source).toHaveLength(1);
+    expect(source[0]).toMatchObject({ eventId: sourceId, projectId });
+    expect(source[0]!.subscribers).toEqual([expect.objectContaining({ subscriberId: `${projectId}/relay`, status: 'success', target: 'action:emit' })]);
+
+    // Attribution: each emitted event belongs to the project of the event that fired the action, with the payload rendered ({{ id }} = id of the source push)
+    expect(emitted).toMatchObject({ projectId, payload: { text: 'hello', from: 'queue:it.source', ref: sourceId } });
+    expect(emitted!.subscribers).toEqual([expect.objectContaining({ subscriberId: `${projectId}/relay2`, status: 'success', target: 'action:emit' })]);
+    expect(final).toMatchObject({ projectId, payload: { text: 'hello' } });
+  });
+
+  it('logs what emit did (the emitted event id) in the dispatch log', async () => {
+    const history = new HistoryReader(join(configDir, 'history'));
+    const emitted = history.read({ event: 'it.emitted' })[0]!;
+    const logsDir = join(configDir, 'logs');
+    const logs = readdirSync(logsDir).map((name) => readFileSync(join(logsDir, name), 'utf8')).join('\n');
+    expect(logs).toContain(`emitted 'it.emitted' (${emitted.eventId})`);
   });
 });

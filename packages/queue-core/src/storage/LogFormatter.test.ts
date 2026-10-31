@@ -90,4 +90,11 @@ describe('LogFormatter', () => {
     const raw = JSON.stringify({ ts: TS, type: 'future-type', a: 1 });
     expect(LogFormatter.format(raw)).toBe(raw);
   });
+
+  it('a dispatch of an action subscriber renders its target as action:<name>', () => {
+    const line = LogFormatter.format(JSON.stringify({
+      ts: TS, type: 'dispatch', status: 'success', subscriberId: 'wake', target: 'action:agent-wake', durationMs: 3,
+    }));
+    expect(line).toBe('[13:05:22] [ok] wake -> action:agent-wake (3ms)');
+  });
 });

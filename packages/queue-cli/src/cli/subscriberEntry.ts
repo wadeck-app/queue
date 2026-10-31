@@ -1,6 +1,45 @@
 import { SUBSCRIBER_NAME_FORMAT, isValidSubscriberName } from '@wadeck-app/queue-core';
 import type { SubscriberConfig } from '@wadeck-app/queue-core';
 
+const FORBIDDEN_KEY_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
+
+/** Applies one `--set key=value` to `target`; returns the problem (what is wrong and what to write), undefined when it was applied. */
+function setSetting(target: Record<string, unknown>, text: string): string | undefined {
+  const eq = text.indexOf('=');
+  if (eq === -1) {
+    return `Invalid --set "${text}": expected key=value, e.g. --set to=project:my-app`;
+  }
+  const key = text.slice(0, eq).trim();
+  const value = text.slice(eq + 1);
+  const segments = key.split('.');
+  if (key === '' || segments.some((segment) => segment === '')) {
+    return `Invalid --set "${text}": the key is empty or has an empty part (write e.g. payload.text=hello)`;
+  }
+  const forbidden = segments.find((segment) => FORBIDDEN_KEY_SEGMENTS.has(segment));
+  if (forbidden !== undefined) {
+    return `Invalid --set "${text}": the key part '${forbidden}' is not allowed`;
+  }
+  let level = target;
+  for (const segment of segments.slice(0, -1)) {
+    const next = level[segment];
+    if (next === undefined) {
+      const created: Record<string, unknown> = {};
+      level[segment] = created;
+      level = created;
+    } else if (typeof next === 'object' && next !== null) {
+      level = next as Record<string, unknown>;
+    } else {
+      return `Invalid --set "${text}": '${segment}' is already set to a plain value, it cannot also hold nested keys. Fix: set either '${segment}' or '${segment}.<key>'`;
+    }
+  }
+  const last = segments[segments.length - 1]!;
+  if (last in level) {
+    return `Invalid --set "${text}": '${key}' is set twice. Fix: pass each key once`;
+  }
+  level[last] = value;
+  return undefined;
+}
+
 export function parseSubFlags(args: string[]): { config: Partial<SubscriberConfig>; errors: string[] } {
   const errors: string[] = [];
   const config: Partial<SubscriberConfig> = {};
@@ -30,11 +69,52 @@ export function parseSubFlags(args: string[]): { config: Partial<SubscriberConfi
   }
 
   const typeVal = getArg('--type');
-  if (typeVal === 'cli' || typeVal === 'http') {
+  if (typeVal === 'cli' || typeVal === 'http' || typeVal === 'action') {
     config.type = typeVal;
   }
   else if (typeVal) {
-    errors.push(`--type must be cli or http, got: ${typeVal}`);
+    errors.push(`--type must be cli, http or action, got: ${typeVal}`);
+  }
+
+  const actionIdx = args.indexOf('--action');
+  if (actionIdx !== -1) {
+    const actionVal = args[actionIdx + 1];
+    if (!actionVal || actionVal.startsWith('--')) {
+      errors.push('--action needs the name of the action, e.g. --action emit');
+    } else {
+      config.action = actionVal;
+    }
+  }
+
+  // Repeatable, like --header: --set key=value, split on the first '='. A dotted key (payload.text) nests, so the payload of 'emit' can be written
+  const settings: Record<string, unknown> = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--set') {
+      continue;
+    }
+    const val = args[i + 1];
+    if (val === undefined || val.startsWith('--')) {
+      errors.push('--set needs a key=value, e.g. --set to=project:my-app');
+      continue;
+    }
+    const problem = setSetting(settings, val);
+    if (problem !== undefined) {
+      errors.push(problem);
+    }
+  }
+  if (Object.keys(settings).length > 0) {
+    config.with = settings;
+  }
+
+  // Said here, not dropped: these flags mean nothing for the other type
+  if (config.type === 'action') {
+    for (const flag of ['--command', '--url', '--method', '--header']) {
+      if (args.includes(flag)) {
+        errors.push(`${flag} does not apply to --type action (an action runs inside the daemon and takes its settings from --set). Fix: remove ${flag}, or use --type ${flag === '--command' ? 'cli' : 'http'}`);
+      }
+    }
+  } else if (config.type !== undefined && (actionIdx !== -1 || args.includes('--set'))) {
+    errors.push(`--action and --set only apply to --type action, got --type ${config.type}. Fix: use --type action, or remove them`);
   }
 
   const commandVal = getArg('--command');
@@ -113,6 +193,27 @@ export function buildSubscriberEntry(config: Partial<SubscriberConfig>, previous
   const name = config.name ?? previous?.name;
   if (name) {
     entry.name = name;
+  }
+  if (entry.type === 'action') {
+    // An action takes none of the cli/http fields (the loader refuses them), so nothing of the previous entry but its name is carried over:
+    // switching a cli or http entry to an action drops its command, url, headers, cwd and env instead of leaving them to be refused
+    if (config.action) {
+      entry.action = config.action;
+    }
+    entry.with = config.with ?? {};
+    if (config.timeout) {
+      entry.timeout = config.timeout;
+    }
+    if (config.retries !== undefined) {
+      entry.retries = config.retries;
+    }
+    if (config.backoff) {
+      entry.backoff = config.backoff;
+    }
+    if (config.when) {
+      entry.when = config.when;
+    }
+    return entry;
   }
   if (config.command) {
     entry.command = config.command;
@@ -199,4 +300,12 @@ export function unnamedLine(event: string, index: number, scope: 'global' | 'pro
     `[warn] subscriber ${event}[${index}] has no name: a name is required, so the daemon refuses to load this file. ` +
     `Fix: queue sub edit ${event} --index ${index} --name <name>${scope === 'project' ? ' --scope project' : ''}`
   );
+}
+
+/** What a listing prints as the target of a subscriber: its command, its URL or `action:<name>`. */
+export function subscriberTarget(sub: { type: string; command?: string; url?: string; action?: string }): string | undefined {
+  if (sub.type === 'action') {
+    return `action:${sub.action ?? '?'}`;
+  }
+  return sub.type === 'cli' ? sub.command : sub.url;
 }

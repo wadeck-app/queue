@@ -40,6 +40,11 @@ export class ActionRegistry {
     return this.byName.get(name);
   }
 
+  /** The registered plugins, in registration order. */
+  list(): readonly ActionPlugin[] {
+    return this.plugins;
+  }
+
   /** The names of the registered plugins (not their aliases), in registration order. */
   names(): string[] {
     return this.plugins.map((plugin) => plugin.name);

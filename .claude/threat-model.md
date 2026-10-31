@@ -76,6 +76,23 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 - **Mitigation:** `relayUrl` must be `wss://`; `ws://` is only accepted for localhost (config validation, `queue relay start` fails otherwise).
 - **Threat (dotted `payloadMatch`):** The relay only compares top-level payload keys. A dotted key is evaluated on the client, never by the relay, so it cannot widen what the relay delivers beyond the coarse `source` + `eventType` filter.
 
+### Prompt injection into agent sessions (`type: action`, `agent-wake`)
+
+- **Threat:** An `agent-wake` subscriber turns event text (a relay webhook: PR title, commit message, issue body) into input of a Claude Code session. Anyone who controls that text can try to instruct the agent; a payload that picks the recipient could also aim it at another session.
+- **Mitigation:** `to` must be a UUID or `project:<folder>`, checked on the rendered value too, so a payload cannot name anything else; `mode: passive` queues the message without waking the session (recommended for untrusted sources); `from` defaults to `queue:<event>` so the consumer can show the origin; `text` is capped (16 KB) and a NUL is refused; `mode` is a literal (a payload cannot choose `wake`). Use `when:` to limit which events reach an agent.
+- **Risk accepted:** Text from an allowed source still reaches the agent. A session id or project folder written by a payload field is accepted if it matches the pattern.
+
+### Settings of an action in the dashboard
+
+- **Threat:** `with` may hold a token, a recipient or a message; `GET /subscribers` travels to a browser.
+- **Mitigation:** every `with` value is masked (`***`), keys are kept, like `headers` and `env`.
+
+### Action loops and fan-out
+
+- **Threat:** An action that emits an event another action (or itself) listens to loops; one event can also fan out to many actions.
+- **Mitigation:** a hop counter (cap 5, set only by the daemon from its own push, never from the wire, kept through WAL, DLQ, retry and dlq-replay), refusal of `before*` emits, a 64 KB cap on the emitted payload, and a static cycle check in `queue sub add|edit` and at daemon start.
+- **Risk accepted:** `queue replay` resets the counter to 0. The static check misses cycles through a descendant project's file and through non-action subscribers (a `cli` that runs `queue push`); fan-out is not capped.
+
 ## Out-of-scope threats
 
 - Supply-chain attacks on npm dependencies (use `npm audit`)

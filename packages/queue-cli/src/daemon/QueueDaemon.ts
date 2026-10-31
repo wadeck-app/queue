@@ -3,6 +3,7 @@ import type { ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { createQueueService, getErrorMessage, getQueueProtocolInfo } from '@wadeck-app/queue-core';
 import { registerWithAppCore } from './AppCoreRegistration.js';
+import { createBuiltinActionRegistry } from '../actions/builtinActions.js';
 
 export const DAEMON_PORT = 47910;
 export const IDLE_TIMEOUT_MS = 60_000;
@@ -18,7 +19,8 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
   let idleCountdown: ReturnType<typeof setTimeout> | null = null;
   let daemonHandle: Awaited<ReturnType<typeof createDaemon>> | null = null;
 
-  const service = createQueueService(configDir, { onActivity: resetIdleCountdown, registryDir: defaultRegistryDir(process.env) });
+  // The action plugins this build ships (emit, plus the ones in builtinActions.ts): a type: action subscriber naming any other fails alone, to the DLQ, with the list of the available ones
+  const service = createQueueService(configDir, { onActivity: resetIdleCountdown, registryDir: defaultRegistryDir(process.env), actions: createBuiltinActionRegistry() });
 
   function resetIdleCountdown(): void {
     if (idleCountdown) {
