@@ -57,7 +57,7 @@ async function registerApp(): Promise<string> {
 describe('getRelatedForProject: the contract with the project module', () => {
   it('answers count 0, no item and the history link for a project the queue never saw', async () => {
     const id = await registerApp();
-    expect(getRelatedForProject(configDir, registryDir, id, NOW)).toEqual({ title: 'Queue', count: 0, items: [], moreUrl: `/modules/queue/history?project=${id}` });
+    expect(getRelatedForProject(configDir, registryDir, id, NOW)).toEqual({ title: 'Queue', count: 0, countLabel: 'pending or in the dead-letter queue', items: [], moreUrl: `/modules/queue/history?project=${id}` });
   });
 
   it('counts the in-flight WAL entries (pending and failed) and the DLQ entries of the project, not the delivered ones nor another project\'s', async () => {

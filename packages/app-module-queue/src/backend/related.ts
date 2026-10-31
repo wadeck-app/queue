@@ -8,6 +8,9 @@ import { assertProjectId } from './projects.js';
 /** How many history entries the card lists. */
 export const RELATED_ITEMS_LIMIT = 10;
 
+/** What the count of the card means: the dispatches that still need attention (in flight, or given up in the dead-letter queue). */
+export const RELATED_COUNT_LABEL = 'pending or in the dead-letter queue';
+
 /** How many subscriber ids a subtitle names before it says `+N`. */
 const SUBSCRIBER_IDS_SHOWN = 2;
 
@@ -23,6 +26,8 @@ export interface RelatedResponse {
   title: 'Queue';
   /** Dispatches filed under the project that are in flight (pending or failed, awaiting a retry) plus the ones in the dead-letter queue. */
   count: number;
+  /** What `count` counts, shown by the project module as "{count} {countLabel}" (short, lowercase). */
+  countLabel: string;
   items: RelatedItem[];
   moreUrl: string;
 }
@@ -66,7 +71,7 @@ export function getRelatedForProject(configDir: string, registryDir: string, pro
       subtitle: `count = ${inFlight} in flight + ${given} given up`,
     });
   }
-  return { title: 'Queue', count: inFlight + given, items, moreUrl: `/modules/queue/history?${projectParam}` };
+  return { title: 'Queue', count: inFlight + given, countLabel: RELATED_COUNT_LABEL, items, moreUrl: `/modules/queue/history?${projectParam}` };
 }
 
 /**

@@ -10,6 +10,7 @@ Card for the project detail page.
 {
   "title": "Queue",
   "count": 3,
+  "countLabel": "pending or in the dead-letter queue",
   "items": [
     { "label": "1 in the dead-letter queue", "url": "/modules/queue/dlq?project=64f4ae91", "subtitle": "count = 2 in flight + 1 given up" },
     { "label": "onPush success", "url": "/modules/queue/history?project=64f4ae91&event=onPush", "subtitle": "5 min ago - sub-a, sub-b +1" }
@@ -25,7 +26,7 @@ Card for the project detail page.
 | Id is not 8 lowercase hex characters | 400 | `{ "error": ... }`, same wording as `/dlq?project=` |
 | Unreadable registry or queue file | 500 | `{ "error": ... }` |
 
-- `count` = in-flight WAL entries (pending, or failed and awaiting a retry) + DLQ entries of the project.
+- `count` = in-flight WAL entries (pending, or failed and awaiting a retry) + DLQ entries of the project. `countLabel` says what it counts (shown as "{count} {countLabel}"): it can be 0 while `items` lists history.
 - `items` = the 10 newest history entries of the project, newest first, preceded by one DLQ link when the DLQ holds entries of the project. Every `url` starts with `/modules/`.
 - Item status in the label, worst first: `dlq`, `failed`, `pending` (fewer dispatches reported than matched), `success`, `filtered`; `orphan` for a record with no trigger.
 - A retry has its own history record: it shows as a separate `orphan` row, it is not merged into the original.
