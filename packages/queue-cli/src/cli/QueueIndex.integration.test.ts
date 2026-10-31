@@ -481,3 +481,21 @@ describe('queue sub add (integration): the name is mandatory and unique per even
     expect(again.stderr).toContain(`queue sub edit ${event} --name dup`);
   });
 });
+
+describe('queue sub add (integration): a command with {{ }} placeholders runs without a shell', () => {
+  const event = 'onSubAddTemplate.test';
+
+  it('refuses a placeholder next to a shell operator, with the fix, and writes nothing', () => {
+    const result = runCli(['sub', 'add', event, '--name', 'piped', '--type', 'cli', '--command', 'echo {{ payload.title }} | sort']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("'|'");
+    expect(result.stderr).toContain('stdin');
+    expect(result.stderr).toContain('Fix:');
+    expect(runCli(['list-subscribers', event]).stdout).not.toContain('piped');
+  });
+
+  it('accepts a placeholder in a plain argument', () => {
+    const result = runCli(['sub', 'add', event, '--name', 'plain', '--type', 'cli', '--command', 'node script.js --title "{{ payload.title }}"']);
+    expect(result.exitCode).toBe(0);
+  });
+});

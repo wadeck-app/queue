@@ -27,9 +27,10 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 
 ### Event payload injection into CLI commands
 
-- **Threat:** A `cli` subscriber may template event payload values into its command string. If the `command` field is built with user-controlled payload data, shell injection is possible.
-- **Mitigation:** <!-- TODO: verify how CliTransport executes commands — check if it uses shell: true or spawn with argument array; shell injection risk differs significantly -->
-- **Risk:** Unknown until `CliTransport.ts` is audited.
+- **Threat:** A `cli` subscriber may template event payload values (`{{ payload.x }}`, data from relay events or `queue push`) into its command. Audited: `CliTransport` used to paste the value into the command and run it with `spawn(command, [], { shell: true })`, so a value like `a; touch x` or `& calc` ran as code on POSIX and on Windows `cmd.exe`. Environment variables are no fix on `cmd.exe` (`%X%` is re-parsed).
+- **Mitigation:** A command with `{{ }}` runs without a shell: it is split into arguments first, then values are substituted inside each argument (`commandTemplate.ts`), so a value is always one argument. A Windows `.cmd`/`.bat` target (which needs `cmd.exe`) refuses, as a permanent failure, any value holding `& | < > ^ % ! "`, a backtick or a line break. At load time (`ConfigLoader`, `queue sub add|edit`) a command that mixes `{{ }}` with shell syntax, an unterminated quote or a placeholder as the program is rejected. See [docs/subscribers.md](../docs/subscribers.md).
+- **Unchanged:** a command without `{{ }}` still runs in a shell as written (trusted `subscribers.yml`, see the first threat).
+- **Residual risk:** option injection (a value starting with `-` is still an option of the program), and a batch file that re-expands its own arguments unsafely.
 
 ### Local process calling daemon RPC (port 47910)
 

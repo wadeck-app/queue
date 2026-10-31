@@ -47,7 +47,7 @@ export class AsyncDispatcher {
             this.failConfig(envelope, walEntry, sub, sub.cwdProblem);
             return;
           }
-          result = await this.cliTransport.dispatch(sub.command, envelope, sub.timeoutMs, sub.cwd, sub.env);
+          result = await this.cliTransport.dispatch(sub.command, envelope, sub.timeoutMs, sub.cwd, sub.env, sub.subscriberId);
         } else {
           if (!sub.url) {
             this.failConfig(envelope, walEntry, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);
@@ -66,7 +66,8 @@ export class AsyncDispatcher {
           const newAttempts = walEntry.attempts + 1;
           const lastError = result.error ?? 'unknown error';
           this.walUpdater(walEntry.id, { status: 'failed', lastError, attempts: newAttempts });
-          if (newAttempts < sub.retries) {
+          // A permanent failure (refused value, bad command) would fail the same way again: no retry
+          if (newAttempts < sub.retries && result.permanent !== true) {
             this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
             this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target, ...projectRefsOf(envelope.meta) });
             try {

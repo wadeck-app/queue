@@ -23,7 +23,7 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, findTemplateProblem } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -1378,6 +1378,12 @@ async function main(): Promise<void> {
         process.stderr.write(`[fail] --command is required for type: cli\n`);
         process.exit(1);
       }
+      // A command with {{ }} placeholders runs without a shell: refuse here what the loader would refuse later, while the user is at the keyboard
+      const templateProblem = config.type === 'cli' && config.command ? findTemplateProblem(config.command) : undefined;
+      if (templateProblem !== undefined) {
+        process.stderr.write(`[fail] --command: ${templateProblem}\n`);
+        process.exit(1);
+      }
       if (config.type === 'http' && !config.url) {
         process.stderr.write(`[fail] --url is required for type: http\n`);
         process.exit(1);
@@ -1459,6 +1465,12 @@ async function main(): Promise<void> {
       }
       if (config.type === 'cli' && !config.command) {
         process.stderr.write(`[fail] --command is required for type: cli\n`);
+        process.exit(1);
+      }
+      // A command with {{ }} placeholders runs without a shell: refuse here what the loader would refuse later, while the user is at the keyboard
+      const templateProblem = config.type === 'cli' && config.command ? findTemplateProblem(config.command) : undefined;
+      if (templateProblem !== undefined) {
+        process.stderr.write(`[fail] --command: ${templateProblem}\n`);
         process.exit(1);
       }
       if (config.type === 'http' && !config.url) {

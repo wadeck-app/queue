@@ -281,3 +281,17 @@ describe('AsyncDispatcher - diagnosability', () => {
     });
   });
 });
+
+describe('AsyncDispatcher - permanent failure', () => {
+  it('moves a permanent failure to the DLQ on the first attempt even when retries remain, without scheduling a retry', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'refused value', permanent: true, durationMs: 1 });
+    const walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
+    const dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
+    const dispatcher = new AsyncDispatcher(walUpdater, dlqMover, makeLogger(), makeHistoryLog());
+
+    const w = makeWalEntry('sub-1');
+    await dispatcher.dispatch([{ ...makeSub('sub-1'), retries: 5 }], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), 'refused value');
+  });
+});

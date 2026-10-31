@@ -39,6 +39,10 @@ The daemon auto-starts on any command that needs it; `queue start` is only neede
 
 `queue wait <event>` and `queue wait ci` block until an event or a commit's CI is done, so an agent does not poll. An agent finds the event names and payload paths with `queue events list|show` (output kept even without a TTY); an undeclared name still waits but warns, `--strict` refuses it (exit 4). `<event>` may be a quoted pattern (`queue wait "dep.published.*"`; `*` one segment, `>` the rest; always double-quote, unquoted `>` is a shell redirect). See [docs/wait.md](docs/wait.md).
 
+## Subscribers
+
+A `cli` subscriber command may template payload values with `{{ payload.field }}`; such a command runs without a shell. Rules, load-time errors and Windows `.cmd` limits: [docs/subscribers.md](docs/subscribers.md).
+
 ## Pushing events from your own program
 
 Use [`@wadeck-app/queue-sdk`](packages/queue-sdk/README.md): it finds and starts the daemon, never throws and reports every failure. The wire contract and its versioning rules are in [docs/push-protocol.md](docs/push-protocol.md).

@@ -46,7 +46,7 @@ export class SyncDispatcher {
         if (sub.cwdProblem !== undefined) {
           return this.abort(envelope, sub, sub.cwdProblem);
         }
-        result = await this.cliTransport.dispatch(sub.command, currentEnvelope, timeoutMs, sub.cwd, sub.env);
+        result = await this.cliTransport.dispatch(sub.command, currentEnvelope, timeoutMs, sub.cwd, sub.env, sub.subscriberId);
       } else {
         if (!sub.url) {
           return this.abort(envelope, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);

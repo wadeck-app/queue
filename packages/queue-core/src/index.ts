@@ -19,6 +19,7 @@ export type { SubscriberConfig } from './ConfigLoader.js';
 export { ProjectResolver } from './project/ProjectResolver.js';
 export type { ProjectLookup, EventProject } from './project/ProjectResolver.js';
 export { SubscribersYmlSchema, SUBSCRIBER_NAME_FORMAT, isValidSubscriberName } from './ConfigLoader.js';
+export { findTemplateProblem, hasPlaceholders } from './dispatch/commandTemplate.js';
 export { PayloadFilter } from './dispatch/PayloadFilter.js';
 export type { FilterEvaluation } from './dispatch/PayloadFilter.js';
 export type { EventEnvelope } from './types.js';

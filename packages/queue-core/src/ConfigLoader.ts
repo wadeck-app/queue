@@ -7,6 +7,7 @@ import { EventMatcher } from './dispatch/EventMatcher.js';
 import type { ResolvedSubscriber } from './types.js';
 import { getErrorMessage } from './errors.js';
 import { isRecord } from './isRecord.js';
+import { findTemplateProblem } from './dispatch/commandTemplate.js';
 
 const SubscriberConfigSchema = z.object({
   type: z.enum(['cli', 'http']),
@@ -142,6 +143,12 @@ function assertDispatchable(event: string, index: number, raw: SubscriberConfig,
       `[queue] Invalid ${location}: type 'cli' requires a 'command' field.\n` +
       `Fix: add 'command: <shell command>' or run: queue sub edit ${event} --index ${index} --type cli --command "<cmd>"`
     );
+  }
+  if (raw.type === 'cli' && raw.command) {
+    const problem = findTemplateProblem(raw.command);
+    if (problem !== undefined) {
+      throw new Error(`[queue] Invalid ${location}: ${problem}`);
+    }
   }
   if (raw.type === 'http' && !raw.url) {
     throw new Error(

@@ -670,3 +670,64 @@ describe('ConfigLoader - subscribers kept in the config folder of a registered p
     expect(loader.getSubscribers('onFoo', projectDir).map((sub) => sub.subscriberId)).toEqual(['g']);
   });
 });
+
+describe('ConfigLoader - command templates ({{ }} runs without a shell)', () => {
+  let globalDir: string;
+  let loader: ConfigLoader;
+
+  beforeEach(() => {
+    globalDir = makeTmpDir();
+    loader = new ConfigLoader(globalDir);
+  });
+
+  afterEach(() => {
+    rmSync(globalDir, { recursive: true, force: true });
+  });
+
+  function load(command: string) {
+    writeFileSync(join(globalDir, 'subscribers.yml'), `subscribers:\n  onFoo:\n    - type: cli\n      name: notify\n      command: ${JSON.stringify(command)}\n`, 'utf-8');
+    return loader.getSubscribers('onFoo', undefined);
+  }
+
+  it('accepts a command with placeholders and quoted arguments', () => {
+    expect(load('node script.js --title "{{ payload.title }}" --id {{ id }}')).toHaveLength(1);
+  });
+
+  it('leaves a command without placeholders alone, shell syntax included (trusted config)', () => {
+    expect(load('echo a | sort > out.txt && echo $HOME')).toHaveLength(1);
+  });
+
+  it.each([
+    ['a pipe', 'cat {{ x }} | sort', "'|'"],
+    ['&&', 'build {{ x }} && deploy', "'&'"],
+    ['a semicolon', 'echo {{ x }}; rm -rf y', "';'"],
+    ['a redirection', 'echo {{ x }} > out.txt', "'>'"],
+    ['a backtick', 'echo {{ x }} `date`', '`'],
+    ['$( )', 'echo {{ x }} $(date)', '$('],
+    ['%VAR%', 'echo {{ x }} %PATH%', '%PATH%'],
+    ['$VAR', 'echo {{ x }} $HOME', '$H'],
+  ])('rejects %s next to a placeholder, naming the subscriber, the event and the fix', (_label, command, shown) => {
+    let message = '';
+    try {
+      load(command);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("subscriber 'onFoo' index 0");
+    expect(message).toContain(shown);
+    expect(message).toContain('stdin');
+    expect(message).toContain('Fix:');
+  });
+
+  it('accepts the same characters in single quotes (passed literally)', () => {
+    expect(load("echo {{ x }} '| & ; > $HOME `date`'")).toHaveLength(1);
+  });
+
+  it('rejects an unterminated quote', () => {
+    expect(() => load('echo "{{ x }}')).toThrow(/unterminated double quote/);
+  });
+
+  it('rejects a placeholder in the program position', () => {
+    expect(() => load('{{ program }} --flag')).toThrow(/program position/);
+  });
+});
