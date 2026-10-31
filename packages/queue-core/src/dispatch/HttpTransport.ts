@@ -1,5 +1,5 @@
 import type { EventEnvelope } from '../types.js';
-import type { DispatchResult } from './CliTransport.js';
+import type { DispatchResult } from './DispatchResult.js';
 import { getErrorMessage } from '../errors.js';
 
 export class HttpTransport {

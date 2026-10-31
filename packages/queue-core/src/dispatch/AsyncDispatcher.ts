@@ -1,5 +1,7 @@
 import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
+import type { ActionTransport } from './ActionTransport.js';
+import { runSubscriber, targetOf } from './runSubscriber.js';
 import { RetryScheduler } from './RetryScheduler.js';
 import { OutputCapture } from './OutputCapture.js';
 import type { WalEntry } from '../storage/Wal.js';
@@ -19,6 +21,8 @@ export class AsyncDispatcher {
     private readonly logger: QueueLogWriter,
     // Terse audit trail for `queue history`, written unconditionally unlike logger.logDispatch
     private readonly historyLog: HistoryWriter,
+    // Absent: an action subscriber fails for good with a message that says no actions run in this process
+    private readonly actionTransport?: ActionTransport,
   ) {}
 
   async dispatch(
@@ -37,30 +41,17 @@ export class AsyncDispatcher {
           return;
         }
 
-        let result;
-        if (sub.type === 'cli') {
-          if (!sub.command) {
-            this.failConfig(envelope, walEntry, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
-            return;
-          }
-          if (sub.cwdProblem !== undefined) {
-            this.failConfig(envelope, walEntry, sub, sub.cwdProblem);
-            return;
-          }
-          result = await this.cliTransport.dispatch(sub.command, envelope, sub.timeoutMs, sub.cwd, sub.env, sub.subscriberId);
-        } else {
-          if (!sub.url) {
-            this.failConfig(envelope, walEntry, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);
-            return;
-          }
-          result = await this.httpTransport.dispatch(sub.url, sub.method ?? 'POST', sub.headers, envelope, sub.timeoutMs);
+        const outcome = await runSubscriber(sub, envelope, sub.timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport });
+        if (outcome.kind === 'config') {
+          this.failConfig(envelope, walEntry, sub, outcome.error);
+          return;
         }
-
-        const target = sub.command ?? sub.url ?? '';
+        const result = outcome.result;
+        const target = targetOf(sub) ?? '';
         const captured = OutputCapture.forLog(result.success, result.stdout, result.stderr);
         if (result.success) {
           this.walUpdater(walEntry.id, { status: 'acked', ackedAt: new Date().toISOString() });
-          this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
+          this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured, ...(result.detail !== undefined && { detail: result.detail }) });
           this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
         } else {
           const newAttempts = walEntry.attempts + 1;
@@ -88,17 +79,23 @@ export class AsyncDispatcher {
     );
   }
 
-  /** Misconfigured subscriber: fail the WAL entry and make the reason visible in the log file. */
-  private failConfig(envelope: EventEnvelope, walEntry: WalEntry, sub: ResolvedSubscriber, error: string): void {
+  /**
+   * Misconfigured subscriber (no command, unknown action, no folder to run from...): the same configuration would fail the same way on every retry,
+   * so the entry goes straight to the DLQ with the reason, instead of staying 'failed' in the WAL with nobody looking at it.
+   */
+  private failConfig(envelope: EventEnvelope, walEntry: WalEntry, sub: ResolvedSubscriber, reason: string): void {
     const attempts = walEntry.attempts + 1;
+    const error = `${reason} (not retried: fix subscribers.yml, then replay the entry from the DLQ: queue dlq replay --id ${walEntry.id})`;
     this.walUpdater(walEntry.id, { status: 'failed', lastError: error, attempts });
     this.logger.logDispatch({
       event: walEntry.event,
       subscriberId: sub.subscriberId,
-      status: 'failed',
+      status: 'dlq',
+      target: targetOf(sub),
       error,
       attempts,
     });
-    this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target: sub.command ?? sub.url, ...projectRefsOf(envelope.meta) });
+    this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target: targetOf(sub), ...projectRefsOf(envelope.meta) });
+    this.dlqMover({ ...walEntry, attempts }, error);
   }
 }

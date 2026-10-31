@@ -9,13 +9,13 @@ import { isRecord } from '../isRecord.js';
 
 export const MAX_EVENTS_PER_SOURCE = 500;
 const MAX_SOURCE_LENGTH = 64;
-const MAX_NAME_LENGTH = 128;
+export const MAX_NAME_LENGTH = 128;
 const MAX_DESCRIPTION_LENGTH = 500;
 const MAX_SCHEMA_BYTES = 64 * 1024;
 const MAX_EXAMPLE_BYTES = 16 * 1024;
 
 const SOURCE_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
-const NAME_PATTERN = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
+export const NAME_PATTERN = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
 const PAYLOAD_PATH_PATTERN = /^payload(\.[A-Za-z0-9_-]+)+$/;
 
 export const EVENT_OUTCOMES = ['success', 'failure', 'info'] as const;

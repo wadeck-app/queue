@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CliTransport, type DispatchResult } from './CliTransport.js';
+import { CliTransport } from './CliTransport.js';
+import type { DispatchResult } from './DispatchResult.js';
 import type { EventEnvelope } from '../types.js';
 
 const IS_WINDOWS = process.platform === 'win32';

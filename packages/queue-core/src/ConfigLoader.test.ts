@@ -3,6 +3,8 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConfigLoader, type ProjectConfigSource } from './ConfigLoader.js';
+import { createActionRegistry } from './actions/createActionRegistry.js';
+import type { ResolvedSubscriber } from './types.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-test-${crypto.randomUUID()}`);
@@ -742,5 +744,108 @@ describe('ConfigLoader - a ** event pattern is refused at load time', () => {
     } finally {
       rmSync(globalDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('ConfigLoader - type action', () => {
+  let globalDir: string;
+
+  beforeEach(() => {
+    globalDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    rmSync(globalDir, { recursive: true, force: true });
+  });
+
+  const write = (lines: string[]): void => writeFileSync(join(globalDir, 'subscribers.yml'), lines.join(NL) + NL, 'utf-8');
+  const loadGlobal = (loader: ConfigLoader): ResolvedSubscriber[] => [...loader.load(undefined).values()].flat();
+  const strict = (): ConfigLoader => new ConfigLoader(globalDir, { actions: createActionRegistry() });
+
+  const EMIT = [
+    'subscribers:',
+    '  onTicket.created:',
+    '    - type: action',
+    '      name: wake',
+    '      action: emit',
+    '      timeout: 5s',
+    '      retries: 2',
+    '      with:',
+    '        event: agent.message',
+    '        payload:',
+    '          text: "{{ payload.title }}"',
+  ];
+
+  it('resolves an action subscriber: action and with, no method, cwd, command, url, headers nor env', () => {
+    write(EMIT);
+    const [sub] = loadGlobal(strict());
+    expect(sub).toMatchObject({ subscriberId: 'wake', type: 'action', action: 'emit', timeoutMs: 5000, retries: 2, with: { event: 'agent.message', payload: { text: '{{ payload.title }}' } } });
+    for (const key of ['method', 'cwd', 'command', 'url', 'headers', 'env', 'configProblem', 'cwdProblem']) {
+      expect((sub as unknown as Record<string, unknown>)[key]).toBeUndefined();
+    }
+  });
+
+  it('does not give an action the env of the file, nor a cwdProblem in a virtual project', () => {
+    write(['env:', '  A: b', ...EMIT]);
+    const [sub] = loadGlobal(strict());
+    expect(sub?.env).toBeUndefined();
+  });
+
+  it('without a registry, checks the structure only: an unknown action and a bad with block load as they are written', () => {
+    write(['subscribers:', '  onX:', '    - type: action', '      name: a', '      action: nope', '      with:', '        anything: [1]']);
+    const [sub] = loadGlobal(new ConfigLoader(globalDir));
+    expect(sub).toMatchObject({ action: 'nope', with: { anything: [1] } });
+    expect(sub?.configProblem).toBeUndefined();
+  });
+
+  it('with a registry, an unknown action gives THAT subscriber a configProblem listing the available actions; the neighbours load and the file is not refused', () => {
+    write(['subscribers:', '  onX:', '    - type: action', '      name: a', '      action: nope', '    - type: cli', '      name: c', '      command: echo hi']);
+    const subs = loadGlobal(strict());
+    expect(subs.find((s) => s.name === 'a')?.configProblem).toMatch(/unknown action "nope"\. Available actions: emit/);
+    expect(subs.find((s) => s.name === 'c')).toMatchObject({ type: 'cli', command: 'echo hi' });
+    expect(subs.find((s) => s.name === 'c')?.configProblem).toBeUndefined();
+  });
+
+  it('with a registry, a with block the plugin refuses fails the load with what to write', () => {
+    write(['subscribers:', '  onX:', '    - type: action', '      name: a', '      action: emit', '      with:', '        event: "agent.{{ payload.k }}"']);
+    expect(() => strict().load(undefined)).toThrow(/action 'emit': 'with\.event' must be a literal event name/);
+  });
+
+  it('refuses a missing or blank action, naming the fix', () => {
+    write(['subscribers:', '  onX:', '    - type: action', '      name: a']);
+    expect(() => new ConfigLoader(globalDir).load(undefined)).toThrow(/requires an 'action' field/);
+    write(['subscribers:', '  onX:', '    - type: action', '      name: a', '      action: "  "']);
+    expect(() => new ConfigLoader(globalDir).load(undefined)).toThrow(/requires an 'action' field/);
+  });
+
+  it.each([
+    ['command', 'command: echo hi'],
+    ['url', 'url: http://localhost/x'],
+    ['method', 'method: PUT'],
+    ['headers', 'headers: { A: b }'],
+    ['cwd', 'cwd: /tmp'],
+    ['env', 'env: { A: b }'],
+  ])('refuses %s on an action instead of ignoring it', (field, line) => {
+    write(['subscribers:', '  onX:', '    - type: action', '      name: a', '      action: emit', `      ${line}`]);
+    expect(() => new ConfigLoader(globalDir).load(undefined)).toThrow(new RegExp(`does not take '${field}'`));
+  });
+
+  it('refuses action or with on a cli or http subscriber', () => {
+    write(['subscribers:', '  onX:', '    - type: cli', '      name: a', '      command: echo hi', '      action: emit']);
+    expect(() => new ConfigLoader(globalDir).load(undefined)).toThrow(/'action' only applies to type 'action'/);
+    write(['subscribers:', '  onX:', '    - type: http', '      name: a', '      url: http://localhost/x', '      with: { a: 1 }']);
+    expect(() => new ConfigLoader(globalDir).load(undefined)).toThrow(/'with' only applies to type 'action'/);
+  });
+
+  it('refuses a with that is not a mapping', () => {
+    write(['subscribers:', '  onX:', '    - type: action', '      name: a', '      action: emit', '      with: [1, 2]']);
+    expect(() => new ConfigLoader(globalDir).load(undefined)).toThrow(/Invalid subscribers\.yml/);
+  });
+
+  it('cli and http subscribers still resolve as before (method POST by default)', () => {
+    write(['subscribers:', '  onX:', '    - type: http', '      name: h', '      url: http://localhost/x', '    - type: cli', '      name: c', '      command: echo hi']);
+    const subs = loadGlobal(strict());
+    expect(subs.find((s) => s.name === 'h')).toMatchObject({ type: 'http', method: 'POST' });
+    expect(subs.find((s) => s.name === 'c')).toMatchObject({ type: 'cli', cwd: globalDir });
   });
 });

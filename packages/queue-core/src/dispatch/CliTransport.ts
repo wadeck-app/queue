@@ -4,16 +4,7 @@ import { delimiter, extname, isAbsolute, resolve } from 'node:path';
 import type { EventEnvelope } from '../types.js';
 import { getErrorMessage } from '../errors.js';
 import { CommandTemplateError, findCmdMetacharacter, hasPlaceholders, substituteToken, tokenizeTemplate } from './commandTemplate.js';
-
-export interface DispatchResult {
-  success: boolean;
-  stdout?: string;
-  stderr?: string;
-  error?: string;
-  durationMs: number;
-  /** The failure cannot be fixed by trying again (the command or the event is the problem): no retry, straight to the DLQ. */
-  permanent?: true;
-}
+import type { DispatchResult } from './DispatchResult.js';
 
 type SpawnOptions = Parameters<typeof spawn>[2];
 

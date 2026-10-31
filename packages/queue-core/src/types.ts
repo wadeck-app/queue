@@ -6,6 +6,13 @@ export interface EventMeta {
   projectId?: string;
   /** Set on the dispatch of a subscriber of a descendant project (push direction `to-children`): `projectId` is then the descendant's, this is the project the event was emitted in. */
   emitterProjectId?: string;
+  /**
+   * How many actions in a chain emitted this event (absent = 0, pushed by a client). Set only by the daemon's internal push, never read from the wire;
+   * it survives the WAL, the DLQ, retry and dlq-replay. `queue replay` goes through the RPC push and starts again at 0.
+   */
+  hops?: number;
+  /** Id of the push that created the event, set at the first push: a retry or a dlq-replay gets a new WAL id, so `{{ id }}` of an action template renders this one (stable dedupe key). */
+  eventId?: string;
 }
 
 export interface EventEnvelope {
@@ -32,7 +39,13 @@ export interface ResolvedSubscriber {
   /** Where a project subscriber was found: the config folder of its registered project. */
   via?: 'registry';
   event: string;
-  type: 'cli' | 'http';
+  type: 'cli' | 'http' | 'action';
+  /** Name of the action plugin run in the daemon (type 'action' only). */
+  action?: string;
+  /** The configuration of the action, rendered and checked by the plugin (type 'action' only). */
+  with?: Record<string, unknown>;
+  /** Why this subscriber cannot run (e.g. an unknown action); the dispatch fails for good, straight to the DLQ, with this message. The other subscribers of the file are not affected. */
+  configProblem?: string;
   command?: string;
   url?: string;
   method?: string;

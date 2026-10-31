@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createQueueService } from './QueueService.js';
+import { createQueueService, type QueueService } from './QueueService.js';
+import { createActionRegistry } from '../actions/createActionRegistry.js';
+import type { ActionPlugin, ActionResult } from '../actions/ActionPlugin.js';
+import { RetryScheduler } from '../dispatch/RetryScheduler.js';
+import type { DlqEntry } from '../storage/DlqStore.js';
+import type { EventEnvelope } from '../types.js';
 import { readCatalog } from '../catalog/EventCatalog.js';
 import { Wal, type WalEntry } from '../storage/Wal.js';
 import { HistoryReader } from '../storage/HistoryReader.js';
@@ -483,14 +488,15 @@ describe('the project chain of an event (Decision #29): parents, virtual project
     expect(triggerCounts()).toEqual([1]);
   });
 
-  it('a cli subscriber of a virtual project with no cwd of its own fails loudly (failed in the WAL, with the reason), naming the project', async () => {
+  it('a cli subscriber of a virtual project with no cwd of its own fails loudly (straight to the DLQ, with the reason), naming the project', async () => {
     const virtual = await addProject(registryDir, { name: 'virtual-app' });
     writeFor(virtual.id, 'subscribers:\n  onFoo:\n    - type: cli\n      command: echo x\n      name: v\n      retries: 0\n');
     const service = createQueueService(configDir, { registryDir });
     await service.commands.push({ event: 'onFoo', payload: {}, project: virtual.id, protocol: '1.3.0' } as never);
     const walEntries = (): Array<{ status: string; lastError?: string }> => new Wal(join(configDir, 'wal.ndjson')).readAll();
-    await waitFor('the misconfigured dispatch to fail', () => walEntries().some((entry) => entry.status === 'failed') && service.isIdle());
+    await waitFor('the misconfigured dispatch to reach the DLQ', () => walEntries().some((entry) => entry.status === 'dlq') && service.isIdle());
     expect(walEntries()[0]?.lastError).toContain("'virtual-app'");
+    expect(listDlqEntries(configDir)[0]?.lastError).toContain("'virtual-app'");
   });
 });
 
@@ -607,5 +613,249 @@ describe('direction of a push (protocol 1.4.0, Decision #29): to-parents, to-chi
     await service.commands.push({ event: 'onFoo', payload: {}, project: ids.parent, protocol: '1.4.0', direction: ['to-children'] } as never);
     await waitFor('the failed dispatch to reach the DLQ', () => listDlqEntries(configDir).length === 1 && service.isIdle());
     expect(listDlqEntries(configDir)[0]?.meta).toMatchObject({ projectId: ids.child, emitterProjectId: ids.parent });
+  });
+});
+
+describe('type action: the emit action and the daemon wiring', () => {
+  let registryDir: string;
+  let parentDir: string;
+
+  beforeEach(() => {
+    registryDir = mkdtempSync(join(tmpdir(), 'queue-service-registry-'));
+    parentDir = mkdtempSync(join(tmpdir(), 'queue-service-parent-'));
+    // A failed dispatch would call orch to schedule a retry: nothing here needs a real one
+    vi.spyOn(RetryScheduler, 'scheduleRetry').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    for (const dir of [registryDir, parentDir]) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  const writeFor = (id: string, yml: string): void => {
+    writeFileSync(join(projectToolDir(registryDir, id, 'queue', 'config', { ensure: true }), 'subscribers.yml'), yml);
+  };
+
+  /** A plugin that records every envelope it runs for; `behave` decides the n-th outcome (1-based), success by default. */
+  function recorder(behave: (call: number) => ActionResult = () => ({ success: true })): { plugin: ActionPlugin; seen: EventEnvelope[] } {
+    const seen: EventEnvelope[] = [];
+    const plugin: ActionPlugin = {
+      name: 'sink',
+      validate: () => undefined,
+      run: (_config, envelope) => {
+        seen.push(envelope);
+        return Promise.resolve(behave(seen.length));
+      },
+    };
+    return { plugin, seen };
+  }
+
+  const EMIT_AGENT_MESSAGE = [
+    'subscribers:',
+    '  onTicket.created:',
+    '    - type: action',
+    '      name: wake',
+    '      action: emit',
+    '      with:',
+    '        event: agent.message',
+    '        payload:',
+    '          text: "New {{ payload.title }}"',
+    '          ref: "{{ id }}"',
+    '  agent.message:',
+    '    - type: action',
+    '      name: sink',
+    '      action: sink',
+    '',
+  ].join('\n');
+
+  const dlq = (): DlqEntry[] => listDlqEntries(configDir);
+  const wal = (): WalEntry[] => new Wal(join(configDir, 'wal.ndjson')).readAll();
+
+  async function pushAndSettle(service: QueueService, request: Record<string, unknown>): Promise<void> {
+    await service.commands.push({ protocol: '1.3.0', ...request } as never);
+    await waitFor('the dispatches to finish', () => service.isIdle());
+  }
+
+  it('emits the rendered event under the project and the working directory of the source event, one hop further, with its own first-push id', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, EMIT_AGENT_MESSAGE);
+    const { plugin, seen } = recorder();
+    const service = createQueueService(configDir, { registryDir, actions: createActionRegistry([plugin]) });
+
+    // `hops` sent on the wire is not read: it is not a field of the protocol
+    const response = await service.commands.push({ event: 'onTicket.created', payload: { title: 'Bug' }, cwd: projectDir, hops: 4 } as never);
+    await waitFor('the emitted event to reach its subscriber', () => seen.length === 1 && service.isIdle());
+
+    const [received] = seen;
+    expect(received).toMatchObject({ event: 'agent.message', payload: { text: 'New Bug', ref: response.eventId } });
+    expect(received!.meta).toMatchObject({ projectId: project.id, hops: 1 });
+    expect(received!.meta.cwd).toBe(projectDir);
+    expect(received!.meta.eventId).toBe(received!.id);
+    expect(received!.id).not.toBe(response.eventId);
+    // the source event carries no hop and its first-push id
+    const source = wal().find((entry) => entry.event === 'onTicket.created')!;
+    expect(source.meta.hops).toBeUndefined();
+    expect(source.meta.eventId).toBe(response.eventId);
+  });
+
+  it('the emitted event is readable by name from the history whatever its project (what `queue wait` does), and is filed under the project of the source', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, EMIT_AGENT_MESSAGE);
+    const { plugin } = recorder();
+    const service = createQueueService(configDir, { registryDir, actions: createActionRegistry([plugin]) });
+
+    await pushAndSettle(service, { event: 'onTicket.created', payload: { title: 'Bug' }, cwd: projectDir });
+    await waitFor('the emitted event to be recorded', () => new HistoryReader(join(configDir, 'history')).read({ event: 'agent.message' }).length === 1);
+
+    const byName = new HistoryReader(join(configDir, 'history')).read({ event: 'agent.message', sinceMs: Date.now() - 60_000 });
+    expect(byName).toHaveLength(1);
+    expect(byName[0]).toMatchObject({ projectId: project.id, payload: { text: 'New Bug' } });
+    expect(byName[0]!.subscribers).toEqual([expect.objectContaining({ subscriberId: `${project.id}/sink`, status: 'success', target: 'action:sink' })]);
+  });
+
+  it('files the emitted event under a virtual project (no folder) through its project id', async () => {
+    const virtual = await addProject(registryDir, { name: 'virtual-app' });
+    writeFor(virtual.id, EMIT_AGENT_MESSAGE);
+    const { plugin, seen } = recorder();
+    const service = createQueueService(configDir, { registryDir, actions: createActionRegistry([plugin]) });
+
+    await service.commands.push({ event: 'onTicket.created', payload: { title: 'Bug' }, project: virtual.id, protocol: '1.3.0' } as never);
+    await waitFor('the emitted event to reach its subscriber', () => seen.length === 1 && service.isIdle());
+
+    expect(seen[0]!.meta.projectId).toBe(virtual.id);
+    expect(seen[0]!.meta.cwd).toBeUndefined();
+    expect(new HistoryReader(join(configDir, 'history')).read({ event: 'agent.message' })[0]?.projectId).toBe(virtual.id);
+  });
+
+  it('a to-children descendant is the project of the event it emits (the project of the envelope the subscriber received)', async () => {
+    const parent = await addProject(registryDir, { name: 'parent', path: parentDir });
+    const child = await addProject(registryDir, { name: 'child', path: projectDir, parent: 'parent' });
+    writeFor(parent.id, 'subscribers: {}\n');
+    writeFor(child.id, EMIT_AGENT_MESSAGE.replace('onTicket.created', 'onFoo'));
+    const { plugin, seen } = recorder();
+    const service = createQueueService(configDir, { registryDir, actions: createActionRegistry([plugin]) });
+
+    await service.commands.push({ event: 'onFoo', payload: { title: 'T' }, project: parent.id, direction: ['to-children'], protocol: '1.4.0' } as never);
+    await waitFor('the emitted event to reach its subscriber', () => seen.length === 1 && service.isIdle());
+
+    expect(seen[0]!.meta.projectId).toBe(child.id);
+    expect(new HistoryReader(join(configDir, 'history')).read({ event: 'agent.message' })[0]?.projectId).toBe(child.id);
+  });
+
+  it('cuts a loop at the hop cap: the last event of the chain goes to the DLQ with a loop guard message, on its first attempt', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, [
+      'subscribers:',
+      '  loop.a:',
+      '    - { type: action, name: to-b, action: emit, with: { event: loop.b } }',
+      '  loop.b:',
+      '    - { type: action, name: to-a, action: emit, with: { event: loop.a } }',
+      '',
+    ].join('\n'));
+    const service = createQueueService(configDir, { registryDir });
+
+    await service.commands.push({ event: 'loop.a', payload: {}, cwd: projectDir, protocol: '1.3.0' } as never);
+    await waitFor('the loop to be cut', () => dlq().length === 1 && service.isIdle());
+
+    // hops 0..5: six events, the one that would emit a sixth hop is refused
+    expect(wal().filter((entry) => entry.status === 'acked')).toHaveLength(5);
+    const [refused] = dlq();
+    expect(refused).toMatchObject({ event: 'loop.b', subscriberId: `${project.id}/to-a`, attempts: 1 });
+    expect(refused!.meta.hops).toBe(5);
+    expect(refused!.lastError).toMatch(/loop guard.*cap 5/);
+  });
+
+  it('refuses to emit a before* event: permanent, straight to the DLQ, nothing recorded for it', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, 'subscribers:\n  onFoo:\n    - { type: action, name: sync, action: emit, with: { event: beforeThing } }\n');
+    const service = createQueueService(configDir, { registryDir });
+
+    await pushAndSettle(service, { event: 'onFoo', payload: {}, cwd: projectDir });
+    await waitFor('the refusal to reach the DLQ', () => dlq().length === 1);
+
+    expect(dlq()[0]!.lastError).toMatch(/cannot emit 'beforeThing'/);
+    expect(new HistoryReader(join(configDir, 'history')).read({ event: 'beforeThing' })).toEqual([]);
+  });
+
+  it('refuses an emitted payload over 64 KB in total (each field being under the per-field cap)', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, [
+      'subscribers:',
+      '  onFoo:',
+      '    - type: action',
+      '      name: big',
+      '      action: emit',
+      '      with:',
+      '        event: big.event',
+      '        payload: { a: "{{ payload.a }}", b: "{{ payload.b }}", c: "{{ payload.c }}" }',
+      '',
+    ].join('\n'));
+    const service = createQueueService(configDir, { registryDir });
+    const chunk = 'x'.repeat(30_000);
+
+    await pushAndSettle(service, { event: 'onFoo', payload: { a: chunk, b: chunk, c: chunk }, cwd: projectDir });
+    await waitFor('the refusal to reach the DLQ', () => dlq().length === 1);
+
+    expect(dlq()[0]!.lastError).toMatch(/over the 65536 bytes an action may emit/);
+    expect(new HistoryReader(join(configDir, 'history')).read({ event: 'big.event' })).toEqual([]);
+  });
+
+  it('an unknown action fails that subscriber alone, for good, to the DLQ with the available actions; its neighbour still runs', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, [
+      'subscribers:',
+      '  onFoo:',
+      '    - { type: action, name: ghost, action: not-installed }',
+      '    - { type: action, name: ok, action: sink }',
+      '',
+    ].join('\n'));
+    const { plugin, seen } = recorder();
+    const service = createQueueService(configDir, { registryDir, actions: createActionRegistry([plugin]) });
+
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir, protocol: '1.3.0' } as never);
+    await waitFor('the DLQ entry', () => dlq().length === 1 && service.isIdle());
+
+    expect(response.status).toBe('queued');
+    expect(seen).toHaveLength(1);
+    expect(dlq()[0]).toMatchObject({ subscriberId: `${project.id}/ghost`, attempts: 1 });
+    expect(dlq()[0]!.lastError).toMatch(/unknown action "not-installed"\. Available actions: emit, sink/);
+  });
+
+  describe('retry and dlq-replay keep the meta (hops, first-push id)', () => {
+    async function chainEndingInto(behave: (call: number) => ActionResult): Promise<{ service: QueueService; seen: EventEnvelope[]; firstPushId: string }> {
+      const project = await addProject(registryDir, { name: 'app', path: projectDir });
+      writeFor(project.id, EMIT_AGENT_MESSAGE);
+      const { plugin, seen } = recorder(behave);
+      const service = createQueueService(configDir, { registryDir, actions: createActionRegistry([plugin]) });
+      await service.commands.push({ event: 'onTicket.created', payload: { title: 'Bug' }, cwd: projectDir, protocol: '1.3.0' } as never);
+      await waitFor('the first run of the sink', () => seen.length === 1 && service.isIdle());
+      return { service, seen, firstPushId: seen[0]!.meta.eventId! };
+    }
+
+    it('retry runs the action again with the hop counter and the first-push id of the original event', async () => {
+      const { service, seen, firstPushId } = await chainEndingInto((call) => (call === 1 ? { success: false, error: 'try later' } : { success: true }));
+      const failed = wal().find((entry) => entry.event === 'agent.message')!;
+      expect(failed.status).toBe('failed');
+
+      expect(await service.commands.retry({ eventId: failed.id })).toEqual({ status: 'ok' });
+      await waitFor('the retry to run', () => seen.length === 2 && service.isIdle());
+
+      expect(seen[1]!.id).toBe(failed.id);
+      expect(seen[1]!.meta).toMatchObject({ hops: 1, eventId: firstPushId });
+      expect(seen[1]!.payload).toEqual(seen[0]!.payload);
+    });
+
+    it('dlq-replay runs the action again with the hop counter and the first-push id of the original event', async () => {
+      const { service, seen, firstPushId } = await chainEndingInto((call) => (call === 1 ? { success: false, error: 'refused', permanent: true } : { success: true }));
+      const [entry] = dlq();
+      expect(entry!.meta).toMatchObject({ hops: 1, eventId: firstPushId });
+
+      expect(await service.commands['dlq-replay']({ id: entry!.id })).toEqual({ status: 'ok' });
+      await waitFor('the replay to run', () => seen.length === 2 && service.isIdle());
+
+      expect(seen[1]!.meta).toMatchObject({ hops: 1, eventId: firstPushId });
+      expect(dlq()).toHaveLength(0);
+    });
   });
 });

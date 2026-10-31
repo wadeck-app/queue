@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SyncDispatcher } from './SyncDispatcher.js';
 import { CliTransport } from './CliTransport.js';
+import { HttpTransport } from './HttpTransport.js';
+import { ActionTransport } from './ActionTransport.js';
+import { createActionRegistry } from '../actions/createActionRegistry.js';
+import type { ActionPlugin } from '../actions/ActionPlugin.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
 import type { HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
@@ -176,5 +180,52 @@ describe('SyncDispatcher - diagnosability', () => {
       status: 'success',
       stderr: 'warning: deprecated flag',
     }));
+  });
+});
+
+describe('SyncDispatcher - type action', () => {
+  function actionSub(overrides: Partial<ResolvedSubscriber> = {}): ResolvedSubscriber {
+    return { ...makeSub('sub-1'), type: 'action', command: undefined, action: 'probe', with: {}, ...overrides };
+  }
+
+  function setup(run: ActionPlugin['run']): { dispatcher: SyncDispatcher; logger: QueueLogWriter; historyLog: HistoryWriter } {
+    const logger = makeLogger();
+    const historyLog = makeHistoryLog();
+    const plugin: ActionPlugin = { name: 'probe', validate: () => undefined, run };
+    const transport = new ActionTransport(createActionRegistry([plugin]), () => ({ push: () => Promise.resolve({ success: true }) }));
+    return { dispatcher: new SyncDispatcher(logger, historyLog, transport), logger, historyLog };
+  }
+
+  it('passes an action through: the payload is untouched, nothing is parsed as JSON, the detail is logged and never reaches cli or http', async () => {
+    const http = vi.spyOn(HttpTransport.prototype, 'dispatch');
+    const cli = vi.spyOn(CliTransport.prototype, 'dispatch');
+    const { dispatcher, logger, historyLog } = setup(() => Promise.resolve({ success: true, detail: 'it was done' }));
+
+    const result = await dispatcher.dispatch([actionSub()], makeEnvelope(), 5000);
+
+    expect(result).toEqual({ action: 'continue', payload: { title: 'original' } });
+    expect(http).not.toHaveBeenCalled();
+    expect(cli).not.toHaveBeenCalled();
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', target: 'action:probe', detail: 'it was done' }));
+    expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', target: 'action:probe' }));
+  });
+
+  it('aborts the chain with the reason when the action fails', async () => {
+    const { dispatcher, historyLog } = setup(() => Promise.resolve({ success: false, error: 'nope', permanent: true }));
+
+    const result = await dispatcher.dispatch([actionSub()], makeEnvelope(), 5000);
+
+    expect(result).toEqual({ action: 'aborted', reason: 'nope' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', target: 'action:probe' }));
+  });
+
+  it('aborts with the configProblem of an unknown action, without running anything', async () => {
+    const run = vi.fn<ActionPlugin['run']>();
+    const { dispatcher } = setup(run);
+
+    const result = await dispatcher.dispatch([actionSub({ configProblem: 'unknown action "nope"' })], makeEnvelope(), 5000);
+
+    expect(result).toEqual({ action: 'aborted', reason: 'unknown action "nope"' });
+    expect(run).not.toHaveBeenCalled();
   });
 });

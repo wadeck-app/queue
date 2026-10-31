@@ -1,5 +1,7 @@
 import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
+import type { ActionTransport } from './ActionTransport.js';
+import { runSubscriber, targetOf } from './runSubscriber.js';
 import { OutputCapture } from './OutputCapture.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
 import { projectRefsOf, type HistoryWriter } from '../storage/HistoryLog.js';
@@ -26,6 +28,8 @@ export class SyncDispatcher {
     private readonly logger: QueueLogWriter,
     // Terse audit trail for `queue history`, written unconditionally unlike logger.logDispatch
     private readonly historyLog: HistoryWriter,
+    // Absent: an action subscriber aborts the chain with a message that says no actions run in this process
+    private readonly actionTransport?: ActionTransport,
   ) {}
 
   async dispatch(
@@ -38,23 +42,12 @@ export class SyncDispatcher {
     for (const sub of subscribers) {
       const currentEnvelope: EventEnvelope = { ...envelope, payload: currentPayload };
 
-      let result;
-      if (sub.type === 'cli') {
-        if (!sub.command) {
-          return this.abort(envelope, sub, `subscriber ${sub.subscriberId} has type 'cli' but no 'command' field in subscribers.yml`);
-        }
-        if (sub.cwdProblem !== undefined) {
-          return this.abort(envelope, sub, sub.cwdProblem);
-        }
-        result = await this.cliTransport.dispatch(sub.command, currentEnvelope, timeoutMs, sub.cwd, sub.env, sub.subscriberId);
-      } else {
-        if (!sub.url) {
-          return this.abort(envelope, sub, `subscriber ${sub.subscriberId} has type 'http' but no 'url' field in subscribers.yml`);
-        }
-        result = await this.httpTransport.dispatch(sub.url, sub.method ?? 'POST', sub.headers, currentEnvelope, timeoutMs);
+      const outcome = await runSubscriber(sub, currentEnvelope, timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport });
+      if (outcome.kind === 'config') {
+        return this.abort(envelope, sub, outcome.error);
       }
-
-      const target = sub.command ?? sub.url ?? '';
+      const result = outcome.result;
+      const target = targetOf(sub) ?? '';
       const captured = OutputCapture.forLog(result.success, result.stdout, result.stderr);
 
       if (!result.success) {
@@ -69,8 +62,9 @@ export class SyncDispatcher {
       if (stdout === '') {
         // Empty stdout: pass-through
         // A non-empty stderr on success is still recorded: it is often the only hint of a problem
-        if (captured.stderr !== undefined) {
-          this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
+        // An action's detail is always kept: it is the only trace of what the action did
+        if (captured.stderr !== undefined || result.detail !== undefined) {
+          this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured, ...(result.detail !== undefined && { detail: result.detail }) });
         }
         // History records every successful outcome, unlike logDispatch's noise-reduction above
         this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
@@ -118,7 +112,7 @@ export class SyncDispatcher {
     durationMs?: number,
     captured: { stdout?: string; stderr?: string } = {},
   ): SyncResult {
-    const resolvedTarget = target ?? sub.command ?? sub.url ?? '';
+    const resolvedTarget = target ?? targetOf(sub) ?? '';
     this.logger.logDispatch({
       event: envelope.event,
       subscriberId: sub.subscriberId,

@@ -38,3 +38,11 @@ export { readLogTail, logFilePath, isLogDate, readDispatchDurations } from './st
 export { readLogRecords, parseLogRecord, eventOfSubscriber, LOG_OUTCOMES } from './storage/LogRecords.js';
 export type { LogRecord, LogOutcome, LogRecords, LogRecordsOptions } from './storage/LogRecords.js';
 export type { LogTail, LogTailOptions, DispatchDurations } from './storage/LogReader.js';
+export type { ActionPlugin, ActionContext, ActionConfig, ActionResult, ActionPushRequest, ActionPushResult, ActionValidationContext } from './actions/ActionPlugin.js';
+export { ActionRegistry } from './actions/ActionRegistry.js';
+export { createActionRegistry } from './actions/createActionRegistry.js';
+export { emitAction } from './actions/emit.js';
+export { renderActionTemplate, findActionTemplateProblem, ActionTemplateError, MAX_RENDERED_FIELD_BYTES } from './actions/renderActionTemplate.js';
+export type { DispatchResult } from './dispatch/DispatchResult.js';
+export { targetOf } from './dispatch/runSubscriber.js';
+export { ConfigLoader } from './ConfigLoader.js';

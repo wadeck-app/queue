@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AsyncDispatcher } from './AsyncDispatcher.js';
 import { CliTransport } from './CliTransport.js';
+import { HttpTransport } from './HttpTransport.js';
+import { ActionTransport } from './ActionTransport.js';
+import { createActionRegistry } from '../actions/createActionRegistry.js';
+import type { ActionPlugin } from '../actions/ActionPlugin.js';
+import { RetryScheduler } from './RetryScheduler.js';
 import { MAX_CAPTURED_BYTES } from './OutputCapture.js';
 import type { WalEntry } from '../storage/Wal.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
@@ -220,7 +225,7 @@ describe('AsyncDispatcher - diagnosability', () => {
     expect(entry.stdout).toBeUndefined();
   });
 
-  it("cli subscriber without command is logged as failed, not silently dropped", async () => {
+  it("cli subscriber without command goes straight to the DLQ with the reason, not silently dropped", async () => {
     const sub: ResolvedSubscriber = { ...makeSub('sub-1'), command: undefined };
     const w = makeWalEntry('sub-1');
 
@@ -229,10 +234,10 @@ describe('AsyncDispatcher - diagnosability', () => {
     expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed' }));
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
       subscriberId: 'sub-1',
-      status: 'failed',
+      status: 'dlq',
       error: expect.stringContaining("type 'cli' but no 'command' field") as unknown as string,
     }));
-    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-1', status: 'failed' });
+    expect(historyLog.logOutcome).toHaveBeenCalledWith({ eventId: 'env-id', event: 'onTicket.created', subscriberId: 'sub-1', status: 'dlq' });
   });
 
   it('cli subscriber that has no folder to run from (virtual project) fails with the reason, and its command is not run', async () => {
@@ -244,8 +249,9 @@ describe('AsyncDispatcher - diagnosability', () => {
 
     expect(spawned).not.toHaveBeenCalled();
     expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed' }));
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), expect.stringContaining("virtual project 'v'"));
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
+      status: 'dlq',
       error: expect.stringContaining("virtual project 'v'") as unknown as string,
     }));
   });
@@ -260,14 +266,15 @@ describe('AsyncDispatcher - diagnosability', () => {
     expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ subscriberId: 'sub-1', status: 'success', projectId: 'bbbbbbbb', emitterProjectId: 'aaaaaaaa' }));
   });
 
-  it('http subscriber without url is logged as failed', async () => {
+  it('http subscriber without url goes straight to the DLQ with the reason', async () => {
     const sub: ResolvedSubscriber = { ...makeSub('sub-1'), type: 'http', command: undefined, url: undefined };
     const w = makeWalEntry('sub-1');
 
     await dispatcher.dispatch([sub], makeEnvelope(), new Map([['sub-1', w]]));
 
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id }), expect.stringContaining("type 'http' but no 'url' field"));
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
+      status: 'dlq',
       error: expect.stringContaining("type 'http' but no 'url' field") as unknown as string,
     }));
   });
@@ -293,5 +300,97 @@ describe('AsyncDispatcher - permanent failure', () => {
     await dispatcher.dispatch([{ ...makeSub('sub-1'), retries: 5 }], makeEnvelope(), new Map([['sub-1', w]]));
 
     expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), 'refused value');
+  });
+});
+
+describe('AsyncDispatcher - type action', () => {
+  function actionSub(overrides: Partial<ResolvedSubscriber> = {}): ResolvedSubscriber {
+    return { ...makeSub('sub-1'), type: 'action', command: undefined, action: 'probe', with: { a: 1 }, ...overrides };
+  }
+
+  function setup(run: ActionPlugin['run']): { dispatcher: AsyncDispatcher; walUpdater: ReturnType<typeof vi.fn>; dlqMover: ReturnType<typeof vi.fn>; logger: QueueLogWriter; historyLog: HistoryWriter } {
+    const walUpdater = vi.fn();
+    const dlqMover = vi.fn();
+    const logger = makeLogger();
+    const historyLog = makeHistoryLog();
+    const plugin: ActionPlugin = { name: 'probe', validate: () => undefined, run };
+    const transport = new ActionTransport(createActionRegistry([plugin]), () => ({ push: () => Promise.resolve({ success: true }) }));
+    const dispatcher = new AsyncDispatcher(walUpdater as never, dlqMover as never, logger, historyLog, transport);
+    return { dispatcher, walUpdater, dlqMover, logger, historyLog };
+  }
+
+  it('never reaches the cli or the http transport, runs the plugin with its configuration and acks', async () => {
+    const http = vi.spyOn(HttpTransport.prototype, 'dispatch');
+    const cli = vi.spyOn(CliTransport.prototype, 'dispatch');
+    const run = vi.fn<ActionPlugin['run']>().mockResolvedValue({ success: true, detail: "emitted 'x'" });
+    const { dispatcher, walUpdater, logger, historyLog } = setup(run);
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([actionSub()], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(http).not.toHaveBeenCalled();
+    expect(cli).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith({ a: 1 }, expect.anything(), expect.anything());
+    expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'acked' }));
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', target: 'action:probe', detail: "emitted 'x'" }));
+    expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', target: 'action:probe' }));
+  });
+
+  it('a permanent failure goes to the DLQ on the first attempt even with retries left, without scheduling a retry', async () => {
+    const scheduler = vi.spyOn(RetryScheduler, 'scheduleRetry');
+    const { dispatcher, dlqMover, historyLog } = setup(() => Promise.resolve({ success: false, error: 'refused value', permanent: true }));
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([actionSub({ retries: 5 })], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), 'refused value');
+    expect(scheduler).not.toHaveBeenCalled();
+    expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'dlq', target: 'action:probe' }));
+  });
+
+  it('a plugin that throws is retried (a retry is scheduled, no DLQ) while retries remain', async () => {
+    const scheduler = vi.spyOn(RetryScheduler, 'scheduleRetry').mockImplementation(() => undefined);
+    const { dispatcher, dlqMover, walUpdater } = setup(() => Promise.reject(new Error('boom')));
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([actionSub({ retries: 5 })], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(dlqMover).not.toHaveBeenCalled();
+    expect(scheduler).toHaveBeenCalledTimes(1);
+    expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed', lastError: expect.stringContaining('boom') as unknown as string }));
+  });
+
+  it('honours the timeout of the subscriber', async () => {
+    const scheduler = vi.spyOn(RetryScheduler, 'scheduleRetry').mockImplementation(() => undefined);
+    const { dispatcher, walUpdater } = setup(() => new Promise(() => undefined));
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([actionSub({ timeoutMs: 30, retries: 5 })], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ lastError: expect.stringMatching(/^timeout after/) as unknown as string }));
+    expect(scheduler).toHaveBeenCalledTimes(1);
+  });
+
+  it('a subscriber with a configProblem (unknown action) goes straight to the DLQ with the loud message and never runs', async () => {
+    const run = vi.fn<ActionPlugin['run']>();
+    const { dispatcher, dlqMover, logger } = setup(run);
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([actionSub({ action: 'nope', configProblem: 'unknown action "nope". Available actions: emit' })], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(run).not.toHaveBeenCalled();
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), expect.stringContaining('unknown action "nope"'));
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'dlq', target: 'action:nope' }));
+  });
+
+  it('fails for good, saying so, when this process has no action transport', async () => {
+    const walUpdater = vi.fn();
+    const dlqMover = vi.fn();
+    const dispatcher = new AsyncDispatcher(walUpdater as never, dlqMover as never, makeLogger(), makeHistoryLog());
+    const w = makeWalEntry('sub-1');
+
+    await dispatcher.dispatch([actionSub()], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(dlqMover).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('runs no actions'));
   });
 });

@@ -13,6 +13,8 @@ export interface DispatchLogEntry {
   stdout?: string;
   /** Tail of the subscriber's stderr, see OutputCapture.forLog for the retention policy. */
   stderr?: string;
+  /** What an action reported on success (e.g. the event it emitted); empty for cli and http. */
+  detail?: string;
 }
 
 export interface FilterMissLogEntry {

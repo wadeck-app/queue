@@ -8,10 +8,13 @@ import type { ResolvedSubscriber } from './types.js';
 import { getErrorMessage } from './errors.js';
 import { isRecord } from './isRecord.js';
 import { findTemplateProblem } from './dispatch/commandTemplate.js';
+import type { ActionRegistry } from './actions/ActionRegistry.js';
 
 const SubscriberConfigSchema = z.object({
-  type: z.enum(['cli', 'http']),
+  type: z.enum(['cli', 'http', 'action']),
   name: z.string().optional(),
+  action: z.string().optional(),
+  with: z.record(z.unknown()).optional(),
   command: z.string().optional(),
   url: z.string().optional(),
   method: z.string().optional(),
@@ -100,8 +103,10 @@ function loadYml(filePath: string): SubscribersYml | null {
 }
 
 export interface SubscriberConfig {
-  type: 'cli' | 'http';
+  type: 'cli' | 'http' | 'action';
   name?: string;
+  action?: string;
+  with?: Record<string, unknown>;
   command?: string;
   url?: string;
   method?: string;
@@ -130,7 +135,12 @@ interface ResolveContext {
   globalEnv?: Record<string, string>;
   eventCwd?: string;
   eventEnv?: Record<string, string>;
+  /** When present, an `action` subscriber is checked against it (unknown action, `with` block); absent, only its structure is. */
+  actions?: ActionRegistry;
 }
+
+/** Fields that mean something for a cli or http subscriber only: on an action they would be silently ignored, so they are refused. */
+const FIELDS_REFUSED_ON_ACTION = ['command', 'url', 'method', 'headers', 'cwd', 'env'] as const;
 
 /**
  * Rejects a subscriber that can never dispatch, at load time, rather than letting the daemon
@@ -156,6 +166,47 @@ function assertDispatchable(event: string, index: number, raw: SubscriberConfig,
       `Fix: add 'url: <endpoint>' or run: queue sub edit ${event} --index ${index} --type http --url "<url>"`
     );
   }
+  if (raw.type === 'action') {
+    if (typeof raw.action !== 'string' || raw.action.trim() === '') {
+      throw new Error(
+        `[queue] Invalid ${location}: type 'action' requires an 'action' field (the name of the plugin to run).\n` +
+        `Fix: add 'action: <name>' (e.g. 'action: emit') and its settings under 'with:'.`
+      );
+    }
+    for (const field of FIELDS_REFUSED_ON_ACTION) {
+      if (raw[field] !== undefined) {
+        throw new Error(
+          `[queue] Invalid ${location}: type 'action' does not take '${field}': it applies to cli and http subscribers and would be ignored here.\n` +
+          `Fix: remove '${field}' (the settings of an action go under 'with:'), or use type '${field === 'command' || field === 'cwd' || field === 'env' ? 'cli' : 'http'}'.`
+        );
+      }
+    }
+  } else if (raw.action !== undefined || raw.with !== undefined) {
+    throw new Error(
+      `[queue] Invalid ${location}: '${raw.action !== undefined ? 'action' : 'with'}' only applies to type 'action', and this subscriber has type '${raw.type}'.\n` +
+      `Fix: set 'type: action', or remove 'action' and 'with'.`
+    );
+  }
+}
+
+/**
+ * The strict check of an action subscriber against the registry of this process. An unknown action is returned (it fails that subscriber alone, for good);
+ * a `with` block the plugin refuses throws, like a cli template the loader refuses: the message says what to write.
+ */
+function checkAction(event: string, index: number, raw: SubscriberConfig, filePath: string, actions: ActionRegistry): string | undefined {
+  const name = raw.action!;
+  const plugin = actions.get(name);
+  if (plugin === undefined) {
+    return `subscriber '${raw.name ?? `index ${index}`}' of event '${event}' (${filePath}): ${actions.unknownActionProblem(name)}`;
+  }
+  const problem = plugin.validate(raw.with ?? {}, { event, ...(raw.name !== undefined && { name: raw.name }) });
+  if (problem !== undefined) {
+    throw new Error(
+      `[queue] Invalid subscriber '${event}' index ${index} in ${filePath}: action '${name}': ${problem}\n` +
+      `Fix: correct the 'with:' block of the subscriber.`
+    );
+  }
+  return undefined;
 }
 
 export const SUBSCRIBER_NAME_FORMAT = '[a-z0-9][a-z0-9._-]*';
@@ -176,6 +227,7 @@ function assertValidName(event: string, index: number, name: string, filePath: s
 
 function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: ResolveContext): ResolvedSubscriber {
   assertDispatchable(event, index, raw, ctx.filePath);
+  const actionProblem = raw.type === 'action' && ctx.actions !== undefined ? checkAction(event, index, raw, ctx.filePath, ctx.actions) : undefined;
   const name = raw.name;
   if (name === undefined) {
     throw new Error(
@@ -206,6 +258,10 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
 
   // env resolution: merge from least to most specific (global -> event -> subscriber)
   const mergedEnv: Record<string, string> | undefined = (() => {
+    // An action runs in the daemon: no process, no environment
+    if (raw.type === 'action') {
+      return undefined;
+    }
     const layers = [ctx.globalEnv, ctx.eventEnv, raw.env].filter(Boolean) as Record<string, string>[];
     if (layers.length === 0) {
       return undefined;
@@ -222,15 +278,15 @@ function toResolved(event: string, index: number, raw: SubscriberConfig, ctx: Re
     ...(ctx.via !== undefined && { via: ctx.via }),
     event,
     type: raw.type,
-    command: raw.command,
-    url: raw.url,
-    method: raw.method ?? 'POST',
-    headers: raw.headers,
+    ...(raw.type === 'action'
+      ? { action: raw.action, with: raw.with ?? {}, ...(actionProblem !== undefined && { configProblem: actionProblem }) }
+      : { command: raw.command, url: raw.url, method: raw.method ?? 'POST', headers: raw.headers }),
     retries: raw.retries ?? 5,
     when: raw.when,
     timeoutMs: raw.timeout ? parseDurationMs(raw.timeout) : 30_000,
     backoff: raw.backoff ?? 'exponential',
-    cwd: resolvedCwd,
+    // An action has no working directory: the project of its event is what places it
+    ...(raw.type !== 'action' && { cwd: resolvedCwd }),
     ...(cwdProblem !== undefined && { cwdProblem }),
     env: mergedEnv,
   };
@@ -286,9 +342,15 @@ function assertKnownKeys(filePath: string): void {
 
 export class ConfigLoader {
   private readonly globalConfigDir: string;
+  private readonly actions: ActionRegistry | undefined;
 
-  constructor(globalConfigDir: string) {
+  /**
+   * `actions`: the action plugins of this process. With it, `type: action` subscribers are checked strictly (unknown action, `with` block);
+   * without it (listings, the dashboard) only their structure is, and they are returned as they are written.
+   */
+  constructor(globalConfigDir: string, options: { actions?: ActionRegistry } = {}) {
     this.globalConfigDir = globalConfigDir;
+    this.actions = options.actions;
   }
 
   /**
@@ -341,7 +403,7 @@ export class ConfigLoader {
           eventEnv = eventConfig.env;
         }
 
-        const ctx: ResolveContext = { ...globalCtx, eventCwd, eventEnv };
+        const ctx: ResolveContext = { ...globalCtx, eventCwd, eventEnv, ...(this.actions !== undefined && { actions: this.actions }) };
         const resolved = subs.map((s, i) => toResolved(event, i, s, ctx));
         assertUniqueNames(event, resolved, filePath);
         const existing = merged.get(event) ?? [];
