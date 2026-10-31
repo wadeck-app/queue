@@ -499,3 +499,13 @@ describe('queue sub add (integration): a command with {{ }} placeholders runs wi
     expect(result.exitCode).toBe(0);
   });
 });
+
+describe('queue sub add (integration): a ** event pattern is refused', () => {
+  it('exits 1 naming the pattern and suggesting >, and writes nothing', () => {
+    const result = runCli(['sub', 'add', 'onSubAddDoubleStar.**', '--name', 'star', '--type', 'cli', '--command', 'echo hi']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('"onSubAddDoubleStar.**": "**" is not a wildcard, use ">"');
+    expect(result.stderr).toContain('instead: "onSubAddDoubleStar.>"');
+    expect(runCli(['list-subscribers', 'onSubAddDoubleStar.**']).stdout).not.toContain('star');
+  });
+});

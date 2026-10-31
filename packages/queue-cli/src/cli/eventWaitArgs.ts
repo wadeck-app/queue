@@ -1,4 +1,4 @@
-import { PayloadFilter, eventPatternProblem, getErrorMessage } from '@wadeck-app/queue-core';
+import { PayloadFilter, doubleStarProblem, eventPatternProblem, getErrorMessage } from '@wadeck-app/queue-core';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import type { EventWaitOptions, EventWaitTarget } from './eventWaitCommand.js';
@@ -25,14 +25,13 @@ function parseSince(raw: string, nowMs: number): number | null {
 
 /**
  * Why `arg` is not usable as an event name or pattern for `queue wait`, null when it is fine.
- * `**` is a subscribers.yml alias of `>` but `queue wait` only takes `*` and `>`. A name ending with a dot is what an unquoted
+ * A name ending with a dot is what an unquoted
  * `dep.>` leaves behind: the shell took `>` as a redirect.
  */
 function waitPatternProblem(arg: string): string | null {
-  const segments = arg.split('.');
-  if (segments.includes('**')) {
-    const suggestion = segments.map((segment) => (segment === '**' ? '>' : segment)).join('.');
-    return `"${arg}": "**" is not accepted by "queue wait"; use ">" instead: "${suggestion}".`;
+  const doubleStar = doubleStarProblem(arg);
+  if (doubleStar !== null) {
+    return doubleStar;
   }
   if (arg.endsWith('.')) {
     return `"${arg}" ends with a dot. If you typed an unquoted pattern, the shell took ">" as a redirect (and may have created a file): quote the pattern, e.g. "${arg}>".`;

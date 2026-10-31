@@ -4,6 +4,7 @@
  */
 
 import {
+  doubleStarProblem,
   getErrorMessage,
   getEventDetail,
   listEvents,
@@ -138,6 +139,10 @@ function list(args: string[], deps: EventsDeps): number {
   const source = flags.values.get('--source');
   const prefix = flags.values.get('--prefix');
   const match = flags.values.get('--match');
+  const matchProblem = match === undefined ? null : doubleStarProblem(match);
+  if (matchProblem !== null) {
+    return usageError(io, `--match ${matchProblem}`);
+  }
   const listing = listEvents(deps.configDir, {
     nowMs: deps.now(),
     ...(source !== undefined && { source }),

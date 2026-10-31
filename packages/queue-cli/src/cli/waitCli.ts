@@ -34,7 +34,7 @@ queue wait <event>: blocks until a queue event of that name (or matching that pa
                      A pattern is never refused (its names may come later)
   A name can be a pattern, same syntax as subscribers.yml: "*" is exactly one segment, ">" is one or more remaining segments (last
   position only). "dep.published.*" matches "dep.published.api" but not "dep.published" or "dep.published.a.b"; "dep.>" matches
-  "dep.a" and "dep.a.b" but not "dep"; a bare ">" is every event. "**" is rejected here (use ">"). A pattern matches names added later too.
+  "dep.a" and "dep.a.b" but not "dep"; a bare ">" is every event. "**" is not a wildcard (use ">"). A pattern matches names added later too.
   ALWAYS double-quote it: unquoted, * is globbed and > is a shell redirect that writes a file. A pattern with no known match warns on
   stderr ("queue events list --match "<pattern>"" shows the names). With --all each pattern is satisfied by any one matching name.
   In --json a pattern has no "declared" / "suggestions"; a timeout adds "lastSeenEvent". The result's "event" is the concrete name that

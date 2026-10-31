@@ -3,7 +3,7 @@ import { join, basename, dirname, resolve, isAbsolute } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { validateLayer, type ConfigSchema } from '@wadeck-app/project-sdk';
 import { z } from 'zod';
-import { EventMatcher } from './dispatch/EventMatcher.js';
+import { EventMatcher, doubleStarProblem } from './dispatch/EventMatcher.js';
 import type { ResolvedSubscriber } from './types.js';
 import { getErrorMessage } from './errors.js';
 import { isRecord } from './isRecord.js';
@@ -324,6 +324,11 @@ export class ConfigLoader {
         globalEnv: yml.env,
       };
       for (const [event, eventConfig] of Object.entries(yml.subscribers)) {
+        // '**' is not a wildcard: it would be a literal segment that never matches and the subscribers would silently never fire
+        const patternProblem = doubleStarProblem(event);
+        if (patternProblem !== null) {
+          throw new Error(`[queue] Invalid event pattern in ${filePath}: ${patternProblem}\nFix: rename the key under 'subscribers' (> is the only multi-segment wildcard, * matches one segment).`);
+        }
         let subs: SubscriberConfig[];
         let eventCwd: string | undefined;
         let eventEnv: Record<string, string> | undefined;

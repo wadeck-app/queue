@@ -60,7 +60,7 @@ Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `>` the rest; `**` is accepted as an alias of `>`) |
+| `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `>` the rest; a `**` segment is refused in `subscribers.yml`) |
 | `payload` | yes | Any JSON value |
 | `cwd` | yes, unless `project` is given | Directory used to find the registered project (its subscribers) and the project name. Since 1.3.0 it may be omitted when `project` names the project (an event of a virtual project, which has no folder); with neither, the push is `rejected`. A daemon older than 1.3.0 answers HTTP 500 to a push without `cwd` |
 | `protocol` | no | Protocol version the client speaks; absent = `1.0.0` |

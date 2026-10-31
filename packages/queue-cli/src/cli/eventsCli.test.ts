@@ -127,6 +127,15 @@ describe('queue events list', () => {
     expect(await names('--terminal')).toEqual(['job.completed']);
   });
 
+  it('--match refuses a ** segment (not a wildcard) with exit 4 and points to >', async () => {
+    seed();
+    const result = await run(['list', '--match', 'flow.**']);
+    expect(result.code).toBe(EVENTS_EXIT.USAGE);
+    expect(result.err).toContain('--match "flow.**": "**" is not a wildcard, use ">"');
+    expect(result.err).toContain('instead: "flow.>"');
+    expect(result.out).toBe('');
+  });
+
   it('prints each unreadable catalog file as a warning on stderr and still exits 0', async () => {
     seed();
     writeFileSync(join(configDir, 'events', 'broken.json'), '{ not json');

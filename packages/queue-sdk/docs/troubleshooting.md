@@ -27,7 +27,7 @@ The publisher was created with `off: true`, or the environment variable `QUEUE_S
 
 ## Events reach the queue but nothing runs
 
-The push succeeded (`queued`) with `subscriberCount` 0: no subscriber matches the event name for this `cwd`. Names match by pattern (`*` one segment, `>` the rest; `**` is accepted as an alias of `>`). Check `queue sub list <event>` run from the same directory, and `queue history` for the "no subscribers configured" line.
+The push succeeded (`queued`) with `subscriberCount` 0: no subscriber matches the event name for this `cwd`. Names match by pattern (`*` one segment, `>` the rest; a `**` key in `subscribers.yml` is refused, use `>`). Check `queue sub list <event>` run from the same directory, and `queue history` for the "no subscribers configured" line.
 
 ## Seeing what the SDK does
 

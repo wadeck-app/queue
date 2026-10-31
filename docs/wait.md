@@ -29,7 +29,7 @@ A name containing a segment that is exactly `*` or `>` is a pattern, matched lik
 
 - Names with dots (`dep.a.b`, `on.github.workflow_run`): use `>` to cover every depth; `*` stops at one.
 - ALWAYS double-quote: `queue wait "dep.>"`. Unquoted, `>` is a shell redirect (stdout goes to a file named after the next word, and the command receives `dep.`, which exits 4 with a hint) and `*` is globbed.
-- `**` (an alias of `>` in `subscribers.yml`) exits 4: `"dep.**": "**" is not accepted by "queue wait"; use ">" instead: "dep.>"`.
+- `**` is not a wildcard (`>` is the only multi-segment one, here as in `subscribers.yml` and `queue events list --match`) and exits 4: `"dep.**": "**" is not a wildcard, use ">" (the rest of the segments) instead: "dep.>"`.
 - A wildcard inside a segment (`dep.pub*`), an empty segment, a trailing dot or a non-last `>` exits 4.
 - `--all`: each pattern is satisfied by any one matching name.
 - `--strict` never refuses a pattern (its names may come later).

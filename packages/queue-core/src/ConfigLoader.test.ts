@@ -731,3 +731,16 @@ describe('ConfigLoader - command templates ({{ }} runs without a shell)', () => 
     expect(() => load('{{ program }} --flag')).toThrow(/program position/);
   });
 });
+
+describe('ConfigLoader - a ** event pattern is refused at load time', () => {
+  it('names the file and the pattern and says to use >', () => {
+    const globalDir = makeTmpDir();
+    try {
+      writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  "dep.**":\n    - type: cli\n      name: notify\n      command: echo hi\n', 'utf-8');
+      const loader = new ConfigLoader(globalDir);
+      expect(() => loader.getSubscribers('dep.published', undefined)).toThrow(/subscribers\.yml: "dep\.\*\*": "\*\*" is not a wildcard, use ">"[\s\S]*instead: "dep\.>"/);
+    } finally {
+      rmSync(globalDir, { recursive: true, force: true });
+    }
+  });
+});

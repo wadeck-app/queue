@@ -239,13 +239,13 @@ describe('queue wait with an event pattern', () => {
 
   it('"dep.**" exits 4 and points to ">", without waiting', async () => {
     expect(await wait('dep.**')).toBe(4);
-    expect(stderr).toContain('"dep.**": "**" is not accepted by "queue wait"; use ">" instead: "dep.>"');
+    expect(stderr).toContain('"dep.**": "**" is not a wildcard, use ">" (the rest of the segments) instead: "dep.>"');
     expect(stderr).not.toContain('waiting for');
   });
 
   it('a bare "**" exits 4 and points to ">"', async () => {
     expect(await wait('**')).toBe(4);
-    expect(stderr).toContain('"**" is not accepted by "queue wait"; use ">" instead: ">"');
+    expect(stderr).toContain('"**": "**" is not a wildcard, use ">" (the rest of the segments) instead: ">"');
   });
 
   it('"dep.**.x" says "**" is not accepted (not the position error)', async () => {
