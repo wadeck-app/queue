@@ -5,7 +5,7 @@ import { getErrorMessage } from '../errors.js';
 import { CommandTemplateError, findCmdMetacharacter, hasPlaceholders, substituteToken, tokenizeTemplate } from './commandTemplate.js';
 import type { DispatchResult } from './DispatchResult.js';
 import { resolveNpmShim } from './NpmShim.js';
-import { envValue, findWindowsProgram } from './windowsProgram.js';
+import { describeSearchPath, envValue, findWindowsProgram } from './windowsProgram.js';
 
 type SpawnOptions = Parameters<typeof spawn>[2];
 
@@ -59,8 +59,8 @@ function planDirectLaunch(command: string, envelope: EventEnvelope, cwd: string 
   const found = findWindowsProgram(program, cwd, effectiveEnv);
   if (found === undefined) {
     throw new CommandTemplateError(
-      `${label}: program '${program}' was not found (searched the working directory and PATH with the extensions of PATHEXT). ` +
-      `Fix: install it, put it on PATH, or give its full path in the command.`
+      `${label}: program '${program}' was not found (searched the working directory and the PATH of the queue daemon with the extensions of PATHEXT; ${describeSearchPath(effectiveEnv, 8)}). ` +
+      `The daemon keeps the PATH it was started with. Fix: install it, put it on PATH, or give its full path in the command; if it works in your shell, restart the daemon from that shell ("queue stop", the next push starts it again).`
     );
   }
   const extension = extname(found).toLowerCase();

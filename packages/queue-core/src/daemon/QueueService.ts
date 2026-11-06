@@ -10,6 +10,7 @@ import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
 import { PayloadFilter } from '../dispatch/PayloadFilter.js';
 import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import { ActionTransport } from '../dispatch/ActionTransport.js';
+import { describeSearchPath } from '../dispatch/windowsProgram.js';
 import type { ActionRegistry } from '../actions/ActionRegistry.js';
 import { createActionRegistry } from '../actions/createActionRegistry.js';
 import { MAX_ACTION_HOPS } from '../actions/hopCap.js';
@@ -386,7 +387,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       try {
         for (const list of configLoader.load(undefined, projectSource).values()) {
           for (const sub of list) {
-            seen.set(`${sub.file} ${sub.event} ${sub.subscriberId}`, sub);
+            seen.set(`${sub.file}\0${sub.event}\0${sub.subscriberId}`, sub);
           }
         }
         if (projectSource !== undefined) {
@@ -588,6 +589,11 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     onStart: () => {
       declareActionEvents();
       reportActionCycles();
+      // The programs of cli subscribers are looked up in the PATH this daemon inherited when it started: say which one, so that "program not found" is diagnosable
+      eventLogger.logDiagnostic({
+        source: 'QueueDaemon.onStart',
+        message: `programs of cli subscribers are looked up in the PATH this daemon was started with (${describeSearchPath(process.env, 40)}); a daemon started from a reduced environment cannot find tools of the npm global directory: restart it from a shell where they work ("queue stop", the next push starts it again)`,
+      });
       // Startup scan: reschedule pending WAL entries
       const pending = wal.readAll().filter(e => e.status === 'pending');
       for (const entry of pending) {

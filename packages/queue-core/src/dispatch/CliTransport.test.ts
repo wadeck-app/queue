@@ -112,7 +112,10 @@ describe('CliTransport - command with {{ }}: values reach the program as single,
     expect(result.permanent).toBe(true);
     expect(result.error).toContain("subscriber 'notify'");
     expect(result.error).toContain("program 'queue-test-no-such-builtin' was not found");
-    expect(result.error).toContain('Fix: install it, put it on PATH, or give its full path in the command.');
+    expect(result.error).toContain('Fix: install it, put it on PATH, or give its full path in the command');
+    // A daemon keeps the PATH it was started with: the message shows what it searched and how to refresh it
+    expect(result.error).toMatch(/PATH entries: |PATH is empty or not set/);
+    expect(result.error).toContain('restart the daemon from that shell ("queue stop"');
   });
 
   it.skipIf(IS_WINDOWS)('POSIX only: a missing program fails with ENOENT, the subscriber and a Fix (not flagged permanent: spawn reports it)', async () => {
