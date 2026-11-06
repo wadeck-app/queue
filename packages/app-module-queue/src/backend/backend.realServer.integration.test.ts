@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync, utimesSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +41,34 @@ function writeHistory(): void {
     { type: 'trigger', ts: '2026-01-01T00:00:01.000Z', eventId: 'evt-no-payload', event: 'onFoo', matchedCount: 0, totalCount: 0 },
   ];
   writeFileSync(join(configDir, 'history', '2026-01-01.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+}
+
+// Log files for the log-files routes, in the logs directory only (writeRecent deletes the history files it does not know)
+const OLD_DAEMON_LOG = '2026-01-02.ndjson';
+const OLD_LAUNCHER_LOG = '2026-01-02-launcher.log';
+const OLD_DELETABLE_LOG = '2026-01-03.ndjson';
+const SENTINEL = 'sentinel-outside-the-log-dir.txt';
+
+function utcDay(offsetDays: number): string {
+  return new Date(Date.now() - offsetDays * 86_400_000).toISOString().slice(0, 10);
+}
+
+function writeLogFixtures(): void {
+  const logs = join(configDir, 'logs');
+  mkdirSync(logs, { recursive: true });
+  const longAgo = new Date(Date.now() - 400 * 86_400_000);
+  for (const name of [OLD_DAEMON_LOG, OLD_LAUNCHER_LOG, OLD_DELETABLE_LOG]) {
+    writeFileSync(join(logs, name), 'x'.repeat(2048));
+    utimesSync(join(logs, name), longAgo, longAgo);
+  }
+  // Within the retention: a prune must keep it
+  const recent = join(logs, `${utcDay(5)}.ndjson`);
+  writeFileSync(recent, 'y'.repeat(100));
+  const fiveDaysAgo = new Date(Date.now() - 5 * 86_400_000);
+  utimesSync(recent, fiveDaysAgo, fiveDaysAgo);
+  // Today's file: the module also writes its audit lines in it
+  writeFileSync(join(logs, `${utcDay(0)}.ndjson`), '{}\n');
+  writeFileSync(join(configDir, SENTINEL), 'keep me');
 }
 
 /**
@@ -112,6 +140,7 @@ describe('the packaged module through a real app-core server', () => {
     configDir = join(workDir, 'queue-config');
     const builtModule = join(workDir, 'module');
     writeHistory();
+    writeLogFixtures();
     registryDir = join(workDir, 'xdg', 'project');
     mkdirSync(join(workDir, 'app-folder'));
     appProjectId = (await addProject(registryDir, { name: 'app', path: join(workDir, 'app-folder') })).id;
@@ -131,8 +160,12 @@ describe('the packaged module through a real app-core server', () => {
     rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
-  async function call(method: string, path: string): Promise<{ status: number; body: Record<string, unknown> }> {
-    const response = await fetch(`${baseUrl}/api/modules/queue${path}`, { method });
+  async function call(method: string, path: string, init: { headers?: Record<string, string>; body?: unknown } = {}): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await fetch(`${baseUrl}/api/modules/queue${path}`, {
+      method,
+      ...(init.headers !== undefined && { headers: init.headers }),
+      ...(init.body !== undefined && { body: JSON.stringify(init.body) }),
+    });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   }
 
@@ -239,5 +272,97 @@ describe('the packaged module through a real app-core server', () => {
     const subscribers = await call('GET', `/subscribers?cwd=${encodeURIComponent(configDir)}`);
     expect(subscribers.status).toBe(200);
     expect(subscribers.body['subscribers']).toEqual([]);
+  });
+
+  describe('log files', () => {
+    const logsDir = (): string => join(configDir, 'logs');
+    const sentinelIntact = (): boolean => existsSync(join(configDir, SENTINEL)) && readFileSync(join(configDir, SENTINEL), 'utf8') === 'keep me';
+
+    it('GET /log-files lists the files with the status of each, today protected, wal and dlq as information', async () => {
+      const { status, body } = await call('GET', '/log-files');
+      expect(status).toBe(200);
+      const logs = body['logs'] as { files: Array<{ name: string; status: string; canDelete: boolean }>; prunableCount: number };
+      const byName = new Map(logs.files.map((f) => [f.name, f]));
+      expect(byName.get(OLD_DAEMON_LOG)).toMatchObject({ status: 'prune', canDelete: true });
+      expect(byName.get(`${utcDay(5)}.ndjson`)).toMatchObject({ status: 'kept', canDelete: true });
+      expect(byName.get(`${utcDay(0)}.ndjson`)).toMatchObject({ status: 'protected', canDelete: false });
+      expect(logs.prunableCount).toBeGreaterThanOrEqual(3);
+      expect((body['queueFiles'] as Array<{ name: string }>).map((q) => q.name)).toEqual(['wal.ndjson', 'dlq.ndjson']);
+    });
+
+    it('POST /log-files/:kind/:day/:variant/delete deletes an old file, answers a message, and deleting it again is an idempotent 200', async () => {
+      const day = OLD_DELETABLE_LOG.slice(0, 10);
+      const first = await call('POST', `/log-files/logs/${day}/daemon/delete`);
+      expect(first.status).toBe(200);
+      expect(first.body).toMatchObject({ deleted: true, file: OLD_DELETABLE_LOG });
+      expect(String(first.body['message'])).toContain(OLD_DELETABLE_LOG);
+      expect(existsSync(join(logsDir(), OLD_DELETABLE_LOG))).toBe(false);
+      const second = await call('POST', `/log-files/logs/${day}/daemon/delete`);
+      expect(second.status).toBe(200);
+      expect(second.body).toMatchObject({ deleted: false });
+      expect(String(second.body['message'])).toContain('already gone');
+    });
+
+    it("POST delete of today's file is a 409 and the file stays", async () => {
+      const { status, body } = await call('POST', `/log-files/logs/${utcDay(0)}/daemon/delete`);
+      expect(status).toBe(409);
+      expect(String(body['error'])).toContain('protected');
+      expect(existsSync(join(logsDir(), `${utcDay(0)}.ndjson`))).toBe(true);
+    });
+
+    it.each([
+      ['an encoded slash in the day', '/log-files/logs/..%2F..%2Fsentinel/daemon/delete'],
+      ['a double-encoded slash', '/log-files/logs/..%252F..%252Fsentinel/daemon/delete'],
+      ['an encoded backslash', '/log-files/logs/..%5C..%5Csentinel/daemon/delete'],
+      ['a NUL byte', '/log-files/logs/2026-01-02%00/daemon/delete'],
+      ['a very long segment', `/log-files/logs/${'a'.repeat(5000)}/daemon/delete`],
+      ['an impossible date (2026-02-30)', '/log-files/logs/2026-02-30/daemon/delete'],
+      ['an unknown kind', '/log-files/wal/2026-01-02/daemon/delete'],
+      ['an unknown kind in the traversal position', '/log-files/..%2F/2026-01-02/daemon/delete'],
+      ['an unknown variant', '/log-files/logs/2026-01-02/other/delete'],
+      ['the history launcher combination', '/log-files/history/2026-01-02/launcher/delete'],
+    ])('POST delete with %s is never a 200 and touches no file outside the log directory', async (_label, path) => {
+      const { status, body } = await call('POST', path);
+      expect(status, JSON.stringify(body)).toBeGreaterThanOrEqual(400);
+      expect(status, JSON.stringify(body)).toBeLessThan(500);
+      expect(typeof body['error']).toBe('string');
+      expect(sentinelIntact()).toBe(true);
+      expect(existsSync(join(logsDir(), OLD_DAEMON_LOG))).toBe(true);
+    });
+
+    it('POST prune with an unknown kind is a 400 that names the choices', async () => {
+      const { status, body } = await call('POST', '/log-files/wal/prune');
+      expect(status).toBe(400);
+      expect(String(body['error'])).toContain('kind must be one of logs, history');
+    });
+
+    it.each(['cross-site', 'same-site'])('both POST routes refuse a browser request started by another site (Sec-Fetch-Site: %s) with a 403 and delete nothing', async (site) => {
+      const headers = { 'Sec-Fetch-Site': site };
+      const prune = await call('POST', '/log-files/logs/prune', { headers });
+      const del = await call('POST', `/log-files/logs/${OLD_DAEMON_LOG.slice(0, 10)}/daemon/delete`, { headers });
+      expect([prune.status, del.status]).toEqual([403, 403]);
+      expect(String(del.body['error'])).toContain('another site');
+      expect(existsSync(join(logsDir(), OLD_DAEMON_LOG))).toBe(true);
+    });
+
+    it('accepts Sec-Fetch-Site: same-origin (the dashboard itself) on the delete route', async () => {
+      // A file that is already gone: proves the request got past the guard without needing a fixture
+      const { status, body } = await call('POST', '/log-files/logs/2026-01-09/daemon/delete', { headers: { 'Sec-Fetch-Site': 'same-origin' } });
+      expect(status).toBe(200);
+      expect(body['deleted']).toBe(false);
+    });
+
+    it('POST /log-files/logs/prune removes only the files past the retention, keeps recent and today, and reports the freed size', async () => {
+      const { status, body } = await call('POST', '/log-files/logs/prune');
+      expect(status).toBe(200);
+      const deleted = (body['deleted'] as Array<{ file: string }>).map((d) => d.file).sort();
+      expect(deleted).toEqual([OLD_DAEMON_LOG, OLD_LAUNCHER_LOG].sort());
+      expect(String(body['message'])).toContain('Deleted 2 log files');
+      expect(readdirSync(logsDir())).toEqual(expect.arrayContaining([`${utcDay(5)}.ndjson`, `${utcDay(0)}.ndjson`]));
+      expect(existsSync(join(logsDir(), OLD_DAEMON_LOG))).toBe(false);
+      expect(sentinelIntact()).toBe(true);
+      // The history is another directory: its files are untouched
+      expect(existsSync(join(configDir, 'history', '2026-01-01.ndjson'))).toBe(true);
+    });
   });
 });

@@ -146,6 +146,16 @@
         "type": "path",
         "value": "./src/dsl-views/logs-page.yaml"
       }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
+      "label": "Queue Log files",
+      "path": "/log-files",
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/log-files-page.yaml"
+      }
     }
   ]
 }

@@ -8,10 +8,12 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
+import { getLogFiles, pruneLogFiles, deleteLogFileEntry } from './logFiles.js';
+import { crossSiteRefusal } from './requestGuard.js';
 import { getEvents, getEventPage, pushTestEvent, validateEventPayload } from './events.js';
 import { retryEvent } from './retry.js';
 import { giveUpPending, giveUpStuck } from './pending.js';
@@ -38,6 +40,17 @@ function relayErrorStatus(err: unknown): number {
     return 503;
   }
   return err instanceof RelayApiError ? 502 : 500;
+}
+
+/** 400 malformed kind/day/variant, 404 no such combination, 409 the file is protected, 500 anything else. */
+function logFilesErrorStatus(err: unknown): number {
+  if (err instanceof InvalidQueryError) {
+    return 400;
+  }
+  if (err instanceof LogFileNotFoundError) {
+    return 404;
+  }
+  return err instanceof LogFileInUseError ? 409 : 500;
 }
 
 /**
@@ -153,6 +166,45 @@ export default function (ctx: ModuleContext): void {
       return reply.code(200).send(getLogs(configDir, query));
     } catch (err) {
       return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // The log and history files with size, date and what the retention would do with each (a missing directory is an empty section)
+  ctx.registerRoute('GET', '/log-files', (_req, reply) => {
+    try {
+      return reply.code(200).send(getLogFiles(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // Deletes what the retention policy would delete now in one directory (kind: logs | history); recomputed here, never the preview.
+  // 403 from another site, 400 bad kind, 500 unreadable directory; a file that cannot be deleted is reported in the 200 body
+  ctx.registerRoute('POST', '/log-files/:kind/prune', (req, reply) => {
+    const refusal = crossSiteRefusal(req);
+    if (refusal !== undefined) {
+      return reply.code(403).send({ error: refusal });
+    }
+    const { kind } = req.params;
+    try {
+      return reply.code(200).send(pruneLogFiles(configDir, kind));
+    } catch (err) {
+      return reply.code(logFilesErrorStatus(err)).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // Deletes ONE log file named by kind, day and variant (never a path). 403 other site, 400 malformed, 404 no such combination,
+  // 409 protected (today, future, recently modified), 500 not deletable; a file already gone is a 200 with deleted: false
+  ctx.registerRoute('POST', '/log-files/:kind/:day/:variant/delete', (req, reply) => {
+    const refusal = crossSiteRefusal(req);
+    if (refusal !== undefined) {
+      return reply.code(403).send({ error: refusal });
+    }
+    const { kind, day, variant } = req.params;
+    try {
+      return reply.code(200).send(deleteLogFileEntry(configDir, kind, day, variant));
+    } catch (err) {
+      return reply.code(logFilesErrorStatus(err)).send({ error: getErrorMessage(err) });
     }
   });
 

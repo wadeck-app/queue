@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
@@ -26,6 +26,9 @@ const {
   mockGetProjectScope,
   mockPushEvent,
   mockGetLogs,
+  mockGetLogFiles,
+  mockPruneLogFiles,
+  mockDeleteLogFileEntry,
   mockGetEvents,
   mockGetEventPage,
   mockPushTestEvent,
@@ -57,6 +60,9 @@ const {
   mockGetProjectScope: vi.fn(),
   mockPushEvent: vi.fn(),
   mockGetLogs: vi.fn(),
+  mockGetLogFiles: vi.fn(),
+  mockPruneLogFiles: vi.fn(),
+  mockDeleteLogFileEntry: vi.fn(),
   mockGetEvents: vi.fn(),
   mockGetEventPage: vi.fn(),
   mockPushTestEvent: vi.fn(),
@@ -84,6 +90,7 @@ vi.mock('./related.js', () => ({ getRelatedForProject: mockGetRelatedForProject 
 vi.mock('./projectScope.js', () => ({ getProjectScope: mockGetProjectScope }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
+vi.mock('./logFiles.js', () => ({ getLogFiles: mockGetLogFiles, pruneLogFiles: mockPruneLogFiles, deleteLogFileEntry: mockDeleteLogFileEntry }));
 vi.mock('./events.js', () => ({ getEvents: mockGetEvents, getEventPage: mockGetEventPage, pushTestEvent: mockPushTestEvent, validateEventPayload: mockValidateEventPayload }));
 vi.mock('./retry.js', () => ({ retryEvent: mockRetryEvent }));
 vi.mock('./daemon.js', () => ({ getDaemonState: mockGetDaemonState }));
@@ -145,6 +152,9 @@ describe('backend', () => {
       'GET /history/:eventId',
       'POST /history/:eventId/replay',
       'GET /logs',
+      'GET /log-files',
+      'POST /log-files/:kind/prune',
+      'POST /log-files/:kind/:day/:variant/delete',
       'GET /events',
       'GET /events/detail',
       'POST /events/:name/validate-payload',
@@ -811,6 +821,103 @@ describe('backend', () => {
     const broken = fakeReply();
     await routes.get('GET /logs')!(fakeReq({ query: {} }), asReply(broken));
     expect(broken.code).toHaveBeenCalledWith(500);
+  });
+
+  it('GET /log-files answers getLogFiles() and 500 with the message when a directory is unreadable', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockGetLogFiles.mockReturnValue({ today: '2026-10-19', sections: [], queueFiles: [] });
+    const reply = fakeReply();
+    await routes.get('GET /log-files')!(fakeReq(), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ today: '2026-10-19', sections: [], queueFiles: [] });
+
+    mockGetLogFiles.mockImplementationOnce(() => { throw new Error('Cannot read the logs directory x. Check that it is a readable directory'); });
+    const broken = fakeReply();
+    await routes.get('GET /log-files')!(fakeReq(), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'Cannot read the logs directory x. Check that it is a readable directory' });
+  });
+
+  it('POST /log-files/:kind/prune forwards the kind from the URL, no body needed', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockPruneLogFiles.mockReturnValue({ kind: 'history', deleted: [], failures: [], message: 'Nothing to prune' });
+    const reply = fakeReply();
+    await routes.get('POST /log-files/:kind/prune')!(fakeReq({ params: { kind: 'history' } }), asReply(reply));
+    expect(mockPruneLogFiles).toHaveBeenCalledWith(expect.any(String), 'history');
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ kind: 'history', deleted: [], failures: [], message: 'Nothing to prune' });
+  });
+
+  it('POST /log-files/:kind/prune answers 400 for a bad kind and 500 for any other failure', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockPruneLogFiles.mockImplementationOnce(() => { throw new InvalidQueryError('kind must be one of logs, history, got: "wal"'); });
+    const bad = fakeReply();
+    await routes.get('POST /log-files/:kind/prune')!(fakeReq({ params: { kind: 'wal' } }), asReply(bad));
+    expect(bad.code).toHaveBeenCalledWith(400);
+    expect(bad.send).toHaveBeenCalledWith({ error: 'kind must be one of logs, history, got: "wal"' });
+
+    mockPruneLogFiles.mockImplementationOnce(() => { throw new Error('EACCES: logs'); });
+    const broken = fakeReply();
+    await routes.get('POST /log-files/:kind/prune')!(fakeReq({ params: { kind: 'logs' } }), asReply(broken));
+    expect(broken.code).toHaveBeenCalledWith(500);
+    expect(broken.send).toHaveBeenCalledWith({ error: 'EACCES: logs' });
+  });
+
+  it('POST /log-files/:kind/:day/:variant/delete forwards the three parts and answers the result', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockDeleteLogFileEntry.mockReturnValue({ kind: 'logs', deleted: true, file: '2026-10-10.ndjson', bytes: 5, message: 'Deleted' });
+    const reply = fakeReply();
+    await routes.get('POST /log-files/:kind/:day/:variant/delete')!(fakeReq({ params: { kind: 'logs', day: '2026-10-10', variant: 'daemon' } }), asReply(reply));
+    expect(mockDeleteLogFileEntry).toHaveBeenCalledWith(expect.any(String), 'logs', '2026-10-10', 'daemon');
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ kind: 'logs', deleted: true, file: '2026-10-10.ndjson', bytes: 5, message: 'Deleted' });
+  });
+
+  it('POST /log-files/:kind/:day/:variant/delete maps 400 malformed, 404 no such combination, 409 protected, 500 anything else', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const cases: Array<[Error, number]> = [
+      [new InvalidQueryError('day must be a day as YYYY-MM-DD, got: "x"'), 400],
+      [new LogFileNotFoundError('The history has no launcher files'), 404],
+      [new LogFileInUseError('2026-10-19.ndjson is protected (today (UTC))'), 409],
+      [new Error('2026-10-10.ndjson could not be deleted: EBUSY. Close it'), 500],
+    ];
+    for (const [error, status] of cases) {
+      mockDeleteLogFileEntry.mockImplementationOnce(() => { throw error; });
+      const reply = fakeReply();
+      await routes.get('POST /log-files/:kind/:day/:variant/delete')!(fakeReq({ params: { kind: 'logs', day: 'x', variant: 'daemon' } }), asReply(reply));
+      expect(reply.code).toHaveBeenCalledWith(status);
+      expect(reply.send).toHaveBeenCalledWith({ error: error.message });
+    }
+  });
+
+  it.each(['cross-site', 'same-site'])('the log-files POST routes answer 403 with an actionable error for Sec-Fetch-Site: %s, and do nothing', async (site) => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    for (const [route, params] of [
+      ['POST /log-files/:kind/prune', { kind: 'logs' }],
+      ['POST /log-files/:kind/:day/:variant/delete', { kind: 'logs', day: '2026-10-10', variant: 'daemon' }],
+    ] as const) {
+      const reply = fakeReply();
+      await routes.get(route)!(fakeReq({ params, headers: { 'sec-fetch-site': site } }), asReply(reply));
+      expect(reply.code).toHaveBeenCalledWith(403);
+      expect(reply.send).toHaveBeenCalledWith({ error: expect.stringContaining(`Sec-Fetch-Site: ${site}`) });
+    }
+    expect(mockPruneLogFiles).not.toHaveBeenCalled();
+    expect(mockDeleteLogFileEntry).not.toHaveBeenCalled();
+  });
+
+  it.each(['same-origin', 'none', undefined])('the log-files POST routes accept Sec-Fetch-Site: %s', async (site) => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockPruneLogFiles.mockReturnValue({ message: 'ok' });
+    const reply = fakeReply();
+    await routes.get('POST /log-files/:kind/prune')!(fakeReq({ params: { kind: 'logs' }, headers: site === undefined ? {} : { 'sec-fetch-site': site } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(200);
   });
 
   it('GET /events forwards the query to getEvents', async () => {

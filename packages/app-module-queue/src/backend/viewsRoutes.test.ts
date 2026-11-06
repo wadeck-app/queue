@@ -29,6 +29,8 @@ describe('dsl-views call the routes the backend registers', () => {
   });
 
   it.each(calls.map(({ file, call }) => [file, call] as const))('%s: %s is a registered route', (_file, call) => {
-    expect(normalisedRegistered).toContain(call);
+    // A view may use a literal where the route has a parameter ("POST /log-files/logs/prune" for ":kind/prune")
+    const matches = [...normalisedRegistered].some((route) => route === call || new RegExp(`^${route.replace(/:param/g, '[^/]+')}$`).test(call));
+    expect(matches, `${call} matches no registered route`).toBe(true);
   });
 });

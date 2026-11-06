@@ -1,0 +1,159 @@
+# Needs dsl-ui >= 2026.10.24-240 (ActionButton) and an app-core whose dsl-ui has Progress valueLabel, the `bytes` column format and
+# `condition` on row actions (checked by running this page against app-core-cli dev, see backend.realServer.integration.test.ts).
+$sources:
+  files:
+    url: GET /api/modules/queue/log-files
+
+# Kind, day and variant come from the clicked row (percent-encoded by the renderer). `confirm` is a static text, hence one delete action per kind.
+# The response `message` is what the toast shows (success and failure).
+$actions:
+  pruneLogs:
+    url: POST /api/modules/queue/log-files/logs/prune
+    confirm: Delete the log files that are past the retention (older than 90 days, then oldest first above 100 MB)? Today's file is never deleted. They cannot be recovered.
+    errorPrefix: Could not prune the logs
+    reloadSources: true
+  pruneHistory:
+    url: POST /api/modules/queue/log-files/history/prune
+    confirm: Delete the history files that are past the retention (older than 90 days, then oldest first above 200 MB)? Events of those days can no longer be replayed. Today's file is never deleted. They cannot be recovered.
+    errorPrefix: Could not prune the history
+    reloadSources: true
+  deleteLogsFile:
+    url: POST /api/modules/queue/log-files/{kind}/{day}/{variant}/delete
+    confirm: Delete this log file? It cannot be recovered. A launcher log held open by the running launcher cannot be deleted before the next local day or queue stop.
+    errorPrefix: Could not delete the log file
+    reloadSources: true
+  deleteHistoryFile:
+    url: POST /api/modules/queue/log-files/{kind}/{day}/{variant}/delete
+    confirm: Delete this history file? Its events can no longer be replayed. Counters of Overview and Activity drop for that day, and an event triggered that day whose retries survive stays without payload (replay answers "No payload recorded"). It cannot be recovered.
+    errorPrefix: Could not delete the history file
+    reloadSources: true
+
+$type: PageContent
+sections:
+  - $type: PageHeader
+    title: Log files
+    subtitle: Size, date and retention of the dispatch logs and of the history. Retention runs by itself when the file of a new day is created; here you can run it now or delete one file.
+  - $type: Markdown
+    text: $sources.files.note
+
+  # ---- Logs ----
+  - $type: PageHeader
+    title: Logs
+    subtitle: Daemon logs (UTC day) and launcher logs (local day), kept 90 days and 100 MB in total.
+  - $type: Markdown
+    text: $sources.files.logs.dirText
+  - $type: Progress
+    label: Disk usage against the cap
+    value: $sources.files.logs.totalBytes
+    max: $sources.files.logs.maxTotalBytes
+    valueLabel: $sources.files.logs.usageText
+    showValue: true
+    variant: primary
+  - $type: HorizontalStack
+    gap: gap-3
+    items:
+      - $type: StatTile
+        label: Files
+        value: $sources.files.logs.files.length
+      - $type: StatTile
+        label: Total size
+        value: $sources.files.logs.totalText
+      - $type: StatTile
+        label: Would be pruned now
+        value: $sources.files.logs.prunableText
+  - $type: Badge
+    $if: $sources.files.logs.warning
+    label: $sources.files.logs.warning
+    variant: warning
+  # Shown only when the policy would delete something now; the server recomputes the list when you click, it does not delete "what was shown".
+  - $type: ActionButton
+    $if: $sources.files.logs.prunableCount
+    action: pruneLogs
+    label: Prune by policy
+    icon: trash
+    variant: danger-outline
+  # `id` is unique across both sections; kind, day and variant fill the url of the delete action (the renderer percent-encodes them).
+  - $type: DataTable
+    rows: $sources.files.logs.files
+    emptyMessage: No log file
+    columns:
+      - { key: "name", label: "File", mono: true, nowrap: true }
+      - { key: "dayText", label: "Day", nowrap: true }
+      - { key: "bytes", label: "Size", format: "bytes", nowrap: true }
+      - { key: "modifiedAt", label: "Modified", format: "datetime", nowrap: true }
+      - { key: "status", label: "Status", nowrap: true, badge: { protected: info, prune: warning, kept: default } }
+      - { key: "reasonText", label: "Reason", muted: true }
+      - type: actions
+        items:
+          - { label: Delete this file, action: deleteLogsFile, icon: trash, variant: danger-outline, condition: canDelete }
+
+  # ---- History ----
+  - $type: PageHeader
+    title: History
+    subtitle: Every pushed event with its payload, kept 90 days and 200 MB in total.
+  - $type: Markdown
+    text: $sources.files.history.dirText
+  - $type: Progress
+    label: Disk usage against the cap
+    value: $sources.files.history.totalBytes
+    max: $sources.files.history.maxTotalBytes
+    valueLabel: $sources.files.history.usageText
+    showValue: true
+    variant: primary
+  - $type: HorizontalStack
+    gap: gap-3
+    items:
+      - $type: StatTile
+        label: Files
+        value: $sources.files.history.files.length
+      - $type: StatTile
+        label: Total size
+        value: $sources.files.history.totalText
+      - $type: StatTile
+        label: Would be pruned now
+        value: $sources.files.history.prunableText
+  - $type: Badge
+    $if: $sources.files.history.warning
+    label: $sources.files.history.warning
+    variant: warning
+  # Shown only when the policy would delete something now; the server recomputes the list when you click, it does not delete "what was shown".
+  - $type: ActionButton
+    $if: $sources.files.history.prunableCount
+    action: pruneHistory
+    label: Prune by policy
+    icon: trash
+    variant: danger-outline
+  # `id` is unique across both sections; kind, day and variant fill the url of the delete action (the renderer percent-encodes them).
+  - $type: DataTable
+    rows: $sources.files.history.files
+    emptyMessage: No history file
+    columns:
+      - { key: "name", label: "File", mono: true, nowrap: true }
+      - { key: "dayText", label: "Day", nowrap: true }
+      - { key: "bytes", label: "Size", format: "bytes", nowrap: true }
+      - { key: "modifiedAt", label: "Modified", format: "datetime", nowrap: true }
+      - { key: "status", label: "Status", nowrap: true, badge: { protected: info, prune: warning, kept: default } }
+      - { key: "reasonText", label: "Reason", muted: true }
+      - type: actions
+        items:
+          - { label: Delete this file, action: deleteHistoryFile, icon: trash, variant: danger-outline, condition: canDelete }
+
+  # The WAL and the dead-letter queue hold events not yet delivered or given up: shown for information, there is no way to delete them here.
+  - $type: PageHeader
+    title: Queue files
+    subtitle: Information only. Use queue dlq clear or the DLQ page to remove entries.
+  - $type: DataTable
+    rows: $sources.files.queueFiles
+    emptyMessage: No queue file
+    columns:
+      - { key: "name", label: "File", mono: true }
+      - { key: "bytes", label: "Size", format: "bytes" }
+      - { key: "modifiedAt", label: "Modified", format: "datetime" }
+  # In memory: it disappears when the module restarts (the day log keeps one audit line per action, source LogFilesPage).
+  - $type: Card
+    $if: $sources.files.lastPrune
+    padding: sm
+    items:
+      - $type: Markdown
+        text: $sources.files.lastPrune.text
+_Kept in memory only: it disappears when the module restarts._"

@@ -22,3 +22,9 @@ export class RelayNotConfiguredError extends Error {}
 
 /** A route asked about a project id that is in no registry, live or soft-deleted. */
 export class UnknownProjectError extends Error {}
+
+/** The combination asked for has no log files (the history has no launcher variant). */
+export class LogFileNotFoundError extends Error {}
+
+/** The log file is protected (today, in the future, or modified recently): it may still be written to. */
+export class LogFileInUseError extends Error {}
