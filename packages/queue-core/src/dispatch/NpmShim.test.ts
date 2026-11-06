@@ -108,7 +108,8 @@ describe('resolveNpmShim - files (pure fs, every platform)', () => {
     const nodeDir = join(workDir, 'nodebin');
     mkdirSync(nodeDir, { recursive: true });
     writeFileSync(join(nodeDir, 'node.exe'), '');
-    const launch = resolveNpmShim(join(shimDir, 'argv.cmd'), { PATH: nodeDir, PATHEXT: '.COM;.EXE' });
+    // Lowercase extensions: the file system of the CI (Linux) is case sensitive, Windows is not; the code under test only runs on Windows
+    const launch = resolveNpmShim(join(shimDir, 'argv.cmd'), { PATH: nodeDir, PATHEXT: '.com;.exe' });
     // PATHEXT case decides the case of the extension on Windows
     expect(launch?.nodeExe.toLowerCase()).toBe(join(nodeDir, 'node.exe').toLowerCase());
     expect(launch?.script).toBe(argvScript);
