@@ -85,9 +85,16 @@ Alternatives: call the real executable (`"C:\Program Files\Git\usr\bin\echo.exe"
 
 ## Windows `.cmd` and `.bat` targets
 
-Node cannot start a batch file without `cmd.exe`, and `queue`, `npm` and most shims are `.cmd`. The program is looked up like `cmd.exe` does (working directory, then `PATH`, with `PATHEXT`). If it is a `.cmd`/`.bat`, it runs as `cmd.exe /d /s /c` with every argument double-quoted, and every substituted value is checked first.
+Node cannot start a batch file without `cmd.exe`, and `queue`, `npm`, `flow`, `task` and most global tools are npm-generated `.cmd` shims. The program is looked up like `cmd.exe` does (working directory, then `PATH`, with `PATHEXT`).
 
-A value holding any of `& | < > ^ % ! "`, a backtick or a line break makes that delivery fail **permanently** (straight to the DLQ, no retries; the log and the DLQ entry say which field and character class). The literal parts of the template are not checked. Prefer a real program (`.exe`, or `node script.js`) when payloads are free text.
+| Found file | Started as | Values |
+|---|---|---|
+| Standard npm shim (`.cmd` that only runs `node <script>.js %*`) | `node.exe script.js args...` directly, no `cmd.exe` | Any character, including `"`, `&`, `%`, `^`, `!`; one inert argument each |
+| Any other `.cmd`/`.bat` | `cmd.exe /d /s /c`, every argument double-quoted | Checked first, see below |
+
+A shim is recognised only when every line is one of the standard npm/cmd-shim lines and the script is an existing `.js`/`.cjs`/`.mjs` file under the shim's own directory. Anything else (extra commands, extra arguments, environment changes, a path with `..`, a drive letter or `%`, a shim over 8 KB) is not a shim. Node is `node.exe` next to the shim, else the first `node.exe` on `PATH` (not the working directory); if neither exists the delivery fails permanently with how to fix it.
+
+For any other batch file, a value holding any of `& | < > ^ % ! "`, a backtick or a line break makes that delivery fail **permanently** (straight to the DLQ, no retries; the log and the DLQ entry say which field and character class, and that the file is not a recognised npm shim). The literal parts of the template are not checked. Fix: point the command at a real program (`.exe`, or `node script.js`) or at the tool's npm shim.
 
 Other extensions found on `PATHEXT` (`.ps1`, `.js`, ...) cannot be started without a shell: use their interpreter.
 

@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { statSync } from 'node:fs';
-import { delimiter, extname, isAbsolute, resolve } from 'node:path';
+import { extname } from 'node:path';
 import type { EventEnvelope } from '../types.js';
 import { getErrorMessage } from '../errors.js';
 import { CommandTemplateError, findCmdMetacharacter, hasPlaceholders, substituteToken, tokenizeTemplate } from './commandTemplate.js';
 import type { DispatchResult } from './DispatchResult.js';
+import { resolveNpmShim } from './NpmShim.js';
+import { envValue, findWindowsProgram } from './windowsProgram.js';
 
 type SpawnOptions = Parameters<typeof spawn>[2];
 
@@ -20,44 +21,6 @@ function quoteForCmd(arg: string): string {
   // Backslashes in front of an inner quote are doubled and the quote escaped; a run before the closing quote is doubled too, or it would escape that quote
   const escaped = arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1');
   return `"${escaped}"`;
-}
-
-function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const key = Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase());
-  return key === undefined ? undefined : env[key];
-}
-
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The file `program` designates on Windows, the way cmd.exe finds it: the working directory, then PATH, trying PATHEXT extensions.
- * Node itself only tries .com and .exe, which is why a .cmd shim like `npm` or `queue` needs this.
- */
-function findWindowsProgram(program: string, cwd: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
-  const base = cwd ?? process.cwd();
-  const extensions = (envValue(env, 'PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';').filter((e) => e !== '');
-  const known = extensions.map((e) => e.toLowerCase());
-  const hasExtension = known.includes(extname(program).toLowerCase());
-  const names = hasExtension ? [program, ...extensions.map((e) => program + e)] : extensions.map((e) => program + e);
-  const hasDirectory = /[\\/:]/.test(program);
-  const directories = hasDirectory || isAbsolute(program)
-    ? ['']
-    : [base, ...(envValue(env, 'PATH') ?? '').split(delimiter).map((d) => d.replace(/^"|"$/g, '')).filter((d) => d !== '')];
-  for (const directory of directories) {
-    for (const name of names) {
-      const candidate = directory === '' ? resolve(base, name) : resolve(base, directory, name);
-      if (isFile(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -111,7 +74,13 @@ function planDirectLaunch(command: string, envelope: EventEnvelope, cwd: string 
     );
   }
 
-  // A batch file can only run through cmd.exe, which interprets metacharacters: refuse any value that holds one
+  // An npm-generated shim only starts node on a script: run that directly, no shell, so every value stays one inert argument
+  const shim = resolveNpmShim(found, effectiveEnv);
+  if (shim !== undefined) {
+    return { file: shim.nodeExe, args: [shim.script, ...args], options: baseOptions };
+  }
+
+  // Any other batch file can only run through cmd.exe, which interprets metacharacters: refuse any value that holds one
   for (const argument of substituted) {
     for (const { field, value } of argument.fields) {
       const offending = findCmdMetacharacter(value);
@@ -119,7 +88,7 @@ function planDirectLaunch(command: string, envelope: EventEnvelope, cwd: string 
         const shown = offending.char === '\r' || offending.char === '\n' ? offending.name : `'${offending.char}' (${offending.name})`;
         throw new CommandTemplateError(
           `${label}: payload field '${field}' of event '${envelope.event}' contains ${shown}, which cmd.exe would run as code, and '${program}' resolves to ${found}, ` +
-          `a batch file that Windows can only start through cmd.exe. The delivery is refused and not retried. ` +
+          `a batch file that Windows can only start through cmd.exe (npm shims are run directly, but this file is not a recognised npm shim). The delivery is refused and not retried. ` +
           `Fix: make the command start a real program (an .exe, or node/your interpreter with a script) instead of a .cmd/.bat, ` +
           `or read the event envelope on stdin, or stop sending these characters in '${field}'.`
         );
