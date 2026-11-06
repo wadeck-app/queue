@@ -24,6 +24,8 @@ export { PayloadFilter } from './dispatch/PayloadFilter.js';
 export type { FilterEvaluation } from './dispatch/PayloadFilter.js';
 export type { EventEnvelope } from './types.js';
 export { EventLogger } from './storage/EventLogger.js';
+export { pruneLogDir, LOG_MAX_AGE_DAYS, LOG_MAX_TOTAL_BYTES } from './storage/LogRetention.js';
+export type { PruneOptions, PruneReport, PrunedFile, PruneFailure } from './storage/LogRetention.js';
 export { HistoryReader } from './storage/HistoryReader.js';
 export type { CausedBy } from './storage/HistoryLog.js';
 export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage } from './storage/HistoryReader.js';

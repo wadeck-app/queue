@@ -54,7 +54,8 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 
 - **Threat:** `AsyncDispatcher` writes the exit code and the last 1024 characters of a `cli` subscriber's stdout and stderr (`stdoutTail`, `stderrTail`) to `logs/<date>.ndjson`, on success and failure. Whatever the program prints, including secrets, lands there and in `queue logs` and the dashboard Logs page.
 - **Mitigation:** Cap of 1024 characters per stream (the end is kept); control characters other than `\n` and `\t` are stripped; empty streams are not written; the stdin envelope is never logged; nothing of this goes to `history/`.
-- **Risk accepted:** No redaction, and `logs/` is not pruned by the code (no retention window, unlike `history/`): delete old `logs/*.ndjson` files by hand. A subscriber must not print secrets.
+- **Retention:** `logs/` files (`<day>.ndjson`, and the launcher's `<day>-launcher.log`, pruned by the daemon) are kept 90 days at most (date in the name) and 100 MB in total (`LogRetention`). The check runs when a new day's file is created, not on every write: older files go first, then whole days oldest first; today's files are never deleted (a single day over 100 MB only logs a warning). A file that cannot be deleted is logged and retried on the next new day.
+- **Risk accepted:** No redaction: a secret printed by a subscriber stays up to 90 days. A subscriber must not print secrets.
 
 ### Dashboard routes that would change what runs
 
