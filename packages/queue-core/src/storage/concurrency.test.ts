@@ -68,7 +68,7 @@ describe('Wal and DlqStore with several writer processes', () => {
         `  wal.updateEntry(id, { status: 'acked', attempts: 1 });\n` +
         `}\n`,
     );
-    expect(stderr).toBe('');
+    expect(stderr, `stderr of the writer processes: ${stderr}`).toBe('');
     expect(codes).toEqual([0, 0, 0]);
     const entries = new Wal(join(dir, 'wal.ndjson')).readAll();
     expect(entries).toHaveLength(WRITERS * PER_WRITER);
@@ -83,7 +83,7 @@ describe('Wal and DlqStore with several writer processes', () => {
         `  if (i % 2 === 0) dlq.remove(id);\n` +
         `}\n`,
     );
-    expect(stderr).toBe('');
+    expect(stderr, `stderr of the writer processes: ${stderr}`).toBe('');
     expect(codes).toEqual([0, 0, 0]);
     const ids = new DlqStore(join(dir, 'dlq.ndjson')).readAll().map((e) => e.id).sort();
     const expected = Array.from({ length: WRITERS }, (_, w) => Array.from({ length: PER_WRITER }, (_, i) => i).filter((i) => i % 2 === 1).map((i) => `w${w}-${i}`)).flat().sort();

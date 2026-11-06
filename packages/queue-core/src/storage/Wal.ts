@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, openSync, closeSync, chmodSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, closeSync, chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { renameReplacing } from './AtomicRename.js';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
 import { FileLock } from './FileLock.js';
@@ -103,7 +104,7 @@ export class Wal {
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
     writeFileSync(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
     held.assertHeld();
-    renameSync(tmpPath, this.filePath);
+    renameReplacing(tmpPath, this.filePath);
   }
 
   pendingCount(): number {

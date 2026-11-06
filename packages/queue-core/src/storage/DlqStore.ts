@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { renameReplacing } from './AtomicRename.js';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
 import { FileLock } from './FileLock.js';
@@ -40,7 +41,7 @@ export class DlqStore {
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
     writeFileSync(tmpPath, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length > 0 ? '\n' : ''), 'utf-8');
     held.assertHeld();
-    renameSync(tmpPath, this.filePath);
+    renameReplacing(tmpPath, this.filePath);
   }
 
   append(entry: DlqEntry): void {
