@@ -36,6 +36,10 @@ No database, no message store beyond `wal.ndjson` and `dlq.ndjson`. The WAL is n
 
 `logs/<date>.ndjson` (verbose per-dispatch debug trail, `EventLogger`) and `history/<date>.ndjson` (terse trigger/outcome/filtered audit trail for `queue history`, `HistoryLog`) are observability directories, not message stores: they are written for humans to read (via `queue logs`/`queue history`), not consumed by subscribers or replayed as a delivery mechanism. They are not covered by this restriction.
 
+## Judging a subscriber's result (domain-specific diagnostics)
+
+No warning or failure derived from what a command is supposed to do: not "exit 0 with empty stdout", not "this tool should have printed an id". Many commands succeed silently, and queue cannot know which ones should not. The dispatch log gives the facts (`exitCode`, `stdoutTail`, `stderrTail`); a tool that can exit 0 without doing its job is fixed in that tool (non-zero exit), or by a subscriber that wraps the call and checks the output. Origin: `flow run` exiting 0 without creating an execution while its daemon was stopping (2026-11-06). See the principle "Queue stays domain-agnostic" in `guiding-principles.md`.
+
 ## HTTP subscriber webhook security (HMAC, TLS client cert)
 
 Subscribers of type `http` receive events as plain HTTP requests with configurable headers. No signing, no mutual TLS. Callers are responsible for adding auth headers in the subscriber config.

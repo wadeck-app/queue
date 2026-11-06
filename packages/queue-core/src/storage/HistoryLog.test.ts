@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, existsSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HistoryLog } from './HistoryLog.js';
+import { pruneLogDir, type RetentionLine } from './LogRetention.js';
 
 function readRecords(historyDir: string): Record<string, unknown>[] {
   const today = new Date().toISOString().slice(0, 10);
@@ -129,42 +130,120 @@ describe('HistoryLog', () => {
   });
 
   describe('retention (payloads must not accumulate forever -- see threat-model.md)', () => {
-    it('deletes day files older than the retention window on write', () => {
-      writeFileSync(join(historyDir, '2020-01-01.ndjson'), '{}\n', 'utf-8');
-      writeFileSync(join(historyDir, '2020-01-02.ndjson'), '{}\n', 'utf-8');
+    const trigger = { eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 };
+    const put = (name: string, bytes = 10): void => writeFileSync(join(historyDir, name), 'x'.repeat(bytes), 'utf-8');
 
-      new HistoryLog(historyDir, 7).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
+    it('deletes day files older than 90 days when the file of a new day is created (90 days kept, 91 deleted)', () => {
+      // 2026-10-19 minus 90 days is 2026-07-21
+      put('2026-07-21.ndjson');
+      put('2026-07-20.ndjson');
+      put('2020-01-01.ndjson');
 
-      expect(existsSync(join(historyDir, '2020-01-01.ndjson'))).toBe(false);
-      expect(existsSync(join(historyDir, '2020-01-02.ndjson'))).toBe(false);
+      new HistoryLog(historyDir, () => undefined).logTrigger(trigger);
+
+      expect(readdirSync(historyDir).sort()).toEqual(['2026-07-21.ndjson', '2026-10-19.ndjson']);
     });
 
-    it('keeps day files within the retention window', () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      writeFileSync(join(historyDir, `${yesterday}.ndjson`), '{}\n', 'utf-8');
-
-      new HistoryLog(historyDir, 30).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
-
-      expect(existsSync(join(historyDir, `${yesterday}.ndjson`))).toBe(true);
-      expect(existsSync(join(historyDir, `${today}.ndjson`))).toBe(true);
+    it('keeps recent day files', () => {
+      put('2026-10-18.ndjson');
+      history.logTrigger(trigger);
+      expect(existsSync(join(historyDir, '2026-10-18.ndjson'))).toBe(true);
+      expect(existsSync(join(historyDir, '2026-10-19.ndjson'))).toBe(true);
     });
 
     it('ignores non-day-file entries in the history directory', () => {
-      writeFileSync(join(historyDir, 'not-a-day-file.txt'), 'irrelevant', 'utf-8');
+      put('not-a-day-file.txt');
+      put('2020-01-01.ndjson.bak');
+      put('2020-01-01-launcher.log');
 
-      new HistoryLog(historyDir, 7).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
+      history.logTrigger(trigger);
 
-      expect(existsSync(join(historyDir, 'not-a-day-file.txt'))).toBe(true);
-      expect(readdirSync(historyDir)).toContain('not-a-day-file.txt');
+      expect(readdirSync(historyDir).sort()).toEqual(['2020-01-01-launcher.log', '2020-01-01.ndjson.bak', '2026-10-19.ndjson', 'not-a-day-file.txt']);
     });
 
-    it('defaults to a 30-day retention window', () => {
-      writeFileSync(join(historyDir, '2020-01-01.ndjson'), '{}\n', 'utf-8');
+    it('runs once, on the first write of a new day, and not on the following writes', () => {
+      const prune = vi.fn(() => ({ deleted: [], failures: [], remainingBytes: 0 }));
+      const log = new HistoryLog(historyDir, () => undefined, prune);
 
-      new HistoryLog(historyDir).logTrigger({ eventId: 'ev-1', event: 'onTest', matchedCount: 0, totalCount: 0 });
+      log.logTrigger(trigger);
+      log.logOutcome({ eventId: 'ev-1', event: 'onTest', subscriberId: 's', status: 'success' });
+      log.logFiltered({ eventId: 'ev-1', event: 'onTest', subscriberId: 't', filter: 'f' });
+      expect(prune).toHaveBeenCalledTimes(1);
+      expect(prune).toHaveBeenCalledWith(historyDir, { kind: 'history', now: new Date('2026-10-19T12:00:00.000Z'), keepDay: '2026-10-19' });
 
-      expect(existsSync(join(historyDir, '2020-01-01.ndjson'))).toBe(false);
+      // The next day: a new file, so one more run
+      vi.setSystemTime(new Date('2026-10-20T00:00:01.000Z'));
+      log.logTrigger(trigger);
+      log.logTrigger(trigger);
+      expect(prune).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports what it deleted, whole days oldest first, through onRetention', () => {
+      // The default cap is 200 MB: use an injected prune to exercise the report path with a small cap
+      put('2026-10-10.ndjson', 40);
+      put('2026-10-11.ndjson', 40);
+      const received: RetentionLine[][] = [];
+      const log = new HistoryLog(historyDir, lines => received.push(lines), (dir, options) => pruneLogDir(dir, { ...options, maxTotalBytes: 50 }));
+
+      log.logTrigger(trigger);
+
+      expect(readdirSync(historyDir).sort()).toEqual(['2026-10-11.ndjson', '2026-10-19.ndjson']);
+      expect(received).toHaveLength(1);
+      expect(received[0]![0]!.level).toBe('info');
+      expect(received[0]![0]!.message).toBe('History retention deleted 1 file(s), 40 bytes freed: 2026-10-10.ndjson (total size over 0 MB)');
+    });
+
+    it('does not report when there is nothing to say', () => {
+      const onRetention = vi.fn();
+      put('2026-10-18.ndjson');
+      new HistoryLog(historyDir, onRetention).logTrigger(trigger);
+      expect(onRetention).not.toHaveBeenCalled();
+    });
+
+    it('still writes the record, and reports the failure with a fix, when a file cannot be deleted', () => {
+      // A directory named like a day file cannot be unlinked, on Windows and POSIX alike
+      mkdirSync(join(historyDir, '2020-01-01.ndjson'));
+      const received: RetentionLine[][] = [];
+
+      new HistoryLog(historyDir, lines => received.push(lines)).logTrigger(trigger);
+
+      expect(readRecords(historyDir)).toHaveLength(1);
+      expect(received).toHaveLength(1);
+      expect(received[0]![0]!.level).toBe('warn');
+      expect(received[0]![0]!.message).toContain('2020-01-01.ndjson');
+      expect(received[0]![0]!.message).toContain('delete it by hand');
+    });
+
+    it('still writes the record, and says how to fix it, when the retention itself throws', () => {
+      const received: RetentionLine[][] = [];
+      const log = new HistoryLog(historyDir, lines => received.push(lines), () => {
+        throw new Error('EACCES: permission denied');
+      });
+
+      log.logTrigger(trigger);
+
+      expect(readRecords(historyDir)).toHaveLength(1);
+      expect(received[0]![0]!.message).toContain('EACCES: permission denied');
+      expect(received[0]![0]!.message).toContain(historyDir);
+    });
+
+    it('still writes the record when the report channel throws too', () => {
+      mkdirSync(join(historyDir, '2020-01-01.ndjson'));
+      new HistoryLog(historyDir, () => {
+        throw new Error('channel down');
+      }).logTrigger(trigger);
+      expect(readRecords(historyDir)).toHaveLength(1);
+    });
+
+    it('writes to stderr by default, never silently', () => {
+      const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+      mkdirSync(join(historyDir, '2020-01-01.ndjson'));
+      try {
+        new HistoryLog(historyDir).logTrigger(trigger);
+        expect(stderr).toHaveBeenCalledWith(expect.stringContaining('History retention: 2020-01-01.ndjson'));
+      } finally {
+        stderr.mockRestore();
+      }
     });
   });
 });

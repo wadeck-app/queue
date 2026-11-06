@@ -221,6 +221,38 @@ describe('HistoryReader', () => {
     expect(entries.map(e => e.event).sort()).toEqual(['onA', 'onB']);
   });
 
+  describe('a day deleted by the history retention', () => {
+    const triggerOf = (day: string, eventId: string): object => ({ ts: `${day}T10:00:00.000Z`, type: 'trigger', eventId, event: 'onA', projectId: 'p1', matchedCount: 0, totalCount: 0 });
+
+    it('is no longer returned by a reader that had cached it', () => {
+      writeDay(historyDir, '2026-01-01', [triggerOf('2026-01-01', 'old')]);
+      writeDay(historyDir, '2026-01-02', [triggerOf('2026-01-02', 'new')]);
+      const reader = new HistoryReader(historyDir);
+      expect(reader.read().map(e => e.eventId).sort()).toEqual(['new', 'old']);
+
+      rmSync(join(historyDir, '2026-01-01.ndjson'));
+
+      expect(reader.read().map(e => e.eventId)).toEqual(['new']);
+      expect(reader.findByEventId('old')).toBeUndefined();
+    });
+
+    it('does not make a reader throw when it disappears between the listing and the read', () => {
+      writeDay(historyDir, '2026-01-02', [triggerOf('2026-01-02', 'new')]);
+      const reader = new HistoryReader(historyDir);
+      // The listing still names the day the retention has just deleted
+      vi.spyOn(reader as unknown as { listFiles(): string[] }, 'listFiles').mockReturnValue(['2026-01-01.ndjson', '2026-01-02.ndjson']);
+
+      expect(reader.read().map(e => e.eventId)).toEqual(['new']);
+      expect(reader.readProject('p1').map(e => e.eventId)).toEqual(['new']);
+      expect(reader.countTriggers(Date.parse('2026-01-03T00:00:00.000Z'), [7 * 24 * 3_600_000])).toEqual([1]);
+    });
+
+    it('does not hide another read error (a day that is not a readable file still throws)', () => {
+      mkdirSync(join(historyDir, '2026-01-01.ndjson'));
+      expect(() => new HistoryReader(historyDir).read()).toThrow();
+    });
+  });
+
   it('sorts newest first', () => {
     writeDay(historyDir, '2026-01-01', [
       { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 0, totalCount: 0 },

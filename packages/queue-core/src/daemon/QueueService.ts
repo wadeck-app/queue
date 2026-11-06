@@ -95,7 +95,10 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
-  const historyLog = new HistoryLog(join(configDir, 'history'));
+  // History retention runs when a new day's file is created; what it reports lands in the daemon log (queue logs)
+  const historyLog = new HistoryLog(join(configDir, 'history'), lines => {
+    for (const line of lines) eventLogger.logDiagnostic({ source: 'HistoryRetention', message: line.message, level: line.level });
+  });
   const actions = options.actions ?? createActionRegistry();
   const configLoader = new ConfigLoader(configDir, { actions });
   // The context of a run is bound lazily to the internal push: the transport exists before the push it will call

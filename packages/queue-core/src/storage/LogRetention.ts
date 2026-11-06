@@ -6,12 +6,26 @@ export const LOG_MAX_AGE_DAYS = 90;
 /** The logs directory holds this many bytes at most (matching files only). */
 export const LOG_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 
+/** A history file is kept this many days at most (counted from the date in its name). */
+export const HISTORY_MAX_AGE_DAYS = 90;
+/** The history directory holds this many bytes at most (matching files only). */
+export const HISTORY_MAX_TOTAL_BYTES = 200 * 1024 * 1024;
+
 // Only daemon logs (<day>.ndjson) and launcher logs (<day>-launcher.log); any other file is never touched
 const LOG_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})(-launcher)?\.(ndjson|log)$/;
+// History: <day>.ndjson only, no launcher variant
+const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.ndjson$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Which directory is pruned: it selects the file names that may be deleted, the default limits and the wording of the messages. */
+export type RetentionKind = 'logs' | 'history';
+
 export interface PruneOptions {
+  /** Default 'logs'. */
+  kind?: RetentionKind;
+  /** Default: LOG_MAX_AGE_DAYS or HISTORY_MAX_AGE_DAYS, by kind. */
   maxAgeDays?: number;
+  /** Default: LOG_MAX_TOTAL_BYTES or HISTORY_MAX_TOTAL_BYTES, by kind. */
   maxTotalBytes?: number;
   /** The clock; the age of a file is measured against this day (UTC). */
   now: Date;
@@ -56,13 +70,15 @@ function dayToMs(day: string): number {
  * failures are reported, see PruneReport.
  */
 export function pruneLogDir(dir: string, options: PruneOptions): PruneReport {
-  const maxAgeDays = options.maxAgeDays ?? LOG_MAX_AGE_DAYS;
-  const maxTotalBytes = options.maxTotalBytes ?? LOG_MAX_TOTAL_BYTES;
+  const isHistory = options.kind === 'history';
+  const pattern = isHistory ? HISTORY_FILE_PATTERN : LOG_FILE_PATTERN;
+  const maxAgeDays = options.maxAgeDays ?? (isHistory ? HISTORY_MAX_AGE_DAYS : LOG_MAX_AGE_DAYS);
+  const maxTotalBytes = options.maxTotalBytes ?? (isHistory ? HISTORY_MAX_TOTAL_BYTES : LOG_MAX_TOTAL_BYTES);
   const report: PruneReport = { deleted: [], failures: [], remainingBytes: 0 };
 
   let files: LogFile[] = [];
   for (const name of readdirSync(dir)) {
-    const match = LOG_FILE_PATTERN.exec(name);
+    const match = pattern.exec(name);
     if (!match) continue;
     const day = match[1]!;
     if (Number.isNaN(dayToMs(day))) continue;
@@ -72,7 +88,7 @@ export function pruneLogDir(dir: string, options: PruneOptions): PruneReport {
       report.failures.push({
         file: name,
         error: err instanceof Error ? err.message : String(err),
-        fix: `Check that ${join(dir, name)} is readable; it is skipped by the log retention.`,
+        fix: `Check that ${join(dir, name)} is readable; it is skipped by the ${isHistory ? 'history' : 'log'} retention.`,
       });
     }
   }
@@ -116,10 +132,36 @@ export function pruneLogDir(dir: string, options: PruneOptions): PruneReport {
   if (report.remainingBytes > maxTotalBytes) {
     const keptBytes = files.filter(f => f.day === options.keepDay).reduce((sum, f) => sum + f.bytes, 0);
     if (files.every(f => f.day === options.keepDay)) {
-      report.warning = `Logs of ${options.keepDay} alone use ${keptBytes} bytes, over the ${maxTotalBytes} byte cap; nothing more can be deleted. Find the noisy subscriber with "queue logs" and reduce its output.`;
+      report.warning = isHistory
+        ? `History of ${options.keepDay} alone uses ${keptBytes} bytes, over the ${maxTotalBytes} byte cap; nothing more can be deleted. Find the event pushed too often or with a huge payload with "queue history" and reduce it.`
+        : `Logs of ${options.keepDay} alone use ${keptBytes} bytes, over the ${maxTotalBytes} byte cap; nothing more can be deleted. Find the noisy subscriber with "queue logs" and reduce its output.`;
     } else {
-      report.warning = `Logs still use ${report.remainingBytes} bytes, over the ${maxTotalBytes} byte cap, because some files could not be deleted (see failures).`;
+      report.warning = `${isHistory ? 'History still uses' : 'Logs still use'} ${report.remainingBytes} bytes, over the ${maxTotalBytes} byte cap, because some files could not be deleted (see failures).`;
     }
   }
   return report;
+}
+
+export interface RetentionLine {
+  level: 'info' | 'warn';
+  message: string;
+}
+
+/**
+ * What a prune report says, as the lines to log: one info line for the deleted files, one warn line for the warning and the failures.
+ * `label` starts every message ('Log' or 'History', giving "Log retention deleted ...").
+ */
+export function describeRetention(label: string, report: PruneReport): RetentionLine[] {
+  const lines: RetentionLine[] = [];
+  if (report.deleted.length > 0) {
+    const freed = report.deleted.reduce((sum, d) => sum + d.bytes, 0);
+    const what = report.deleted.map(d => `${d.file} (${d.reason})`).join(', ');
+    lines.push({ level: 'info', message: `${label} retention deleted ${report.deleted.length} file(s), ${freed} bytes freed: ${what}` });
+  }
+  const problems = report.failures.map(f => `${f.file}: ${f.error}. ${f.fix}`);
+  if (report.warning) problems.unshift(report.warning);
+  if (problems.length > 0) {
+    lines.push({ level: 'warn', message: `${label} retention: ${problems.join(' | ')}` });
+  }
+  return lines;
 }

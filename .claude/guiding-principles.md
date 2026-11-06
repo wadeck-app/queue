@@ -20,6 +20,10 @@ An event is not considered dispatched until the WAL entry is updated to `status:
 
 YAML parse errors in `subscribers.yml` throw with the file path and a fix hint. Zod validation failures throw with the full error and a schema hint. Do not silently skip invalid subscribers or return empty results.
 
+## Queue stays domain-agnostic: it reports facts, it does not judge what a command should do
+
+Queue records what happened (status, exit code, output tails) and never interprets it. Anything that depends on what a subscriber, a producer or a tool means (is empty output suspicious? is this event normal?) belongs to the program that knows, not to a queue-wide rule. Rejected on this ground: a warning for "exit 0 with empty stdout" (see `out-of-scope.md`).
+
 ## Deploy via CI, never via local `node_modules` editing
 
 The deployment contract is: `git commit` + `git push` → CI publishes → `queue cli update`. Never validate behavior by editing `node_modules` or running `node dist-bundle/queue.cjs` directly. Test with the globally installed `queue` binary after `npm install -g`.

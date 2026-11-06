@@ -124,7 +124,14 @@ export class HistoryReader {
   read(filter: HistoryFilter = {}): HistoryEntry[] {
     const acc = new Map<string, Accumulator>();
 
-    for (const file of this.listFiles()) {
+    const files = this.listFiles();
+    // A day the retention deleted must not stay in memory (nor be served) in a reader that lives across polls
+    for (const cachedFile of [...this.fileCache.keys()]) {
+      if (!files.includes(cachedFile)) {
+        this.fileCache.delete(cachedFile);
+      }
+    }
+    for (const file of files) {
       for (const record of this.readFileRecords(file)) {
         this.applyRecord(acc, record);
       }
@@ -144,7 +151,10 @@ export class HistoryReader {
    */
   readProject(projectId: string): HistoryEntry[] {
     // Bytes, not text: a search for an ASCII id needs no decoding, and a project with nothing in the history never decodes a file
-    const files = this.listFiles().map((file) => ({ file, bytes: readFileSync(join(this.historyDir, file)) }));
+    const files = this.listFiles().flatMap((file) => {
+      const bytes = this.readDayFile(file);
+      return bytes === undefined ? [] : [{ file, bytes }];
+    });
     const needle = Buffer.from(projectId, 'utf-8');
     const candidates = new Set<string>();
     for (const { file, bytes } of files) {
@@ -323,7 +333,11 @@ export class HistoryReader {
       if (file.slice(0, 10) < oldestDay) {
         continue;
       }
-      for (const line of readFileSync(join(this.historyDir, file), 'utf-8').split('\n')) {
+      const content = this.readDayFile(file)?.toString('utf-8');
+      if (content === undefined) {
+        continue;
+      }
+      for (const line of content.split('\n')) {
         const head = line.slice(0, LINE_HEAD_CHARS);
         const tsMatch = TS_KEY.exec(head);
         const typeMatch = RECORD_TYPE.exec(head);
@@ -364,17 +378,48 @@ export class HistoryReader {
     return readdirSync(this.historyDir).filter(f => DATE_FILE.test(f)).sort();
   }
 
+  /**
+   * The bytes of a day file, or undefined when the file is gone: the history retention (run by the daemon, another process)
+   * deletes whole days between the moment a reader lists the directory and the moment it opens a file, and a day deleted
+   * by the retention is a day that is no longer in the history, not an error.
+   */
+  private readDayFile(file: string): Buffer | undefined {
+    try {
+      return readFileSync(join(this.historyDir, file));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.fileCache.delete(file);
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
   private readFileRecords(file: string): Record<string, unknown>[] {
     const filePath = join(this.historyDir, file);
-    // Rounded: utimes/stat round-trips can shift sub-millisecond precision on some
-    // filesystems even with no real content change, which would defeat the cache.
-    const mtimeMs = Math.round(statSync(filePath).mtimeMs);
+    let mtimeMs: number;
+    try {
+      // Rounded: utimes/stat round-trips can shift sub-millisecond precision on some
+      // filesystems even with no real content change, which would defeat the cache.
+      mtimeMs = Math.round(statSync(filePath).mtimeMs);
+    } catch (err) {
+      // Deleted by the history retention since the directory was listed: see readDayFile
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.fileCache.delete(file);
+        return [];
+      }
+      throw err;
+    }
     const cached = this.fileCache.get(file);
     if (cached && cached.mtimeMs === mtimeMs) {
       return cached.records;
     }
 
-    const content = readFileSync(filePath, 'utf-8');
+    const bytes = this.readDayFile(file);
+    if (bytes === undefined) {
+      return [];
+    }
+    const content = bytes.toString('utf-8');
     const records: Record<string, unknown>[] = [];
     for (const line of content.split('\n')) {
       const trimmed = line.trim();

@@ -12,7 +12,7 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 | `wal.ndjson` | Medium — in-flight event payloads including any secrets passed in JSON | Stored in `QUEUE_CONFIG_DIR` |
 | `dlq.ndjson` | Medium — failed event payloads; may contain sensitive data | Same as WAL |
 | `logs/` | Low–Medium — subscriber execution output | May contain secrets printed by subscribers |
-| `history/` | Medium — every trigger record stores the push payload verbatim (for `queue replay`), same sensitivity as WAL/DLQ | Bounded by `HistoryLog`'s day-based retention window (default 30 days, pruned on every write), unlike WAL (cleared on completion) or DLQ (bounded via `maxSize` eviction) which clear/evict individual entries |
+| `history/` | Medium — every trigger record stores the push payload verbatim (for `queue replay`), same sensitivity as WAL/DLQ | Bounded by `HistoryLog`'s retention (90 days and 200 MB in total, checked when a new day's file is created), unlike WAL (cleared on completion) or DLQ (bounded via `maxSize` eviction) which clear/evict individual entries |
 | Daemon port (47910) | Medium — any local process can send RPC commands | Localhost only |
 | `_secrets_/.env.local` (`QUEUE_CONFIG_DIR`) | High — holds `QUEUE_RELAY_TOKEN`, the relay Consumer token (high-entropy bearer credential for the remote webhook relay) | Gitignored `_secrets_/` folder, protected from agents by the w-guardrails plugin; the daemon reads it, nothing prints it (errors name the path, never the value). Also accepted: env `QUEUE_RELAY_TOKEN`. A `.env.local` outside `_secrets_/` is a hard error. |
 | `relay.yml` (`QUEUE_CONFIG_DIR`) | Medium — relay URL, plugins and subscriptions. A `token:` entry is still accepted but deprecated (plaintext, `relay start` warns) | Same filesystem trust boundary as `subscribers.yml` |
@@ -46,7 +46,7 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 ### Sensitive data in history/ (queue replay payload storage)
 
 - **Threat:** Since `queue replay <eventId>` needs the original payload, `HistoryLog.logTrigger` persists it verbatim in `history/<date>.ndjson`, readable in full via `queue history --json`. Same payload-contains-secrets risk as WAL/DLQ above, but history has no per-entry clearing (WAL clears on ack, DLQ evicts past `maxSize`) -- without a bound, it would retain every payload forever.
-- **Mitigation:** `HistoryLog` prunes day files older than `retentionDays` (default 30) on every write, so a payload is never kept longer than that window.
+- **Mitigation:** `history/` files (`<day>.ndjson`) are kept 90 days at most (date in the name) and 200 MB in total (`LogRetention`, shared with `logs/`). The check runs when a new day's file is created, not on every write: older files go first, then whole days oldest first (`queue replay` needs whole days); today's file is never deleted (a single day over 200 MB only logs a warning). A file that cannot be deleted is logged and retried on the next new day. Between two new days, history can exceed 200 MB.
 - **Risk accepted:** Within the retention window, caller responsibility not to push secrets as payloads (same as WAL/DLQ).
 - **Dashboard exposure:** The app-core module's `GET /api/modules/queue/history` also returns each payload as `payloadText` (indented JSON, capped at 20,000 characters; it replaces the raw `payload` in the list, the full one is on `GET /history/<eventId>` (app-core >= 2026.10.17-023) and in `queue history --json`), rendered in the Queue History page's expandable rows. Same sensitivity as `queue history --json`, but reachable by anything that can call app-core's HTTP API (localhost); do not expose app-core beyond localhost without authentication.
 
@@ -76,7 +76,7 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 
 ### Relay payload contents and token transport
 
-- **Threat (data):** Relay payloads (GitHub PR bodies, commit author emails, private-repo content) are pushed like any other payload, so they land verbatim in `wal.ndjson`, `dlq.ndjson` and `history/` (30 days). The client applies no size cap and no field projection.
+- **Threat (data):** Relay payloads (GitHub PR bodies, commit author emails, private-repo content) are pushed like any other payload, so they land verbatim in `wal.ndjson`, `dlq.ndjson` and `history/` (90 days, 200 MB). The client applies no size cap and no field projection.
 - **Mitigation:** `eventType`/`payloadMatch` in `relay.yml` limit what is delivered; `relay.log` records delivery ids, event names and errors but never payloads.
 - **Risk accepted:** Same as "Sensitive data in WAL / DLQ" and "history/" above; do not subscribe to events whose payloads must not be stored locally.
 - **Threat (token):** The Consumer token is sent as the first websocket message.

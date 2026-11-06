@@ -1,8 +1,7 @@
 import type { EventMeta } from '../types.js';
-import { existsSync, mkdirSync, appendFileSync, readdirSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-
-const DATE_FILE = /^(\d{4}-\d{2}-\d{2})\.ndjson$/;
+import { pruneLogDir, describeRetention, type PruneOptions, type PruneReport, type RetentionLine } from './LogRetention.js';
 
 /** The project fields an outcome or a filtered record carries, from the meta of the envelope it was dispatched with. */
 export function projectRefsOf(meta: EventMeta): { projectId?: string; emitterProjectId?: string } {
@@ -77,14 +76,27 @@ export interface HistoryWriter {
 
 export class HistoryLog implements HistoryWriter {
   private readonly historyDir: string;
-  private readonly retentionDays: number;
+  private readonly onRetention: (lines: RetentionLine[]) => void;
+  private readonly prune: (dir: string, options: PruneOptions) => PruneReport;
 
   // Trigger records carry the push payload (for `queue replay`), which can contain secrets
-  // (see threat-model.md) -- unlike WAL/DLQ, nothing else ever clears a history entry, so a
-  // day-based retention window is the only thing bounding how long that payload is kept.
-  constructor(historyDir: string, retentionDays = 30) {
+  // (see threat-model.md) -- unlike WAL/DLQ, nothing else ever clears a history entry, so the retention
+  // (HISTORY_MAX_AGE_DAYS days, HISTORY_MAX_TOTAL_BYTES bytes) is the only thing bounding how long that payload is kept.
+  /**
+   * @param onRetention Receives what the retention did or could not do (deleted files, warning, failures), when it has something to say.
+   *   Default: written to stderr, so a problem is never silent.
+   * @param prune History retention, replaceable for tests.
+   */
+  constructor(
+    historyDir: string,
+    onRetention: (lines: RetentionLine[]) => void = lines => {
+      for (const line of lines) process.stderr.write(`[queue] ${line.message}\n`);
+    },
+    prune: (dir: string, options: PruneOptions) => PruneReport = pruneLogDir,
+  ) {
     this.historyDir = historyDir;
-    this.retentionDays = retentionDays;
+    this.onRetention = onRetention;
+    this.prune = prune;
   }
 
   private ensureDir(): void {
@@ -97,23 +109,28 @@ export class HistoryLog implements HistoryWriter {
     return new Date().toISOString().slice(0, 10);
   }
 
-  private pruneOldFiles(): void {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - this.retentionDays);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-
-    for (const file of readdirSync(this.historyDir)) {
-      const match = DATE_FILE.exec(file);
-      if (match && match[1]! < cutoffStr) {
-        unlinkSync(join(this.historyDir, file));
+  /** Never throws: a retention problem must not lose a history record. Run only when the file of a new day is about to be created. */
+  private runRetention(day: string): void {
+    try {
+      const report = this.prune(this.historyDir, { kind: 'history', now: new Date(), keepDay: day });
+      const lines = describeRetention('History', report);
+      if (lines.length > 0) this.onRetention(lines);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      try {
+        this.onRetention([{ level: 'warn', message: `History retention failed: ${msg}. Check that ${this.historyDir} is readable; old history is not pruned until the next new day.` }]);
+      } catch {
+        // The report channel itself failed: nothing left to tell, and the record must still be written
       }
     }
   }
 
   private write(type: 'trigger' | 'outcome' | 'filtered', entry: object): void {
     this.ensureDir();
-    this.pruneOldFiles();
-    const file = join(this.historyDir, `${this.currentDateStr()}.ndjson`);
+    const day = this.currentDateStr();
+    const file = join(this.historyDir, `${day}.ndjson`);
+    // A new day's file is the one moment the retention runs (not on every write)
+    if (!existsSync(file)) this.runRetention(day);
     appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), type, ...entry }) + '\n', 'utf-8');
   }
 

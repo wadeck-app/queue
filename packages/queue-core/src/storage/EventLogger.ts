@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pruneLogDir, type PruneOptions, type PruneReport } from './LogRetention.js';
+import { pruneLogDir, describeRetention, type PruneOptions, type PruneReport } from './LogRetention.js';
 
 export interface DispatchLogEntry {
   event: string;
@@ -41,6 +41,8 @@ export interface DiagnosticLogEntry {
   /** Emitting component, e.g. 'AsyncDispatcher' or 'QueueDaemon.push'. */
   source: string;
   message: string;
+  /** Severity, written as is in the record (retention reports use it); absent for a plain diagnostic. */
+  level?: 'info' | 'warn';
 }
 
 /**
@@ -99,15 +101,8 @@ export class EventLogger implements QueueLogWriter {
     const lines: { type: 'diagnostic'; level: 'info' | 'warn'; message: string }[] = [];
     try {
       const report = this.prune(this.logsDir, { now: new Date(), keepDay: day });
-      if (report.deleted.length > 0) {
-        const freed = report.deleted.reduce((sum, d) => sum + d.bytes, 0);
-        const what = report.deleted.map(d => `${d.file} (${d.reason})`).join(', ');
-        lines.push({ type: 'diagnostic', level: 'info', message: `Log retention deleted ${report.deleted.length} file(s), ${freed} bytes freed: ${what}` });
-      }
-      const problems = report.failures.map(f => `${f.file}: ${f.error}. ${f.fix}`);
-      if (report.warning) problems.unshift(report.warning);
-      if (problems.length > 0) {
-        lines.push({ type: 'diagnostic', level: 'warn', message: `Log retention: ${problems.join(' | ')}` });
+      for (const line of describeRetention('Log', report)) {
+        lines.push({ type: 'diagnostic', ...line });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
