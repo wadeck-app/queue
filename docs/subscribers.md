@@ -97,6 +97,10 @@ Other extensions found on `PATHEXT` (`.ps1`, `.js`, ...) cannot be started witho
 - A batch file that re-expands its own arguments unquoted in `if (...)` blocks is the batch author's responsibility.
 - Threat model: [.claude/threat-model.md](../.claude/threat-model.md).
 
+## What is logged of a `cli` run
+
+Each dispatch record in `~/.config/queue/logs/<day>.ndjson` (shown by `queue logs`) carries `exitCode` and the last 1024 characters of stdout and stderr (`stdoutTail`, `stderrTail`), on success too. Empty streams are omitted and control characters other than newline and tab are removed. `queue logs` shows them in full for a failure and as a one-line `output:` preview (200 characters) for a success. The stdin envelope is never logged, and none of this is written to the history. Output can hold secrets and the log files are not pruned automatically.
+
 ## Action subscribers
 
 `type: action` runs a plugin inside the daemon instead of a command or an HTTP call. Available actions: `emit` (pushes any event) and `agent-wake` (wakes a Claude Code session). An unknown name lists the available ones.

@@ -9,6 +9,15 @@
 /** Max bytes kept per stream. The tail is kept: the explanation of a failure sits at the end. */
 export const MAX_CAPTURED_BYTES = 4_096;
 
+/** Max characters kept per stream by dispatchFields. */
+export const LOG_TAIL_CHARS = 1_024;
+
+export interface DispatchOutputFields {
+  exitCode?: number;
+  stdoutTail?: string;
+  stderrTail?: string;
+}
+
 export interface CapturedOutput {
   stdout?: string;
   stderr?: string;
@@ -26,6 +35,36 @@ export class OutputCapture {
     }
     const kept = buffer.subarray(buffer.byteLength - maxBytes).toString('utf-8');
     return `[truncated: kept last ${maxBytes} of ${buffer.byteLength} bytes]\n${kept}`;
+  }
+
+  /** Last maxChars characters, control characters other than \n and \t removed (a program must not drive the terminal that reads the log). Empty when nothing visible is left. */
+  static sanitizedTail(text: string | undefined, maxChars: number = LOG_TAIL_CHARS): string {
+    if (text === undefined) {
+      return '';
+    }
+    // eslint-disable-next-line no-control-regex
+    const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+    if (clean.trim() === '') {
+      return '';
+    }
+    return clean.length > maxChars ? clean.slice(clean.length - maxChars) : clean;
+  }
+
+  /** What the dispatch log keeps of a cli run, success or not: exit code and output tails, each only when there is something to show. Never the stdin envelope. */
+  static dispatchFields(result: { exitCode?: number; stdout?: string; stderr?: string }): DispatchOutputFields {
+    const fields: DispatchOutputFields = {};
+    if (result.exitCode !== undefined) {
+      fields.exitCode = result.exitCode;
+    }
+    const stdoutTail = OutputCapture.sanitizedTail(result.stdout);
+    if (stdoutTail !== '') {
+      fields.stdoutTail = stdoutTail;
+    }
+    const stderrTail = OutputCapture.sanitizedTail(result.stderr);
+    if (stderrTail !== '') {
+      fields.stderrTail = stderrTail;
+    }
+    return fields;
   }
 
   /**

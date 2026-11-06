@@ -6,7 +6,7 @@ import { ActionTransport } from './ActionTransport.js';
 import { createActionRegistry } from '../actions/createActionRegistry.js';
 import type { ActionPlugin } from '../actions/ActionPlugin.js';
 import { RetryScheduler } from './RetryScheduler.js';
-import { MAX_CAPTURED_BYTES } from './OutputCapture.js';
+import { LOG_TAIL_CHARS } from './OutputCapture.js';
 import type { WalEntry } from '../storage/Wal.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
 import type { HistoryWriter } from '../storage/HistoryLog.js';
@@ -164,10 +164,11 @@ describe('AsyncDispatcher - diagnosability', () => {
     dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger, historyLog);
   });
 
-  it('failed dispatch logs the child stdout and stderr', async () => {
+  it('failed dispatch logs the exit code and the child stdout and stderr tails', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
       success: false,
       error: 'exited with code 3',
+      exitCode: 3,
       stdout: 'starting...',
       stderr: "Cannot find module 'extension-points/extension-points.json'",
       durationMs: 7,
@@ -179,14 +180,15 @@ describe('AsyncDispatcher - diagnosability', () => {
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
       status: 'failed',
       error: 'exited with code 3',
-      stdout: 'starting...',
-      stderr: "Cannot find module 'extension-points/extension-points.json'",
+      exitCode: 3,
+      stdoutTail: 'starting...',
+      stderrTail: "Cannot find module 'extension-points/extension-points.json'",
     }));
   });
 
-  it('dlq dispatch logs the child stderr', async () => {
+  it('dlq dispatch logs the child stderr tail', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
-      success: false, error: 'exited with code 3', stderr: 'Daemon did not start within 10000ms', durationMs: 1,
+      success: false, error: 'exited with code 3', exitCode: 3, stderr: 'Daemon did not start within 10000ms', durationMs: 1,
     });
 
     const w = makeWalEntry('sub-1');
@@ -194,26 +196,27 @@ describe('AsyncDispatcher - diagnosability', () => {
 
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
       status: 'dlq',
-      stderr: 'Daemon did not start within 10000ms',
+      exitCode: 3,
+      stderrTail: 'Daemon did not start within 10000ms',
     }));
   });
 
-  it('chatty failing subscriber output is truncated with a marker', async () => {
+  it('chatty subscriber output is cut to the last LOG_TAIL_CHARS characters', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
-      success: false, error: 'exited with code 1', stderr: 'n'.repeat(MAX_CAPTURED_BYTES * 2), durationMs: 1,
+      success: false, error: 'exited with code 1', stderr: 'a'.repeat(LOG_TAIL_CHARS * 2) + 'CAUSE', durationMs: 1,
     });
 
     const w = makeWalEntry('sub-1');
     await dispatcher.dispatch([makeSub('sub-1')], makeEnvelope(), new Map([['sub-1', w]]));
 
     const entry = vi.mocked(logger.logDispatch).mock.calls[0]![0];
-    expect(entry.stderr).toContain('[truncated: kept last');
-    expect(entry.stderr!.length).toBeLessThan(MAX_CAPTURED_BYTES + 100);
+    expect(entry.stderrTail).toHaveLength(LOG_TAIL_CHARS);
+    expect(entry.stderrTail!.endsWith('CAUSE')).toBe(true);
   });
 
-  it('successful dispatch keeps a non-empty stderr but drops stdout', async () => {
+  it('successful dispatch with output logs the exit code and both tails, control characters stripped', async () => {
     vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
-      success: true, stdout: 'lots of output', stderr: 'deprecation warning', durationMs: 1,
+      success: true, exitCode: 0, stdout: 'lots of\x1b[31m output\n', stderr: 'deprecation\twarning\r', durationMs: 1,
     });
 
     const w = makeWalEntry('sub-1');
@@ -221,8 +224,34 @@ describe('AsyncDispatcher - diagnosability', () => {
 
     const entry = vi.mocked(logger.logDispatch).mock.calls[0]![0];
     expect(entry.status).toBe('success');
-    expect(entry.stderr).toBe('deprecation warning');
+    expect(entry.exitCode).toBe(0);
+    expect(entry.stdoutTail).toBe('lots of[31m output\n');
+    expect(entry.stderrTail).toBe('deprecation\twarning');
     expect(entry.stdout).toBeUndefined();
+    expect(entry.stderr).toBeUndefined();
+  });
+
+  it('empty output adds no stdoutTail or stderrTail key', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({
+      success: true, exitCode: 0, stdout: '', stderr: '  \n', durationMs: 1,
+    });
+
+    const w = makeWalEntry('sub-1');
+    await dispatcher.dispatch([makeSub('sub-1')], makeEnvelope(), new Map([['sub-1', w]]));
+
+    const entry = vi.mocked(logger.logDispatch).mock.calls[0]![0];
+    expect(Object.keys(entry)).not.toContain('stdoutTail');
+    expect(Object.keys(entry)).not.toContain('stderrTail');
+    expect(entry.exitCode).toBe(0);
+  });
+
+  it('the stdin envelope never reaches the dispatch log', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: true, exitCode: 0, stdout: 'ok', durationMs: 1 });
+
+    const w = makeWalEntry('sub-1');
+    await dispatcher.dispatch([makeSub('sub-1')], makeEnvelope(), new Map([['sub-1', w]]));
+
+    expect(JSON.stringify(vi.mocked(logger.logDispatch).mock.calls[0]![0])).not.toContain('"title":"test"');
   });
 
   it("cli subscriber without command goes straight to the DLQ with the reason, not silently dropped", async () => {

@@ -59,6 +59,45 @@ describe('LogFormatter', () => {
     expect(line).toContain('stderr | boom');
   });
 
+  it('failed dispatch renders the exit code and both tails, one prefixed line per output line', () => {
+    const lines = LogFormatter.format(JSON.stringify({
+      ts: TS, type: 'dispatch', status: 'failed', subscriberId: 'onTest[0]', error: 'exited with code 4',
+      exitCode: 4, stdoutTail: 'a\nb\n', stderrTail: 'boom',
+    })).split('\n');
+    expect(lines.slice(1).map(l => l.trim())).toEqual(['exit | 4', 'stdout | a', 'stdout | b', 'stderr | boom']);
+  });
+
+  it('dlq dispatch renders the exit code and tails', () => {
+    const line = LogFormatter.format(JSON.stringify({
+      ts: TS, type: 'dispatch', status: 'dlq', subscriberId: 'onTest[0]', error: 'exited with code 2', attempts: 3, exitCode: 2, stderrTail: 'bad',
+    }));
+    expect(line).toContain('exit | 2');
+    expect(line).toContain('stderr | bad');
+  });
+
+  it('successful dispatch with output renders a one-line preview, newlines as " | "', () => {
+    const lines = LogFormatter.format(JSON.stringify({
+      ts: TS, type: 'dispatch', status: 'success', subscriberId: 'onTest[0]', durationMs: 5, exitCode: 0, stdoutTail: 'one\ntwo\n', stderrTail: 'warn',
+    })).split('\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe('[13:05:22] [ok] onTest[0] (5ms)');
+    expect(lines[1].trim()).toBe('output: one | two | warn');
+  });
+
+  it('the success preview is cut at 200 characters', () => {
+    const lines = LogFormatter.format(JSON.stringify({
+      ts: TS, type: 'dispatch', status: 'success', subscriberId: 'onTest[0]', stdoutTail: 'x'.repeat(500),
+    })).split('\n');
+    expect(lines[1].trim()).toBe(`output: ${'x'.repeat(200)}...`);
+  });
+
+  it('successful dispatch with only an exit code stays one line', () => {
+    const line = LogFormatter.format(JSON.stringify({
+      ts: TS, type: 'dispatch', status: 'success', subscriberId: 'onTest[0]', exitCode: 0,
+    }));
+    expect(line).toBe('[13:05:22] [ok] onTest[0]');
+  });
+
   it('filter miss renders path, expected and actual', () => {
     const line = LogFormatter.format(JSON.stringify({
       ts: TS, type: 'filter-miss', subscriberId: 'onTest[1]', filter: 'payload.exitCode=1',

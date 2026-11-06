@@ -50,6 +50,12 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 - **Risk accepted:** Within the retention window, caller responsibility not to push secrets as payloads (same as WAL/DLQ).
 - **Dashboard exposure:** The app-core module's `GET /api/modules/queue/history` also returns each payload as `payloadText` (indented JSON, capped at 20,000 characters; it replaces the raw `payload` in the list, the full one is on `GET /history/<eventId>` (app-core >= 2026.10.17-023) and in `queue history --json`), rendered in the Queue History page's expandable rows. Same sensitivity as `queue history --json`, but reachable by anything that can call app-core's HTTP API (localhost); do not expose app-core beyond localhost without authentication.
 
+### Sensitive data in logs/ (cli output tails)
+
+- **Threat:** `AsyncDispatcher` writes the exit code and the last 1024 characters of a `cli` subscriber's stdout and stderr (`stdoutTail`, `stderrTail`) to `logs/<date>.ndjson`, on success and failure. Whatever the program prints, including secrets, lands there and in `queue logs` and the dashboard Logs page.
+- **Mitigation:** Cap of 1024 characters per stream (the end is kept); control characters other than `\n` and `\t` are stripped; empty streams are not written; the stdin envelope is never logged; nothing of this goes to `history/`.
+- **Risk accepted:** No redaction, and `logs/` is not pruned by the code (no retention window, unlike `history/`): delete old `logs/*.ndjson` files by hand. A subscriber must not print secrets.
+
 ### Dashboard routes that would change what runs
 
 - **Threat:** An HTTP route of the app-core module that writes `subscribers.yml` (`queue sub add|edit|remove`) lets any web page the user visits, or any local process, register an arbitrary command that runs on the next matching event. A browser can reach `localhost` routes; the daemon's raw RPC port it cannot.

@@ -48,7 +48,8 @@ export class AsyncDispatcher {
         }
         const result = outcome.result;
         const target = targetOf(sub) ?? '';
-        const captured = OutputCapture.forLog(result.success, result.stdout, result.stderr);
+        // A cli run is logged with its exit code and output tails, success included; other transports keep the older capture (an http body is not logged on success)
+        const captured = sub.type === 'cli' ? OutputCapture.dispatchFields(result) : OutputCapture.forLog(result.success, result.stdout, result.stderr);
         if (result.success) {
           this.walUpdater(walEntry.id, { status: 'acked', ackedAt: new Date().toISOString() });
           this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured, ...(result.detail !== undefined && { detail: result.detail }) });

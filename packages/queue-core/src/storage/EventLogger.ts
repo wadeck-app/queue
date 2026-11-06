@@ -13,6 +13,12 @@ export interface DispatchLogEntry {
   stdout?: string;
   /** Tail of the subscriber's stderr, see OutputCapture.forLog for the retention policy. */
   stderr?: string;
+  /** Exit code of a cli command that ran to its end. */
+  exitCode?: number;
+  /** Last LOG_TAIL_CHARS characters of a cli command's stdout, control characters stripped; absent when empty. See OutputCapture.dispatchFields. */
+  stdoutTail?: string;
+  /** Same for stderr. */
+  stderrTail?: string;
   /** What an action reported on success (e.g. the event it emitted); empty for cli and http. */
   detail?: string;
 }

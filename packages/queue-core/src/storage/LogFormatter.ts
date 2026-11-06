@@ -8,6 +8,9 @@ export class LogFormatter {
   /** Prefix used for the captured stdout/stderr blocks of a dispatch. */
   private static readonly OUTPUT_INDENT = '           ';
 
+  /** Characters of the one-line output preview shown for a successful dispatch. */
+  private static readonly PREVIEW_CHARS = 200;
+
   static format(raw: string): string {
     const trimmed = raw.trim();
     if (trimmed === '') {
@@ -48,15 +51,44 @@ export class LogFormatter {
     const output = LogFormatter.formatOutput(entry);
 
     if (status === 'success') {
-      return `[${ts}] [ok] ${sub}${tgt}${dur}${output}`;
+      return `[${ts}] [ok] ${sub}${tgt}${dur}${output}${LogFormatter.formatTailsPreview(entry)}`;
     }
     if (status === 'failed') {
-      return `[${ts}] [fail] ${sub}${tgt}${err}${dur}${output}`;
+      return `[${ts}] [fail] ${sub}${tgt}${err}${dur}${output}${LogFormatter.formatTails(entry)}`;
     }
     if (status === 'dlq') {
-      return `[${ts}] [warn] dlq ${sub}${tgt}${err}${attempts}${output}`;
+      return `[${ts}] [warn] dlq ${sub}${tgt}${err}${attempts}${output}${LogFormatter.formatTails(entry)}`;
     }
     return JSON.stringify(entry);
+  }
+
+  /** Failure: the exit code and the full tails (stdoutTail, stderrTail), one prefixed line per output line. */
+  private static formatTails(entry: Record<string, unknown>): string {
+    let rendered = '';
+    if (typeof entry['exitCode'] === 'number') {
+      rendered += `\n${LogFormatter.OUTPUT_INDENT}exit | ${String(entry['exitCode'])}`;
+    }
+    for (const [key, label] of [['stdoutTail', 'stdout'], ['stderrTail', 'stderr']] as const) {
+      const value = entry[key];
+      if (typeof value !== 'string' || value === '') {
+        continue;
+      }
+      for (const line of value.replace(/\n+$/, '').split('\n')) {
+        rendered += `\n${LogFormatter.OUTPUT_INDENT}${label} | ${line}`;
+      }
+    }
+    return rendered;
+  }
+
+  /** Success: a one-line preview of the tails, so a quiet success stays one line and a chatty one is still visible. */
+  private static formatTailsPreview(entry: Record<string, unknown>): string {
+    const parts = [entry['stdoutTail'], entry['stderrTail']].filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+    if (parts.length === 0) {
+      return '';
+    }
+    const flat = parts.map((p) => p.replace(/\n+$/, '')).join('\n').replace(/\r?\n/g, ' | ');
+    const shown = flat.length > LogFormatter.PREVIEW_CHARS ? `${flat.slice(0, LogFormatter.PREVIEW_CHARS)}...` : flat;
+    return `\n${LogFormatter.OUTPUT_INDENT}output: ${shown}`;
   }
 
   /** Captured child output, one prefixed line per output line so it stays greppable. */

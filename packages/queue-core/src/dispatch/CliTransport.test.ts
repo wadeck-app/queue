@@ -162,6 +162,47 @@ describe('CliTransport - command with {{ }}: values reach the program as single,
   });
 });
 
+describe('CliTransport - exit code and output reach the result', () => {
+  const NOISY_SOURCE = `process.stdout.write('to-out'); process.stderr.write('to-err'); process.exit(Number(process.argv[2] ?? 0));`;
+
+  function noisy(): string {
+    const file = join(workDir, 'noisy.js');
+    writeFileSync(file, NOISY_SOURCE);
+    return file;
+  }
+
+  it.each([
+    ['with placeholders', (file: string, code: number) => `"${NODE}" "${file}" ${code} {{ v }}`],
+    ['without placeholders', (file: string, code: number) => `"${NODE}" "${file}" ${code}`],
+  ])('success %s: exitCode 0 and both streams', async (_label, build) => {
+    const result = await run(build(noisy(), 0), { v: 'x' });
+    expect(result.success).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('to-out');
+    expect(result.stderr).toBe('to-err');
+  });
+
+  it.each([
+    ['with placeholders', (file: string, code: number) => `"${NODE}" "${file}" ${code} {{ v }}`],
+    ['without placeholders', (file: string, code: number) => `"${NODE}" "${file}" ${code}`],
+  ])('failure %s: non-zero exitCode and both streams', async (_label, build) => {
+    const result = await run(build(noisy(), 4), { v: 'x' });
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(4);
+    expect(result.error).toBe('exited with code 4');
+    expect(result.stdout).toBe('to-out');
+    expect(result.stderr).toBe('to-err');
+  });
+
+  it('a timeout carries no exitCode', async () => {
+    const sleeper = join(workDir, 'sleeper2.js');
+    writeFileSync(sleeper, 'setTimeout(() => {}, 20000);');
+    const result = await transport.dispatch(`"${NODE}" "${sleeper}"`, envelope({}), 300, workDir, undefined, 'notify');
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBeUndefined();
+  });
+});
+
 describe('CliTransport - command without {{ }}: unchanged, run by the shell', () => {
   it('runs shell syntax as written (trusted subscribers.yml)', async () => {
     const result = await run('echo one && echo two', {});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { OutputCapture, MAX_CAPTURED_BYTES } from './OutputCapture.js';
+import { OutputCapture, MAX_CAPTURED_BYTES, LOG_TAIL_CHARS } from './OutputCapture.js';
 
 describe('OutputCapture.tail', () => {
   it('short text is kept verbatim without marker', () => {
@@ -22,6 +22,18 @@ describe('OutputCapture.tail', () => {
 
   it('maxBytes <= 0 throws instead of silently keeping nothing', () => {
     expect(() => OutputCapture.tail('anything', 0)).toThrow(/maxBytes must be > 0/);
+  });
+});
+
+describe('OutputCapture.dispatchFields', () => {
+  it('keeps the exit code and non-empty tails only', () => {
+    expect(OutputCapture.dispatchFields({ exitCode: 0, stdout: 'out', stderr: '' })).toEqual({ exitCode: 0, stdoutTail: 'out' });
+    expect(OutputCapture.dispatchFields({ stdout: ' \n', stderr: undefined })).toEqual({});
+  });
+
+  it('strips control characters except newline and tab, keeps the last LOG_TAIL_CHARS', () => {
+    expect(OutputCapture.sanitizedTail('a\x00b\x1b[0m\tc\r\nd\x7f')).toBe('ab[0m\tc\nd');
+    expect(OutputCapture.sanitizedTail('z'.repeat(LOG_TAIL_CHARS + 5) + 'END')).toHaveLength(LOG_TAIL_CHARS);
   });
 });
 

@@ -193,9 +193,9 @@ export class CliTransport {
         }
 
         if (code === 0) {
-          resolvePromise({ success: true, stdout, stderr, durationMs });
+          resolvePromise({ success: true, stdout, stderr, exitCode: 0, durationMs });
         } else {
-          resolvePromise({ success: false, error: `exited with code ${code}`, stdout, stderr, durationMs });
+          resolvePromise({ success: false, error: `exited with code ${code}`, stdout, stderr, ...(code !== null && { exitCode: code }), durationMs });
         }
       });
 
