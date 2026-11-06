@@ -59,3 +59,19 @@
 **Problem:** Registering the queue module on a test app-core (port 4871) overwrote `~/.config/app-core/modules/queue.json`, so the real :4850 served my local bundle instead of the installed package.
 **Fix:** Start the test instance with its own `APP_CORE_CONFIG_DIR` (temp dir) before any `POST /api/modules/register`, and check `~/.config/app-core/modules/<id>.json` afterwards. If polluted, re-register the installed manifest on :4850.
 **Context:** Found while validating payload rows (2026-10-14); `GET /api/modules` on :4850 showed version `0.0.0-payload-ux2`.
+
+---
+
+### Platform package range `>=0.0.0-0` never matches a CalVer prerelease, so the launcher is never refreshed
+
+**Problem:** After `queue cli update`, queue-cli was new but the Go launcher in `@wadeck-app/queue-cli-win32-x64` stayed on an old version (a fix lived only in the launcher).
+**Fix:** The publish job pins every `optionalDependencies` entry of queue-cli to its exact version (`ci/scripts/pin-platform-versions.mjs`), which makes npm install the matching platform package nested under queue-cli; `queue cli self-check` warns about a stale top-level copy.
+**Context:** `2026.10.31-244-...` is a semver prerelease, and a prerelease only satisfies a range with the same major.minor.patch. The unversioned `npm install -g <platform pkg>` fallback of `bin/queue.js` is what created the stale top-level copy.
+
+---
+
+### A lowercase rule table silently misses mixed-case binary names outside Windows
+
+**Problem:** The interpreter guard keyed its rules in lowercase and lowercased the program name only on win32, so `Rscript -e '...{{ x }}'` was refused on Windows and accepted on Linux; it failed only in CI.
+**Fix:** Add an alias for the real mixed-case name, and test the guard with `process.platform` stubbed to `linux`, `darwin` and `win32` (negative control: the stubbed test fails without the alias).
+**Context:** A green local run on Windows proves nothing about case-sensitive platforms; read the failing CI job log (`get_job_logs`) before guessing.

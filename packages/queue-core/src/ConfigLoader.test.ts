@@ -806,9 +806,15 @@ describe('ConfigLoader - type action', () => {
     expect(subs.find((s) => s.name === 'c')?.configProblem).toBeUndefined();
   });
 
-  it('with a registry, a with block the plugin refuses fails the load with what to write', () => {
-    write(['subscribers:', '  onX:', '    - type: action', '      name: a', '      action: emit', '      with:', '        event: "agent.{{ payload.k }}"']);
-    expect(() => strict().load(undefined)).toThrow(/action 'emit': 'with\.event' must be a literal event name/);
+  it('with a registry, a with block the plugin refuses gives THAT subscriber a configProblem naming it, its event, the file and the fix; the neighbours load and the file is not refused', () => {
+    write([
+      'subscribers:', '  onX:', '    - type: action', '      name: a', '      action: emit', '      with:', '        event: "agent.{{ payload.k }}"',
+      '    - type: cli', '      name: c', '      command: echo hi',
+    ]);
+    const subs = strict().load(undefined).get('onX') ?? [];
+    expect(subs.find((s) => s.name === 'a')?.configProblem).toMatch(/subscriber 'a' of event 'onX' \(.*subscribers\.yml\): action 'emit' refuses its 'with:' block: .*'with\.event' must be a literal event name.*Fix: correct the 'with:' block/);
+    expect(subs.find((s) => s.name === 'c')).toMatchObject({ type: 'cli', command: 'echo hi' });
+    expect(subs.find((s) => s.name === 'c')?.configProblem).toBeUndefined();
   });
 
   it('refuses a missing or blank action, naming the fix', () => {

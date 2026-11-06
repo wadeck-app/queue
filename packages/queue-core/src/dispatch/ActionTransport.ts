@@ -4,8 +4,11 @@ import { getErrorMessage } from '../errors.js';
 import type { EventEnvelope } from '../types.js';
 import type { DispatchResult } from './DispatchResult.js';
 
-/** Builds what a plugin may do for one run: bound to the envelope the subscriber received (the host decides project, working directory and loop counter). */
-export type ActionContextFactory = (envelope: EventEnvelope) => ActionContext;
+/**
+ * Builds what a plugin may do for one run: bound to the envelope the subscriber received and to the id of that subscriber
+ * (the host decides project, working directory, loop counter and provenance).
+ */
+export type ActionContextFactory = (envelope: EventEnvelope, subscriberId: string) => ActionContext;
 
 /** Runs a `type: action` subscriber in the daemon process. Reports like the other transports; never throws. */
 export class ActionTransport {
@@ -26,7 +29,7 @@ export class ActionTransport {
       timer = setTimeout(() => resolve('timeout'), timeoutMs);
     });
     try {
-      const run = Promise.resolve().then(() => plugin.run(config, envelope, this.contextFor(envelope)));
+      const run = Promise.resolve().then(() => plugin.run(config, envelope, this.contextFor(envelope, subscriber)));
       // If the timeout wins, the plugin keeps running (it cannot be cancelled): its late outcome must not become an unhandled rejection
       run.catch(() => undefined);
       const outcome = await Promise.race([run, timeout]);

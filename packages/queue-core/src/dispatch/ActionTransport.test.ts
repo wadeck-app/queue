@@ -23,7 +23,7 @@ describe('ActionTransport', () => {
     const contextFor = vi.fn(() => ({ push: () => Promise.resolve({ success: true }) }));
     const plugin: ActionPlugin = { name: 'probe', validate: () => undefined, run };
     await new ActionTransport(createActionRegistry([plugin]), contextFor).dispatch('probe', { a: 1 }, envelope, 1000, 'sub');
-    expect(contextFor).toHaveBeenCalledWith(envelope);
+    expect(contextFor).toHaveBeenCalledWith(envelope, 'sub');
     expect(run).toHaveBeenCalledWith({ a: 1 }, envelope, expect.objectContaining({ push: expect.any(Function) as unknown as () => void }));
   });
 

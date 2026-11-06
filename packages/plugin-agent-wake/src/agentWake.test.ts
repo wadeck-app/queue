@@ -265,11 +265,16 @@ describe('agent-wake end to end through QueueService with a real subscribers.yml
     expect(new HistoryReader(join(configDir, 'history')).read({ event: AGENT_MESSAGE_EVENT })).toEqual([]);
   });
 
-  it('refuses the file at load time when the with block is wrong, naming the subscriber', async () => {
+  it('a wrong with block fails that subscriber alone, for good, to the DLQ with the plugin message naming the subscriber; the push is not aborted', async () => {
     writeFileSync(join(configDir, 'subscribers.yml'), 'subscribers:\n  on.x:\n    - { type: action, name: bad, action: agent-wake, with: { to: nobody, text: hi } }\n');
     const service = createQueueService(configDir, { actions: createActionRegistry([agentWakeAction]) });
     const response = await service.commands.push({ event: 'on.x', payload: {}, cwd: projectDir });
-    expect(response).toMatchObject({ status: 'aborted' });
-    expect((response as { reason: string }).reason).toMatch(/action 'agent-wake'.*'to' must be a session id/);
+    expect(response).not.toMatchObject({ status: 'aborted' });
+    const dlq = await until('the entry in the DLQ', () => {
+      const entries = (service.commands['dlq-list']() as { entries: Array<{ lastError: string; attempts: number }> }).entries;
+      return entries.length === 1 ? entries[0] : undefined;
+    });
+    expect(dlq.lastError).toMatch(/subscriber 'bad' of event 'on\.x'.*action 'agent-wake'.*'to' must be a session id/);
+    expect(dlq.attempts).toBe(1);
   });
 });

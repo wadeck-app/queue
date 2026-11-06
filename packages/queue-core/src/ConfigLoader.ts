@@ -191,7 +191,8 @@ function assertDispatchable(event: string, index: number, raw: SubscriberConfig,
 
 /**
  * The strict check of an action subscriber against the registry of this process. An unknown action is returned (it fails that subscriber alone, for good);
- * a `with` block the plugin refuses throws, like a cli template the loader refuses: the message says what to write.
+ * a `with` block the plugin refuses is returned too: both depend on the plugins of this process, so they must not block the rest of the file.
+ * (Structural errors, which do not depend on any plugin, still throw in assertDispatchable, like a cli without command.)
  */
 function checkAction(event: string, index: number, raw: SubscriberConfig, filePath: string, actions: ActionRegistry): string | undefined {
   const name = raw.action!;
@@ -201,8 +202,8 @@ function checkAction(event: string, index: number, raw: SubscriberConfig, filePa
   }
   const problem = plugin.validate(raw.with ?? {}, { event, ...(raw.name !== undefined && { name: raw.name }) });
   if (problem !== undefined) {
-    throw new Error(
-      `[queue] Invalid subscriber '${event}' index ${index} in ${filePath}: action '${name}': ${problem}\n` +
+    return (
+      `subscriber '${raw.name ?? `index ${index}`}' of event '${event}' (${filePath}): action '${name}' refuses its 'with:' block: ${problem} ` +
       `Fix: correct the 'with:' block of the subscriber.`
     );
   }

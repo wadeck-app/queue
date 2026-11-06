@@ -699,6 +699,25 @@ describe('type action: the emit action and the daemon wiring', () => {
     expect(source.meta.eventId).toBe(response.eventId);
   });
 
+  it('the trigger of an emitted event carries causedBy (source first-push id, action subscriber id); a normal push has none; a causedBy sent on the wire is ignored', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, EMIT_AGENT_MESSAGE);
+    const { plugin } = recorder();
+    const service = createQueueService(configDir, { registryDir, actions: createActionRegistry([plugin]) });
+
+    const response = await service.commands.push({
+      event: 'onTicket.created', payload: { title: 'Bug' }, cwd: projectDir, protocol: '1.3.0',
+      causedBy: { eventId: 'forged', subscriberId: 'forged' },
+    } as never);
+    await waitFor('the emitted event to be recorded', () => service.isIdle() && new HistoryReader(join(configDir, 'history')).read({ event: 'agent.message' }).length === 1);
+
+    const reader = new HistoryReader(join(configDir, 'history'));
+    const [emitted] = reader.read({ event: 'agent.message' });
+    expect(emitted!.causedBy).toEqual({ eventId: response.eventId, subscriberId: `${project.id}/wake` });
+    const [source] = reader.read({ event: 'onTicket.created' });
+    expect(source).not.toHaveProperty('causedBy');
+  });
+
   it('the emitted event is readable by name from the history whatever its project (what `queue wait` does), and is filed under the project of the source', async () => {
     const project = await addProject(registryDir, { name: 'app', path: projectDir });
     writeFor(project.id, EMIT_AGENT_MESSAGE);
@@ -820,6 +839,26 @@ describe('type action: the emit action and the daemon wiring', () => {
     expect(seen).toHaveLength(1);
     expect(dlq()[0]).toMatchObject({ subscriberId: `${project.id}/ghost`, attempts: 1 });
     expect(dlq()[0]!.lastError).toMatch(/unknown action "not-installed"\. Available actions: emit, sink/);
+  });
+
+  it('a with block the plugin refuses fails that subscriber alone, for good, to the DLQ with the plugin message; the good cli neighbour still runs and nothing blocks the push', async () => {
+    const project = await addProject(registryDir, { name: 'app', path: projectDir });
+    writeFor(project.id, [
+      'subscribers:',
+      '  onFoo:',
+      '    - { type: action, name: bad, action: emit, with: { event: "agent.{{ payload.k }}" } }',
+      '    - { type: cli, name: good, command: echo hi }',
+      '',
+    ].join('\n'));
+    const service = createQueueService(configDir, { registryDir });
+
+    const response = await service.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir, protocol: '1.3.0' } as never);
+    await waitFor('the DLQ entry and the cli run', () => dlq().length === 1 && service.isIdle());
+
+    expect(response.status).toBe('queued');
+    expect(dlq()[0]).toMatchObject({ subscriberId: `${project.id}/bad`, attempts: 1 });
+    expect(dlq()[0]!.lastError).toMatch(/subscriber 'bad' of event 'onFoo'.*action 'emit' refuses its 'with:' block.*literal event name.*Fix: correct the 'with:' block/);
+    await waitFor('the cli subscriber to be recorded', () => new HistoryReader(join(configDir, 'history')).read({ event: 'onFoo' })[0]?.subscribers.some((s) => s.subscriberId === `${project.id}/good` && s.status === 'success') === true);
   });
 
   describe('retry and dlq-replay keep the meta (hops, first-push id)', () => {

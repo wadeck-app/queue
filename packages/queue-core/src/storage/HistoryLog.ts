@@ -9,6 +9,14 @@ export function projectRefsOf(meta: EventMeta): { projectId?: string; emitterPro
   return { ...(meta.projectId !== undefined && { projectId: meta.projectId }), ...(meta.emitterProjectId !== undefined && { emitterProjectId: meta.emitterProjectId }) };
 }
 
+/** Provenance of an event emitted by an action: it was machine-generated, from this event, by this action subscriber. Never read from a push request. */
+export interface CausedBy {
+  /** First-push id (meta.eventId, else id) of the event whose action subscriber emitted this one. */
+  eventId: string;
+  /** Id of the action subscriber that emitted it. */
+  subscriberId: string;
+}
+
 export interface TriggerHistoryEntry {
   eventId: string;
   event: string;
@@ -25,6 +33,8 @@ export interface TriggerHistoryEntry {
   cwd?: string;
   /** The `direction` of the push when it was not the default (`to-parents`), so `queue replay` propagates the event the same way. */
   direction?: string[];
+  /** Set when an action subscriber emitted this event (absent for every pushed event). */
+  causedBy?: CausedBy;
 }
 
 export interface OutcomeHistoryEntry {

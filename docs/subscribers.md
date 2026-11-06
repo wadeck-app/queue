@@ -118,7 +118,7 @@ CLI: `queue sub add <event> --name <n> --type action --action <name> --set key=v
 
 ### Fields
 
-- `with` is the plugin's settings; the plugin validates it when the file loads, with no silent stripping. A bad `with` aborts the push of that event with the plugin's message.
+- `with` is the plugin's settings; the plugin validates it when the file loads, with no silent stripping. A `with` the plugin refuses fails that subscriber alone, for good, to the DLQ with the plugin's message (like an unknown action); `queue sub add|edit` refuse it up front. A missing `action` or a forbidden field still aborts the whole file.
 - `command`, `url`, `method`, `headers`, `cwd` and `env` are refused on an action. `timeout`, `retries`, `backoff` and `when` apply.
 - `emit`: `with.event` is a literal concrete event name (no placeholder, no wildcard); `with.payload` is a mapping whose string values are templates.
 - `agent-wake` always emits `agent.message { to, text, from, mode, ref }`:
@@ -156,6 +156,7 @@ YAML pitfall: an unquoted `text: {{ payload.x }}` parses as a flow mapping. Alwa
 
 - Filed under the project (and working directory) of the event the action received; for a `to-children` descendant, that descendant's project. It is pushed with the default direction.
 - `queue wait` filters by event name and time, not by project.
+- The trigger record of an emitted event in the history carries `causedBy: { eventId, subscriberId }` (the source event's first-push id and the action subscriber); `queue history` shows `caused by <subscriberId>`. It is set by the daemon only, never read from a push.
 
 ### Loop guards
 

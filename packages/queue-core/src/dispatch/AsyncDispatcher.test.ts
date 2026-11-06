@@ -383,6 +383,27 @@ describe('AsyncDispatcher - type action', () => {
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'dlq', target: 'action:nope' }));
   });
 
+  it('a with block the plugin refused (configProblem) fails that subscriber alone with the plugin message; a good cli neighbour is still dispatched', async () => {
+    const cli = vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: true, durationMs: 1 });
+    const run = vi.fn<ActionPlugin['run']>();
+    const { dispatcher, walUpdater, dlqMover } = setup(run);
+    const bad = makeWalEntry('bad');
+    const good = makeWalEntry('good');
+    const problem = "subscriber 'bad' of event 'e' (f.yml): action 'probe' refuses its 'with:' block: 'with.a' is wrong. Fix: correct the 'with:' block of the subscriber.";
+
+    await dispatcher.dispatch(
+      [actionSub({ subscriberId: 'bad', name: 'bad', configProblem: problem }), makeSub('good')],
+      makeEnvelope(),
+      new Map([['bad', bad], ['good', good]]),
+    );
+
+    expect(run).not.toHaveBeenCalled();
+    expect(dlqMover).toHaveBeenCalledTimes(1);
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: bad.id, attempts: 1 }), expect.stringContaining(problem));
+    expect(cli).toHaveBeenCalledTimes(1);
+    expect(walUpdater).toHaveBeenCalledWith(good.id, expect.objectContaining({ status: 'acked' }));
+  });
+
   it('fails for good, saying so, when this process has no action transport', async () => {
     const walUpdater = vi.fn();
     const dlqMover = vi.fn();

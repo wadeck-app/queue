@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { CausedBy } from './HistoryLog.js';
 
 export interface HistorySubscriberOutcome {
   subscriberId: string;
@@ -37,6 +38,8 @@ export interface HistoryEntry {
   cwd?: string;
   /** The `direction` of the original push when it was not the default (`to-parents`), so a replay propagates the same way. */
   direction?: string[];
+  /** Set when an action subscriber emitted this event (machine-generated): the event and the subscriber that caused it. Absent for a pushed event. */
+  causedBy?: CausedBy;
 }
 
 export interface HistoryFilter {
@@ -106,6 +109,7 @@ interface Accumulator {
   replayOf?: string;
   cwd?: string;
   direction?: string[];
+  causedBy?: CausedBy;
   subscribers: HistorySubscriberOutcome[];
 }
 
@@ -192,6 +196,7 @@ export class HistoryReader {
       replayOf: a.replayOf,
       cwd: a.cwd,
       ...(a.direction !== undefined && { direction: a.direction }),
+      ...(a.causedBy !== undefined && { causedBy: a.causedBy }),
     }));
   }
 
@@ -408,6 +413,10 @@ export class HistoryReader {
       entry.replayOf = record['replayOf'] as string | undefined;
       entry.cwd = record['cwd'] as string | undefined;
       entry.direction = record['direction'] as string[] | undefined;
+      const causedBy = record['causedBy'];
+      if (typeof causedBy === 'object' && causedBy !== null && typeof (causedBy as CausedBy).eventId === 'string' && typeof (causedBy as CausedBy).subscriberId === 'string') {
+        entry.causedBy = { eventId: (causedBy as CausedBy).eventId, subscriberId: (causedBy as CausedBy).subscriberId };
+      }
       return;
     }
     if (type === 'outcome') {

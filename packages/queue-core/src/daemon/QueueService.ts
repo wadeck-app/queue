@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
-import { HistoryLog, projectRefsOf } from '../storage/HistoryLog.js';
+import { HistoryLog, projectRefsOf, type CausedBy } from '../storage/HistoryLog.js';
 import { ConfigLoader, resolveProjectName, type ProjectConfigSource } from '../ConfigLoader.js';
 import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
@@ -99,7 +99,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   const actions = options.actions ?? createActionRegistry();
   const configLoader = new ConfigLoader(configDir, { actions });
   // The context of a run is bound lazily to the internal push: the transport exists before the push it will call
-  const actionTransport = new ActionTransport(actions, (source) => ({ push: (request) => emitFrom(source, request) }));
+  const actionTransport = new ActionTransport(actions, (source, subscriberId) => ({ push: (request) => emitFrom(source, subscriberId, request) }));
   const syncDispatcher = new SyncDispatcher(eventLogger, historyLog, actionTransport);
   const startedAt = Date.now();
   const asyncDispatcher = new AsyncDispatcher(
@@ -128,7 +128,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    * The event an action pushes. It is filed under the project (and working directory) of the envelope the subscriber received, never one the plugin
    * names; the hop counter comes from that envelope and is set on the new event by the internal push only. A refusal that would repeat on a retry is permanent.
    */
-  async function emitFrom(source: EventEnvelope, request: ActionPushRequest): Promise<ActionPushResult> {
+  async function emitFrom(source: EventEnvelope, subscriberId: string, request: ActionPushRequest): Promise<ActionPushResult> {
     const hops = source.meta.hops ?? 0;
     if (hops >= MAX_ACTION_HOPS) {
       return {
@@ -167,7 +167,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         // The registered project of the received envelope (the descendant's for to-children); a virtual project has no folder to find it by
         ...(source.meta.projectId !== undefined && { project: source.meta.projectId }),
       },
-      { hops: hops + 1 },
+      // provenance: the first-push id of the source event and the action subscriber that emitted this one
+      { hops: hops + 1, causedBy: { eventId: source.meta.eventId ?? source.id, subscriberId } },
     );
     switch (response.status) {
       case 'queued':
@@ -184,8 +185,9 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   /**
    * Records an event and dispatches it. `hops` is how many actions in a chain emitted it: it is given by the daemon's own code only, never by a client
    * (it is not part of PushRequest and is not read from the wire); the RPC push starts every event at 0.
+   * `causedBy` is the provenance of an event emitted by an action, given the same way (the RPC push has none).
    */
-  async function pushInternal(req: PushRequest, internal: { hops: number }): Promise<PushResponse> {
+  async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy }): Promise<PushResponse> {
     // before anything is recorded or counted: a client that speaks a protocol this daemon does not accept gets a loud refusal
     const protocol = checkClientProtocol(req.protocol);
     if (!protocol.ok) {
@@ -316,6 +318,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         replayOf: req.replayOf,
         cwd: req.cwd,
         ...(!(direction.directions.length === 1 && direction.directions[0] === 'to-parents') && { direction: direction.directions }),
+        ...(internal.causedBy !== undefined && { causedBy: internal.causedBy }),
       });
 
       if (req.event.startsWith('before')) {

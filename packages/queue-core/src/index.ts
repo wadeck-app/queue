@@ -25,6 +25,7 @@ export type { FilterEvaluation } from './dispatch/PayloadFilter.js';
 export type { EventEnvelope } from './types.js';
 export { EventLogger } from './storage/EventLogger.js';
 export { HistoryReader } from './storage/HistoryReader.js';
+export type { CausedBy } from './storage/HistoryLog.js';
 export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage } from './storage/HistoryReader.js';
 export { DEFAULT_HISTORY_LIMIT } from './storage/HistoryReader.js';
 export type { DlqEntry } from './storage/DlqStore.js';

@@ -5,7 +5,8 @@ export class HistoryFormatter {
   static format(entry: HistoryEntry): string {
     const time = entry.ts.slice(11, 19);
     const project = entry.project ? `, project: ${entry.project}` : '';
-    const replay = entry.replayOf ? `, replay of ${entry.replayOf}` : '';
+    // An event emitted by an action subscriber: machine-generated, and by whom
+    const replay = (entry.replayOf ? `, replay of ${entry.replayOf}` : '') + (entry.causedBy ? `, caused by ${entry.causedBy.subscriberId}` : '');
     const header = entry.orphan
       ? `[${time}] ${entry.event} (eventId ${entry.eventId}${project}${replay}) - orphan outcome, no trigger record (likely a retry)`
       : entry.totalCount === 0

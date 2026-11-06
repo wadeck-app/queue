@@ -26,6 +26,12 @@ describe('HistoryFormatter.format', () => {
     expect(line).toContain('replay of ev-1');
   });
 
+  it('marks an event emitted by an action subscriber with who caused it, and says nothing for a pushed one', () => {
+    const caused = HistoryFormatter.format(makeEntry({ eventId: 'ev-2', causedBy: { eventId: 'ev-1', subscriberId: 'proj1/wake' } }));
+    expect(caused).toContain('(eventId ev-2, caused by proj1/wake)');
+    expect(HistoryFormatter.format(makeEntry())).not.toMatch(/caused by/);
+  });
+
   it('shows an action subscriber by its action name, for a success, a failure and a dlq entry', () => {
     const line = HistoryFormatter.format(makeEntry({
       subscribers: [

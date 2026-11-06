@@ -127,6 +127,19 @@ describe('HistoryReader', () => {
     expect(entry).toMatchObject({ payload: { title: 'original' }, replayOf: 'ev-0' });
   });
 
+  it('reads causedBy from the trigger of an emitted event, ignores a malformed one, and leaves it absent otherwise', () => {
+    writeDay(historyDir, '2026-01-01', [
+      { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-a', event: 'e', matchedCount: 0, totalCount: 0, causedBy: { eventId: 'ev-0', subscriberId: 'p/wake' } },
+      { ts: '2026-01-01T10:01:00.000Z', type: 'trigger', eventId: 'ev-b', event: 'e', matchedCount: 0, totalCount: 0 },
+      { ts: '2026-01-01T10:02:00.000Z', type: 'trigger', eventId: 'ev-c', event: 'e', matchedCount: 0, totalCount: 0, causedBy: 'oops' },
+    ]);
+
+    const entries = new HistoryReader(historyDir).read();
+    expect(entries.find((e) => e.eventId === 'ev-a')?.causedBy).toEqual({ eventId: 'ev-0', subscriberId: 'p/wake' });
+    expect(entries.find((e) => e.eventId === 'ev-b')).not.toHaveProperty('causedBy');
+    expect(entries.find((e) => e.eventId === 'ev-c')).not.toHaveProperty('causedBy');
+  });
+
   it('reads the project id recorded on the trigger, and filters on it: an entry of another project, or of none, is left out', () => {
     writeDay(historyDir, '2026-01-01', [
       { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-a', event: 'onFoo', matchedCount: 0, totalCount: 0, projectId: '569c412d' },

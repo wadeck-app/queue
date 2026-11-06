@@ -92,6 +92,12 @@ describe('HistoryLog', () => {
     });
   });
 
+  it('logTrigger persists causedBy for an event emitted by an action', () => {
+    history.logTrigger({ eventId: 'ev-4', event: 'agent.message', matchedCount: 0, totalCount: 0, causedBy: { eventId: 'ev-3', subscriberId: 'p/wake' } });
+
+    expect(readRecords(historyDir)[0]).toMatchObject({ type: 'trigger', eventId: 'ev-4', causedBy: { eventId: 'ev-3', subscriberId: 'p/wake' } });
+  });
+
   it('logTrigger persists the cwd from the original push, for `queue replay` to reuse it', () => {
     history.logTrigger({
       eventId: 'ev-3',
