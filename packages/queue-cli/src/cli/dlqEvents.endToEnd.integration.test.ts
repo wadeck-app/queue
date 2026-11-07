@@ -24,8 +24,9 @@ let work = '';
 
 beforeAll(async () => {
   // A daemon already on the port (the developer's own, or a leftover) would answer instead of the throwaway one: say so, never skip
-  // The daemon of a previous test file may still be on its way out: give it a moment before calling the port taken
-  const free = await waitFor(async () => !(await isPortListening(DAEMON_PORT)), `port ${DAEMON_PORT} to become free`, 30_000).catch(() => false);
+  // The daemon of a previous test file may still be on its way out: a daemon stops by itself 60 s after its last work, so wait longer than that
+  // (a guard against a hang, never a performance limit) before calling the port taken
+  const free = await waitFor(async () => !(await isPortListening(DAEMON_PORT)), `port ${DAEMON_PORT} to become free`, 150_000).catch(() => false);
   if (!free) {
     throw new Error(`port ${DAEMON_PORT} is already in use by another queue daemon: this test starts its own daemon and cannot share the port. Fix: stop it ("queue stop") and run the test again`);
   }
