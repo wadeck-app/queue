@@ -142,7 +142,7 @@ The port above is the default (47910, override with `QUEUE_DAEMON_PORT`); the da
 
 ## Reserved namespace
 
-Since 1.5.0, event names starting with `queue.` (`queue.dlq.added`, ...) belong to the daemon: it builds those events itself and no client can produce one. A subscriber on `queue.>` can trust that the event comes from the daemon.
+Since 1.5.0, event names starting with `queue.` (`queue.dlq.added`, ...) belong to the daemon: it builds those events itself and no client can produce one: no RPC (`give-up`, `give-up-stuck`, `dlq-clear`, `dlq-replay`) accepts event data, they take an id or nothing and the daemon reads its own files. A subscriber on `queue.>` can trust that the event comes from the daemon.
 
 | Entry | Behaviour |
 |---|---|

@@ -3,6 +3,7 @@ import { renameReplacing } from './AtomicRename.js';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
 import { FileLock } from './FileLock.js';
+import type { DlqAddedInfo } from '../dlqEvents.js';
 
 export interface DlqEntry {
   id: string;
@@ -13,6 +14,13 @@ export interface DlqEntry {
   attempts: number;
   lastError: string;
   movedAt: string;
+  /**
+   * Whether the queue.dlq.added event of this row still has to be emitted. `pending`: the emit did not succeed (an invalid subscribers.yml, a refused push), the daemon
+   * tries again at its start and after the next successful push; `skipped`: deliberately not emitted (the hop cap), the diagnostic names the entry. Absent: emitted.
+   */
+  announce?: 'pending' | 'skipped';
+  /** The facts the event is built from later (the reason, exit code and target of the failure): present while `announce` is. */
+  announceInfo?: DlqAddedInfo;
 }
 
 export interface DlqAppendResult {
@@ -72,6 +80,27 @@ export class DlqStore {
       entries.push(entry);
       this.write(entries, held);
       return { inserted: !existing, ...(evicted !== undefined && { evicted }) };
+    });
+  }
+
+  /** The row with this id, or undefined (a plain read, like {@link has}). */
+  get(id: string): DlqEntry | undefined {
+    return this.readAll().find((entry) => entry.id === id);
+  }
+
+  /** Sets the mark of a row (`undefined` clears it together with its facts) in one write under the lock. False when the row is not there: nothing is written. */
+  setAnnounce(id: string, announce: 'pending' | 'skipped' | undefined): boolean {
+    this.ensureDir();
+    return this.lock.withLock((held) => {
+      const entries = this.readAll();
+      const index = entries.findIndex((e) => e.id === id);
+      if (index === -1) {
+        return false;
+      }
+      const { announce: _previous, announceInfo, ...rest } = entries[index] as DlqEntry;
+      entries[index] = announce === undefined ? rest : { ...rest, announce, ...(announceInfo !== undefined && { announceInfo }) };
+      this.write(entries, held);
+      return true;
     });
   }
 

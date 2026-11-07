@@ -11,7 +11,7 @@ export { validateSourceDeclaration, writeSourceDeclaration, readCatalog, MAX_EVE
 export type { EventDeclaration, SourceDeclaration, CatalogProblem, Validation, StoredSource, Catalog, EventOutcome } from './catalog/EventCatalog.js';
 export { listEvents, listEventDetails, getEventDetail, nearestEventNames, OBSERVED_WINDOW_DAYS } from './catalog/EventListing.js';
 export type { CatalogEntry, SourceSummary, EventListing, ListEventsOptions, FilterableField, EventDetail } from './catalog/EventListing.js';
-export type { QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse, DlqNotifyRequest, DlqNotifyResponse } from './daemon/QueueCommands.js';
+export type { QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse, GiveUpRequest, GiveUpResponse, GiveUpStuckResponse } from './daemon/QueueCommands.js';
 export { DEFAULT_QUEUE_DAEMON_PORT, DEFAULT_RELAY_DAEMON_PORT, QUEUE_DAEMON_PORT_ENV, QUEUE_RELAY_PORT_ENV, InvalidPortEnvError, readPortEnv, resolveQueueDaemonPort, resolveRelayDaemonPort, assertPortEnvValid } from './daemon/daemonPorts.js';
 export { createQueueService } from './daemon/QueueService.js';
 export type { QueueService, QueueServiceOptions } from './daemon/QueueService.js';
@@ -57,5 +57,5 @@ export { MAX_ACTION_HOPS } from './actions/hopCap.js';
 export { reservedEventProblem, replayReservedProblem } from './reservedEvents.js';
 export { canResolveRef, RefResolver, EventRefError } from './dispatch/refResolver.js';
 export type { RefLookup, ResolvedEvent } from './dispatch/refResolver.js';
-export { DLQ_ADDED_EVENT, DLQ_REMOVED_EVENT, MAX_DLQ_EVENT_ERROR_CHARS, DLQ_EVENT_DECLARATIONS, buildDlqAddedEvent, buildDlqRemovedEvent, isDlqEventExcluded, parseDlqNotify, DLQ_NOTIFY_REASONS } from './dlqEvents.js';
-export type { DlqAddedReason, DlqRemovedReason, DlqAddedInfo, BuiltDlqEvent, DlqNotifyItem, ParsedDlqNotify } from './dlqEvents.js';
+export { DLQ_ADDED_EVENT, DLQ_REMOVED_EVENT, MAX_DLQ_EVENT_ERROR_CHARS, DLQ_EVENT_DECLARATIONS, buildDlqAddedEvent, buildDlqRemovedEvent, isDlqEventExcluded } from './dlqEvents.js';
+export type { DlqAddedReason, DlqRemovedReason, DlqAddedInfo, BuiltDlqEvent } from './dlqEvents.js';

@@ -17,6 +17,12 @@ export interface WalEntry {
   ackedAt?: string;
 }
 
+/** Outcome of {@link Wal.updateEntryIf}: `rejected` carries the entry as it is now, which the predicate refused. */
+export type WalConditionalUpdate =
+  | { status: 'updated'; before: WalEntry }
+  | { status: 'not-found' }
+  | { status: 'rejected'; current: WalEntry };
+
 const ACKED_RETENTION_MS = 24 * 3600_000;
 
 export class Wal {
@@ -91,6 +97,59 @@ export class Wal {
     this.lock.withLock((held) => {
       const updated = this.readAll().map(e => (e.id === id ? { ...e, ...updates } : e));
       this.commitEntries(this.withoutOldAcked(updated), held);
+    });
+  }
+
+  /**
+   * Compare-and-set: applies `updates` to the entry `id` only if `predicate` holds on the entry as it is NOW, read under the lock. A caller that looked at the
+   * entry earlier and decides from that old state can lose to a writer in between (the daemon acknowledging a delivery): this closes that window.
+   * `updated` carries the entry as it was before the update, the exact state the caller's follow-up work (a DLQ row) must be built from.
+   */
+  updateEntryIf(id: string, predicate: (entry: WalEntry) => boolean, updates: Partial<WalEntry>): WalConditionalUpdate {
+    return this.lock.withLock((held) => {
+      const entries = this.readAll();
+      const current = entries.find((e) => e.id === id);
+      if (current === undefined) {
+        return { status: 'not-found' };
+      }
+      if (!predicate(current)) {
+        return { status: 'rejected', current };
+      }
+      // Only the first entry with this id changes, like the one the predicate saw
+      let applied = false;
+      const next = entries.map((e) => {
+        if (!applied && e.id === id) {
+          applied = true;
+          return { ...e, ...updates };
+        }
+        return e;
+      });
+      this.commitEntries(this.withoutOldAcked(next), held);
+      return { status: 'updated', before: current };
+    });
+  }
+
+  /** Replaces the entry that has the same id, or appends it when there is none: an id never appears twice (a replay re-creates the entry of the same delivery). */
+  upsert(entry: WalEntry): void {
+    this.ensureFile();
+    this.lock.withLock((held) => {
+      const others = this.readAll().filter((e) => e.id !== entry.id);
+      this.commitEntries(this.withoutOldAcked([...others, entry]), held);
+    });
+  }
+
+  /** Removes the entries the predicate selects (decided under the lock) and returns them. */
+  removeWhere(predicate: (entry: WalEntry) => boolean): WalEntry[] {
+    if (!existsSync(this.filePath)) {
+      return [];
+    }
+    return this.lock.withLock((held) => {
+      const entries = this.readAll();
+      const removed = entries.filter(predicate);
+      if (removed.length > 0) {
+        this.commitEntries(this.withoutOldAcked(entries.filter((e) => !removed.includes(e))), held);
+      }
+      return removed;
     });
   }
 

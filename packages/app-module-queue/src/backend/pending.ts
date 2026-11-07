@@ -1,7 +1,7 @@
 import { listInFlightEntries, abandonInFlightEntryDetailed, abandonStuckEntriesDetailed, countStuckEntries, STUCK_AFTER_MS } from '@wadeck-app/queue-core';
 import { NotInFlightError, PendingNotFoundError } from './errors.js';
 import { shortId } from './ids.js';
-import { announceDlqChanges } from './dlqAnnounce.js';
+import { describeCount, eventNotSent, tryDaemon } from './dlqAnnounce.js';
 
 export interface PendingRow {
   id: string;
@@ -52,10 +52,24 @@ export function listPending(configDir: string): PendingList {
 
 /**
  * Gives up an event nobody will retry any more (a retry is an orchestrator job; when scheduling it failed or was lost, the entry waits
- * forever): it moves to the dead-letter queue, where it can be replayed or cleared. Nothing is deleted; no daemon is needed for the move.
- * Once the files are written the daemon is told (queue.dlq.added, reason given-up); when that cannot be done the move stands and `message` says so.
+ * forever): it moves to the dead-letter queue, where it can be replayed or cleared. Nothing is deleted. With the daemon reachable the daemon does the move
+ * and emits queue.dlq.added itself (this module writes nothing); without it the move is done on the files and `message` says the event could not be sent.
  */
 export async function giveUpPending(configDir: string, id: string): Promise<{ status: 'moved'; message?: string }> {
+  const attempt = await tryDaemon(configDir, (client) => client.send('give-up', { id }));
+  if (attempt.reached) {
+    const response = attempt.value;
+    switch (response.status) {
+      case 'moved':
+        return { status: 'moved' };
+      case 'not-found':
+        throw new PendingNotFoundError(`No pending event with id ${id} (only events still in the WAL can be given up)`);
+      case 'not-in-flight':
+        throw new NotInFlightError(`Event ${id} is no longer in flight: it was delivered, or it is already in the dead-letter queue`);
+      case 'rejected':
+        throw new Error(`The daemon refused to give up event ${JSON.stringify(id)}: ${response.reason ?? 'no reason given'}`);
+    }
+  }
   const result = abandonInFlightEntryDetailed(configDir, id);
   if (result.status === 'not-found') {
     throw new PendingNotFoundError(`No pending event with id ${id} (only events still in the WAL can be given up)`);
@@ -63,13 +77,23 @@ export async function giveUpPending(configDir: string, id: string): Promise<{ st
   if (result.status === 'not-in-flight') {
     throw new NotInFlightError(`Event ${id} is no longer in flight: it was delivered, or it is already in the dead-letter queue`);
   }
-  const problem = await announceDlqChanges(configDir, { added: result.changes.added, evicted: result.changes.evicted });
-  return { status: 'moved', ...(problem !== undefined && { message: `Moved to the dead-letter queue. ${problem}` }) };
+  return { status: 'moved', message: `Moved to the dead-letter queue. ${eventNotSent(announcedEvents(result.changes.added.length, result.changes.evicted.length), attempt.failure)}` };
+}
+
+function announcedEvents(added: number, evicted: number): string {
+  // A move onto a row that already existed adds nothing new to announce: the sentence still has to name what the daemon would have sent
+  return [added > 0 && describeCount('added', added), evicted > 0 && describeCount('removed', evicted)].filter(Boolean).join(' and ') || 'queue.dlq.*';
 }
 
 /** Gives up every stuck event at once (see {@link giveUpPending}); answers how many moved to the dead-letter queue. */
 export async function giveUpStuck(configDir: string): Promise<{ moved: number; message?: string }> {
+  const attempt = await tryDaemon(configDir, (client) => client.send('give-up-stuck', {}));
+  if (attempt.reached) {
+    return { moved: attempt.value.moved };
+  }
   const { moved, changes } = abandonStuckEntriesDetailed(configDir);
-  const problem = await announceDlqChanges(configDir, { added: changes.added, evicted: changes.evicted });
-  return { moved, ...(problem !== undefined && { message: `${moved} stuck ${moved === 1 ? 'event' : 'events'} moved to the dead-letter queue. ${problem}` }) };
+  if (moved === 0) {
+    return { moved };
+  }
+  return { moved, message: `${moved} stuck ${moved === 1 ? 'event' : 'events'} moved to the dead-letter queue. ${eventNotSent(announcedEvents(changes.added.length, changes.evicted.length), attempt.failure)}` };
 }

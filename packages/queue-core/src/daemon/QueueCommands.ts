@@ -21,15 +21,16 @@ export interface ListSubscribersRequest { event?: string; cwd: string; }
 export interface SubscriberListResponse { subscribers: ResolvedSubscriber[]; }
 export interface DlqListResponse { entries: DlqEntry[]; }
 export interface DlqReplayRequest { id: string; }
-export interface DlqReplayResponse { status: 'ok' | 'not-found'; }
+// `error`: the replay did not start and the entry is still in the dead-letter queue; `message` says why and what to fix (an unreadable subscribers.yml, a subscriber that was renamed)
+export interface DlqReplayResponse { status: 'ok' | 'not-found' | 'error'; message?: string; }
 export interface DlqClearRequest { id?: string; }
 export interface DlqClearResponse { cleared: number; }
-// `dlq-notify`: a process that changed the DLQ files without the daemon (the dashboard: give-up, clear) asks the daemon to announce it. NOT a push: the daemon builds the
-// `queue.dlq.*` event itself, from the entry. `reason` is `given-up` for kind `added`, `cleared` or `evicted` for kind `removed`; `entry` is the DLQ entry as stored.
-// For `added` the daemon builds the event from the row it finds in the DLQ under `entry.id` (and refuses a request whose row is missing or differs), so it states what the store holds.
-export interface DlqNotifyRequest { kind: 'added' | 'removed'; entries: Array<{ entry: DlqEntry; reason: string }>; }
-// `rejected`: nothing was emitted, `reason` says why and what to fix. `ok`: `accepted` events are being emitted (in the background, like the ones of `dlq-clear`)
-export interface DlqNotifyResponse { status: 'ok' | 'rejected'; accepted?: number; reason?: string; }
+// `give-up` / `give-up-stuck`: the daemon runs the move of an event that nobody retries any more to the DLQ ITSELF and emits the `queue.dlq.*` events from the rows it moved.
+// The requests carry an id (give-up) or nothing (give-up-stuck): no client supplies the data an event is built from, whatever else a request body contains is ignored.
+export interface GiveUpRequest { id: string; }
+// `moved`: the entry is in the DLQ now (its queue.dlq.added is emitted in the background). `rejected`: no usable id; `reason` says what to send.
+export interface GiveUpResponse { status: 'moved' | 'not-found' | 'not-in-flight' | 'rejected'; reason?: string; }
+export interface GiveUpStuckResponse { moved: number; }
 
 export type QueueCommands = {
   push: (payload?: unknown) => Promise<PushResponse>;
@@ -40,5 +41,6 @@ export type QueueCommands = {
   'dlq-list': (payload?: unknown) => DlqListResponse;
   'dlq-replay': (payload?: unknown) => Promise<DlqReplayResponse>;
   'dlq-clear': (payload?: unknown) => DlqClearResponse;
-  'dlq-notify': (payload?: unknown) => DlqNotifyResponse;
+  'give-up': (payload?: unknown) => GiveUpResponse;
+  'give-up-stuck': (payload?: unknown) => GiveUpStuckResponse;
 };

@@ -404,36 +404,33 @@ describe('queue.dlq.removed', () => {
     expect(removed()).toEqual([]);
   });
 
-  it('replay when the subscriber was renamed: keeps returning ok, emits removed(replayed) and says the entry is stuck in the WAL', async () => {
+  // R2a item 3: these two tests used to pin the defect (the row left the DLQ and the daemon answered ok although nothing ran). They are replaced, not weakened:
+  // the replay is refused with an error and the DLQ is left alone (full coverage in dlqReplay.test.ts).
+  it('replay when the subscriber was renamed: answers an error that names the subscriber, the row stays in the DLQ and no removed event is emitted', async () => {
     await projectWith(YAML(failingCli('onSeed', 'renamed')));
     seedDlq([dlqEntry('r1', { subscriberId: `${projectId}/old` })]);
     const svc = service();
-    const lines = vi.spyOn(svc.eventLogger, 'logDiagnostic');
-    expect(await svc.commands['dlq-replay']({ id: 'r1' })).toEqual({ status: 'ok' });
-    // the stuck WAL entry keeps the daemon from being idle: that is the very thing the diagnostic reports
-    await waitFor('the event', () => removed().length === 1);
-    expect(svc.isIdle()).toBe(false);
-    expect(payloadOf(removed()[0]!)).toMatchObject({ entryId: 'r1', reason: 'replayed' });
-    const stuck = lines.mock.calls.map((call) => call[0].message).find((m) => m.includes('did not start'))!;
-    expect(stuck).toContain('r1');
-    expect(stuck).toContain('stays pending');
-    expect(stuck).toContain('Fix:');
-    expect(wal().find((e) => e.id === 'r1')!.status).toBe('pending');
-    expect(listDlqEntries(configDir)).toEqual([]);
+    const response = await svc.commands['dlq-replay']({ id: 'r1' });
+    expect(response.status).toBe('error');
+    expect(response.message).toContain(`${projectId}/old`);
+    expect(response.message).toContain('Fix:');
+    expect(listDlqEntries(configDir).map((e) => e.id)).toEqual(['r1']);
+    expect(wal().some((e) => e.id === 'r1')).toBe(false);
+    expect(svc.isIdle()).toBe(true);
+    expect(removed()).toEqual([]);
   });
 
-  it('replay when the configuration fails to load: keeps returning ok and says the entry is stuck (the event cannot be recorded with a broken configuration, and that is said too)', async () => {
+  it('replay when the configuration fails to load: answers an error, the row stays in the DLQ and nothing is emitted', async () => {
     await projectWith('subscribers: [unclosed\n');
     seedDlq([dlqEntry('r2')]);
     const svc = service();
-    const lines = vi.spyOn(svc.eventLogger, 'logDiagnostic');
-    expect(await svc.commands['dlq-replay']({ id: 'r2' })).toEqual({ status: 'ok' });
-    await waitFor('the diagnostics', () => lines.mock.calls.some((call) => call[0].message.includes('queue.dlq.removed for DLQ entry r2')));
-    const messages = lines.mock.calls.map((call) => call[0].message);
-    expect(messages.some((m) => m.includes('the replay of DLQ entry r2 did not start') && m.includes('Fix:'))).toBe(true);
-    expect(messages.some((m) => m.includes("queue.dlq.removed for DLQ entry r2 (event onSeed") && m.includes("was not emitted (aborted)"))).toBe(true);
-    expect(wal().find((e) => e.id === 'r2')!.status).toBe('pending');
-    expect(listDlqEntries(configDir)).toEqual([]);
+    const response = await svc.commands['dlq-replay']({ id: 'r2' });
+    expect(response.status).toBe('error');
+    expect(response.message).toContain('r2');
+    expect(response.message).toContain('Fix:');
+    expect(wal().some((e) => e.id === 'r2')).toBe(false);
+    expect(listDlqEntries(configDir).map((e) => e.id)).toEqual(['r2']);
+    expect(removed()).toEqual([]);
   });
 });
 

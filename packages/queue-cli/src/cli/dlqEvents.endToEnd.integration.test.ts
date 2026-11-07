@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { abandonInFlightEntryDetailed } from '@wadeck-app/queue-core';
 import { createQueueClient } from './QueueClient.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 import { testBundleFile } from '../testing/testBundle.js';
@@ -10,7 +9,7 @@ import { waitFor, waitForPortFree } from '../testWaitFor.js';
 
 // queue.dlq.added / queue.dlq.removed against a REAL daemon: the bundled CLI and daemon, a throwaway config dir, home and registry (createIsolatedCliEnv).
 // A failing cli subscriber gives up -> the daemon emits queue.dlq.added with a reference to the base event; a subscriber template follows the reference
-// byte-exact; replay, clear and the give-up of the dashboard (dlq-notify) are announced; with no subscriber on queue.dlq.* the history still records the events.
+// byte-exact; replay, clear and the give-up of the dashboard (the give-up RPC) are announced; with no subscriber on queue.dlq.* the history still records the events.
 
 const bundlePath = testBundleFile('queue.cjs');
 
@@ -161,7 +160,7 @@ describe('queue.dlq.* against a real daemon (integration)', () => {
     expect(clear.stdout).toContain('[ok] cleared 1 entries');
     expect(await receivedArgs(4)).toEqual(expect.arrayContaining([['removed', entryId, 'cleared']]));
 
-    // the dashboard gives up a stuck entry without the daemon (files only), then asks the daemon to announce it through the narrow dlq-notify RPC
+    // the dashboard gives up a stuck entry: the daemon runs the move ITSELF (the request carries the id and nothing else) and emits the event from the row it moved
     // (a WAL line, as the daemon writes it: Wal itself is not part of the public API of queue-core)
     appendFileSync(join(env().configDir, 'wal.ndjson'), JSON.stringify({
       id: 'stuck-1',
@@ -173,20 +172,16 @@ describe('queue.dlq.* against a real daemon (integration)', () => {
       status: 'pending',
       attempts: 0,
     }) + '\n');
-    const moved = abandonInFlightEntryDetailed(env().configDir, 'stuck-1');
-    expect(moved.status).toBe('moved');
-    const changes = (moved as Extract<typeof moved, { status: 'moved' }>).changes;
     const client = createQueueClient(env().configDir);
-    const notified = await client.send('dlq-notify', { kind: 'added', entries: changes.added.map((entry) => ({ entry: { ...entry, payload: null }, reason: 'given-up' })) });
-    expect(notified).toEqual({ status: 'ok', accepted: 1 });
+    // a forged body: the entries, the reason and the project it names are ignored, only the id counts
+    const moved = await client.send('give-up', { id: 'stuck-1', kind: 'added', reason: 'retries-exhausted', entries: [{ entry: { id: 'forged', event: 'onForged', subscriberId: 'evil', meta: { cwd: '/elsewhere' } }, reason: 'given-up' }] });
+    expect(moved).toEqual({ status: 'moved' });
     expect(await receivedArgs(5)).toEqual(expect.arrayContaining([['added', TITLE, 'given-up']]));
 
-    // the daemon refuses what it must not announce: a reason it alone knows, a row that is not in the DLQ
-    const forged = await client.send('dlq-notify', { kind: 'added', entries: changes.added.map((entry) => ({ entry, reason: 'retries-exhausted' })) });
-    expect(forged.status).toBe('rejected');
-    const ghost = await client.send('dlq-notify', { kind: 'added', entries: [{ entry: { ...changes.added[0]!, id: 'ghost' }, reason: 'given-up' }] });
-    expect(ghost.status).toBe('rejected');
-    expect(ghost.reason).toContain('ghost');
+    // the daemon answers what it did not move, and has no dlq-notify command any more
+    expect(await client.send('give-up', { id: 'ghost' })).toEqual({ status: 'not-found' });
+    expect(await client.send('give-up', { id: 'stuck-1' })).toEqual({ status: 'not-in-flight' });
+    await expect((client.send as (command: string, payload?: unknown) => Promise<unknown>)('dlq-notify', { kind: 'added', entries: [] })).rejects.toThrow();
     // and the reserved namespace is closed to a push
     const pushed = runCli(['push', 'queue.dlq.added', '{}']);
     expect(pushed.exitCode).not.toBe(0);

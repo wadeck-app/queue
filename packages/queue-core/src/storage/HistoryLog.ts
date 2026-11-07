@@ -80,7 +80,7 @@ export class HistoryLog implements HistoryWriter {
   private readonly prune: (dir: string, options: PruneOptions) => PruneReport;
 
   // Trigger records carry the push payload (for `queue replay`), which can contain secrets
-  // (see threat-model.md) -- unlike WAL/DLQ, nothing else ever clears a history entry, so the retention
+  // (see threat-model.md) -- unlike WAL/DLQ (acked WAL entries are pruned after 24 h, a cleared or evicted DLQ row takes its WAL entry with it), nothing else ever clears a history entry, so the retention
   // (HISTORY_MAX_AGE_DAYS days, HISTORY_MAX_TOTAL_BYTES bytes) is the only thing bounding how long that payload is kept.
   /**
    * @param onRetention Receives what the retention did or could not do (deleted files, warning, failures), when it has something to say.

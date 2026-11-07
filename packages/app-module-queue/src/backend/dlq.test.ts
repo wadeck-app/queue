@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -29,69 +29,82 @@ afterEach(() => {
   rmSync(configDir, { recursive: true, force: true });
 });
 
-describe('dlq reads and clearing work on the queue files directly', () => {
+describe('dlq reads work on the queue files directly', () => {
   it('listDlq returns the entries without any daemon', () => {
     writeFileSync(join(configDir, 'dlq.ndjson'), dlqLine('d1') + '\n');
     expect(listDlq(configDir).map(e => e.id)).toEqual(['d1']);
     expect(mockIsRunning).not.toHaveBeenCalled();
   });
+});
 
-  it('clearDlqEntry with an id removes just that entry and reports how many; the daemon is told (dlq-notify, kind removed, reason cleared)', async () => {
-    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
+// R2a item 1: with the daemon up the module does NOT touch the files, it asks the daemon (which clears AND emits queue.dlq.removed from the rows it removed).
+// Without a daemon it clears the files itself and says, loudly, that the event could not be sent. It never starts the daemon.
+describe('clearDlqEntry, daemon reachable: the daemon does the work', () => {
+  beforeEach(() => {
     mockIsRunning.mockResolvedValue(true);
-    mockSend.mockResolvedValue({ status: 'ok', accepted: 1 });
+  });
+
+  it('sends dlq-clear with the id only and returns the daemon count; the module wrote nothing to the DLQ file', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
+    mockSend.mockResolvedValue({ cleared: 1 });
     expect(await clearDlqEntry(configDir, 'd1')).toEqual({ cleared: 1 });
     expect(mockSend).toHaveBeenCalledTimes(1);
-    const [command, request] = mockSend.mock.calls[0] as [string, { kind: string; entries: Array<{ entry: { id: string; payload: unknown }; reason: string }> }];
-    expect(command).toBe('dlq-notify');
-    expect(request.kind).toBe('removed');
-    expect(request.entries.map((item) => [item.entry.id, item.reason, item.entry.payload])).toEqual([['d1', 'cleared', null]]);
+    expect(mockSend).toHaveBeenCalledWith('dlq-clear', { id: 'd1' });
+    // the (mocked) daemon removed nothing and the module did not either: the file is as it was
+    expect(listDlq(configDir).map(e => e.id)).toEqual(['d1', 'd2']);
+  });
+
+  it('without an id the whole queue is cleared by the daemon in ONE request (no chunks, no entries sent)', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), Array.from({ length: 450 }, (_, i) => dlqLine('d' + i)).join('\n') + '\n');
+    mockSend.mockResolvedValue({ cleared: 450 });
+    expect(await clearDlqEntry(configDir)).toEqual({ cleared: 450 });
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0]).toEqual(['dlq-clear', {}]);
+    expect(listDlq(configDir)).toHaveLength(450);
+  });
+
+  it('an unknown id answers the daemon count 0 and no message', async () => {
+    mockSend.mockResolvedValue({ cleared: 0 });
+    expect(await clearDlqEntry(configDir, 'nope')).toEqual({ cleared: 0 });
+  });
+
+  it('when the RPC fails the clear is done on the files and the message carries the failure and the restart hint (never silent)', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
+    mockSend.mockRejectedValueOnce(new Error('Unknown command: dlq-clear'));
+    const result = await clearDlqEntry(configDir, 'd1');
+    expect(result.cleared).toBe(1);
+    expect(result.message).toContain('Entry removed.');
+    expect(result.message).toContain('Unknown command: dlq-clear');
+    expect(result.message).toContain('restart it');
     expect(listDlq(configDir).map(e => e.id)).toEqual(['d2']);
   });
+});
 
-  it('clearDlqEntry without an id clears all entries and announces each of them', async () => {
-    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
-    mockIsRunning.mockResolvedValue(true);
-    mockSend.mockResolvedValue({ status: 'ok', accepted: 2 });
-    expect(await clearDlqEntry(configDir)).toEqual({ cleared: 2 });
-    expect(listDlq(configDir)).toEqual([]);
-    expect((mockSend.mock.calls[0]![1] as { entries: unknown[] }).entries).toHaveLength(2);
-  });
-
-  it('a clear of more than one chunk sends several requests', async () => {
-    writeFileSync(join(configDir, 'dlq.ndjson'), Array.from({ length: 450 }, (_, i) => dlqLine('d' + i)).join('\n') + '\n');
-    mockIsRunning.mockResolvedValue(true);
-    mockSend.mockResolvedValue({ status: 'ok' });
-    expect(await clearDlqEntry(configDir)).toEqual({ cleared: 450 });
-    expect(mockSend.mock.calls.map((call) => (call[1] as { entries: unknown[] }).entries.length)).toEqual([200, 200, 50]);
-  });
-
-  it('the clear stands and the message says the event could not be sent when the daemon is not running; nothing is sent', async () => {
-    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
-    const result = await clearDlqEntry(configDir);
-    expect(result.cleared).toBe(2);
-    expect(result.message).toContain('2 entries removed.');
-    expect(result.message).toContain('queue.dlq.removed (2 entries) event could not be sent because the daemon is not running');
-    expect(result.message).toContain('queue start');
+describe('clearDlqEntry, daemon not running: the files are cleared and the message says the event was not sent', () => {
+  it('clears one entry or all of them, sends nothing, and says it with the count', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2'), dlqLine('d3')].join('\n') + '\n');
+    const one = await clearDlqEntry(configDir, 'd1');
+    expect(one.cleared).toBe(1);
+    expect(one.message).toContain('Entry removed.');
+    expect(one.message).toContain('queue.dlq.removed (1 entry) event could not be sent because the daemon is not running');
+    const rest = await clearDlqEntry(configDir);
+    expect(rest.cleared).toBe(2);
+    expect(rest.message).toContain('2 entries removed.');
+    expect(rest.message).toContain('queue.dlq.removed (2 entries) event could not be sent because the daemon is not running');
+    expect(rest.message).toContain('queue start');
     expect(mockSend).not.toHaveBeenCalled();
     expect(listDlq(configDir)).toEqual([]);
   });
 
-  it('says the daemon refused, or could not be reached, in the message; the clear stands', async () => {
-    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
-    mockIsRunning.mockResolvedValue(true);
-    mockSend.mockResolvedValueOnce({ status: 'rejected', reason: 'because' });
-    expect((await clearDlqEntry(configDir, 'd1')).message).toContain('the daemon refused it (because)');
-    mockSend.mockRejectedValueOnce(new Error('socket closed'));
-    const failed = await clearDlqEntry(configDir, 'd2');
-    expect(failed.cleared).toBe(1);
-    expect(failed.message).toContain('Entry removed.');
-    expect(failed.message).toContain('socket closed');
+  it('also purges the WAL entry that carried the payload of a cleared row', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), dlqLine('d1') + '\n');
+    writeFileSync(join(configDir, 'wal.ndjson'), JSON.stringify({ id: 'd1', timestamp: '2026-10-18T10:00:00.000Z', event: 'onFoo', payload: { secret: 'S3CRET' }, meta: { cwd: '/p' }, subscriberId: 's', status: 'dlq', attempts: 3 }) + '\n');
+    await clearDlqEntry(configDir, 'd1');
+    expect(readFileSync(join(configDir, 'wal.ndjson'), 'utf8')).not.toContain('S3CRET');
   });
 
-  it('an unknown id clears 0 and contacts nobody', async () => {
+  it('an unknown id clears 0 and says nothing (nothing was removed, so there is nothing to announce)', async () => {
     expect(await clearDlqEntry(configDir, 'nope')).toEqual({ cleared: 0 });
-    expect(mockIsRunning).not.toHaveBeenCalled();
   });
 });
 

@@ -269,8 +269,8 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  // Moves every event that waited so long that nobody retries it any more to the dead-letter queue (nothing is deleted; no daemon needed for the move).
-  // The daemon is told afterwards (queue.dlq.added); when it cannot be, the move stands and the response `message` says so
+  // Moves every event that waited so long that nobody retries it any more to the dead-letter queue (nothing is deleted). The daemon does the move and emits queue.dlq.added itself
+  // (this module writes nothing); when it is not reachable the move is done on the files and the response `message` says the event could not be sent
   ctx.registerRoute('POST', '/pending/give-up-stuck', async (_req, reply) => {
     try {
       return reply.code(200).send(await giveUpStuck(configDir));
@@ -279,7 +279,7 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  // Moves an event nobody retries any more to the dead-letter queue (nothing is deleted; no daemon needed for the move); the daemon is told afterwards, see above
+  // Moves an event nobody retries any more to the dead-letter queue (nothing is deleted); the daemon does it when it is reachable, see above
   ctx.registerRoute('POST', '/pending/:id/give-up', async (req, reply) => {
     const { id } = req.params;
     try {
@@ -350,7 +350,7 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  // Edits the DLQ file (no daemon needed), then tells the daemon (queue.dlq.removed); when it cannot be told the clear stands and the response `message` says so
+  // The daemon clears the rows and emits queue.dlq.removed itself when it is reachable; otherwise the DLQ file is edited here and the response `message` says the event could not be sent
   ctx.registerRoute('POST', '/dlq/:id/clear', async (req, reply) => {
     const { id } = req.params;
     try {
