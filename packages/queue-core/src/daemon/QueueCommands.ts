@@ -14,7 +14,8 @@ export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted' | 'r
 export interface RegisterEventsRequest { protocol?: string; source: string; events: unknown[]; }
 export interface RegisterEventsResponse { status: 'registered' | 'rejected'; source?: string; count?: number; reason?: string; problems?: CatalogProblem[]; supported?: string; }
 export interface RetryRequest { eventId: string; }
-export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; }
+// `message`: why a retry was refused (the entry is already delivered or sits in the DLQ), with what to do instead
+export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; message?: string; }
 export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }
 export interface ListSubscribersRequest { event?: string; cwd: string; }
 export interface SubscriberListResponse { subscribers: ResolvedSubscriber[]; }

@@ -42,6 +42,21 @@ export interface HistoryEntry {
   causedBy?: CausedBy;
 }
 
+/** The trigger record of an event as written to the history: the push itself. */
+export interface TriggerRecord {
+  ts: string;
+  eventId: string;
+  event: string;
+  /** Absent when the record holds none. */
+  payload?: unknown;
+  project?: string;
+  projectId?: string;
+  cwd?: string;
+  replayOf?: string;
+  direction?: string[];
+  causedBy?: CausedBy;
+}
+
 export interface HistoryFilter {
   event?: string;
   /** Only the pushes of this registered project (its id). */
@@ -75,6 +90,8 @@ const OUTCOME_STATUS = /"status":"(success|failed|dlq)"/;
 const KEY_SEARCH_CHARS = 400;
 const EVENT_KEY = /"event":"((?:[^"\\]|\\.)*)"/;
 const EVENT_ID_KEY = /"eventId":"((?:[^"\\]|\\.)*)"/;
+// What precedes the type of a record in its line: the opening brace and the `ts` key HistoryLog writes first
+const TRIGGER_LINE_HEAD = /^\{"ts":"[^"\\]*",$/;
 const SUBSCRIBER_KEY = /"subscriberId":"((?:[^"\\]|\\.)*)"/;
 
 /** A JSON string body (still escaped) back to text. */
@@ -210,9 +227,77 @@ export class HistoryReader {
     }));
   }
 
-  /** Looks up a single entry by its exact eventId, for `queue replay <eventId>`. */
+  /**
+   * The trigger record of an event (the push itself: name, payload, time, project), or undefined when the history holds none for that id
+   * (never pushed, or older than the retention). Cheap on a large history: day files are scanned newest first as bytes, the id is
+   * looked up as the byte needle `"type":"trigger","eventId":<id>` (the order HistoryLog writes, right after `ts`) and only the line of the
+   * hit is parsed, so no other line of any file is. The needle also occurs in a payload holding an object with those keys in that order;
+   * a hit counts only when it sits at the head of its line, and the parsed record is checked again, so a hostile payload cannot answer for
+   * another event. The newest trigger wins, as in {@link read}. Does not use the file cache.
+   */
+  findTrigger(eventId: string): TriggerRecord | undefined {
+    return this.locateTrigger(eventId)?.trigger;
+  }
+
+  private locateTrigger(eventId: string): { trigger: TriggerRecord; file: string; files: string[] } | undefined {
+    // The id as it is written in the file (JSON-escaped, quotes included)
+    const needle = Buffer.from(`"type":"trigger","eventId":${JSON.stringify(eventId)}`, 'utf-8');
+    const files = this.listFiles();
+    for (let i = files.length - 1; i >= 0; i--) {
+      const file = files[i]!;
+      const bytes = this.readDayFile(file);
+      if (bytes === undefined) {
+        continue;
+      }
+      // Backwards inside the file too: the newest line first
+      for (let hit = bytes.lastIndexOf(needle); hit !== -1; hit = hit === 0 ? -1 : bytes.lastIndexOf(needle, hit - 1)) {
+        const lineStart = bytes.lastIndexOf(10, hit) + 1;
+        if (!TRIGGER_LINE_HEAD.test(bytes.toString('utf-8', lineStart, hit))) {
+          continue;
+        }
+        const lineEnd = bytes.indexOf(10, hit);
+        const record = parseRecordLine(file, bytes.toString('utf-8', lineStart, lineEnd === -1 ? bytes.length : lineEnd));
+        if (record !== undefined && record['type'] === 'trigger' && record['eventId'] === eventId) {
+          return { trigger: toTriggerRecord(record), file, files };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Looks up a single entry by its exact eventId, for `queue replay <eventId>`: the same entry as `read().find(...)`, without parsing
+   * every line of the history. Only the lines that carry the id are parsed; the day files before the trigger's day cannot hold a record of the
+   * event, so they are not even searched. An id with no trigger (a retry's WAL id) is looked for in every day file and gives an orphan entry.
+   * A malformed line that does not carry the id is not noticed (`read()` would throw on it).
+   */
   findByEventId(eventId: string): HistoryEntry | undefined {
-    return this.read().find(e => e.eventId === eventId);
+    const located = this.locateTrigger(eventId);
+    const files = located === undefined ? this.listFiles() : located.files.slice(located.files.indexOf(located.file));
+    const needle = Buffer.from(JSON.stringify(eventId), 'utf-8');
+    const acc = new Map<string, Accumulator>();
+    for (const file of files) {
+      const bytes = this.readDayFile(file);
+      if (bytes === undefined) {
+        continue;
+      }
+      let from = 0;
+      for (let hit = bytes.indexOf(needle, from); hit !== -1; hit = bytes.indexOf(needle, from)) {
+        const lineStart = bytes.lastIndexOf(10, hit) + 1;
+        const lineEnd = bytes.indexOf(10, hit);
+        const line = bytes.toString('utf-8', lineStart, lineEnd === -1 ? bytes.length : lineEnd);
+        const body = EVENT_ID_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
+        // The id as the `eventId` key of the record, not as a value further on (a payload, a causedBy): compare the decoded key
+        if (body !== undefined && unescapeJson(body) === eventId) {
+          const record = parseRecordLine(file, line);
+          if (record !== undefined) {
+            this.applyRecord(acc, record);
+          }
+        }
+        from = lineEnd === -1 ? bytes.length : lineEnd + 1;
+      }
+    }
+    return this.toEntries(acc)[0];
   }
 
   /**
@@ -520,6 +605,23 @@ function parseRecordLine(file: string, line: string): Record<string, unknown> | 
   } catch (err) {
     throw new Error(`Malformed history record in ${file}: ${trimmed} (${(err as Error).message})`);
   }
+}
+
+function toTriggerRecord(record: Record<string, unknown>): TriggerRecord {
+  const str = (key: string): string | undefined => (typeof record[key] === 'string' ? (record[key] as string) : undefined);
+  const causedBy = record['causedBy'] as Partial<CausedBy> | null | undefined;
+  return {
+    ts: str('ts') ?? new Date(0).toISOString(),
+    eventId: record['eventId'] as string,
+    event: str('event') ?? '(unknown)',
+    ...(record['payload'] !== undefined && { payload: record['payload'] }),
+    ...(str('project') !== undefined && { project: str('project') }),
+    ...(str('projectId') !== undefined && { projectId: str('projectId') }),
+    ...(str('cwd') !== undefined && { cwd: str('cwd') }),
+    ...(str('replayOf') !== undefined && { replayOf: str('replayOf') }),
+    ...(Array.isArray(record['direction']) && { direction: record['direction'] as string[] }),
+    ...(typeof causedBy?.eventId === 'string' && typeof causedBy.subscriberId === 'string' && { causedBy: { eventId: causedBy.eventId, subscriberId: causedBy.subscriberId } }),
+  };
 }
 
 function projectRefsOfRecord(record: Record<string, unknown>): { projectId?: string; emitterProjectId?: string } {

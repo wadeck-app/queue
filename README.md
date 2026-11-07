@@ -18,6 +18,8 @@ queue <command> [options]
 |---------|-------------|
 | `push <event> <json> [--timeout <dur>]` | Publish an event |
 | `retry --event <id>` | Re-enqueue a failed event |
+| `history [--event <name>] [--subscriber <id>] [--status <s>] [--since <-Nd>] [--follow] [--json]` | List past events and how each subscriber ended |
+| `history --event-id <id> [--json]` | Show one entry (payload and outcomes) by its eventId; exit 1 when the history no longer holds it |
 | `status [--json]` | Show daemon and queue status |
 | `list-subscribers [event] [--json]` | List registered subscribers |
 | `dlq list` | List dead-letter entries |

@@ -205,4 +205,29 @@ describe('parseHistoryFlags', () => {
       expect(parseHistoryFlags(['history']).projectRef).toBeUndefined();
     });
   });
+
+  describe('--event-id', () => {
+    it('is returned as eventId and adds no error', () => {
+      const result = parseHistoryFlags(['history', '--event-id', 'abc-123', '--json']);
+      expect(result.errors).toEqual([]);
+      expect(result.eventId).toBe('abc-123');
+      expect(result.json).toBe(true);
+    });
+
+    it('is absent without the flag', () => {
+      expect(parseHistoryFlags(['history']).eventId).toBeUndefined();
+    });
+
+    it('without a value pushes an actionable error', () => {
+      expect(parseHistoryFlags(['history', '--event-id']).errors).toEqual(['--event-id requires a value (the eventId shown by `queue history`)']);
+      expect(parseHistoryFlags(['history', '--event-id', '--json']).errors).toHaveLength(1);
+    });
+
+    it.each([
+      [['--event', 'x']], [['--subscriber', 's']], [['--status', 'dlq']], [['--since', '-1d']], [['--project', 'app']], [['--project=app']], [['-p', 'app']], [['--limit', '5']], [['-n', '5']], [['--offset', '1']], [['--follow']], [['-f']],
+    ])('cannot be combined with %j (refused instead of ignoring one of them)', (other) => {
+      const errors = parseHistoryFlags(['history', '--event-id', 'abc', ...other]).errors;
+      expect(errors.some((e) => e.startsWith('--event-id returns the one entry with that id and cannot be combined with '))).toBe(true);
+    });
+  });
 });

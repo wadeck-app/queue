@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -88,6 +88,37 @@ describe('Wal and DlqStore with several writer processes', () => {
     const ids = new DlqStore(join(dir, 'dlq.ndjson')).readAll().map((e) => e.id).sort();
     const expected = Array.from({ length: WRITERS }, (_, w) => Array.from({ length: PER_WRITER }, (_, i) => i).filter((i) => i % 2 === 1).map((i) => `w${w}-${i}`)).flat().sort();
     expect(ids).toEqual(expected);
+  });
+
+  it('keeps one DLQ row per id when processes append the same ids at once, and reports each row as inserted only once', async () => {
+    const { codes, stderr } = await runWriters(
+      `import { appendFileSync } from 'node:fs';\n` +
+        `const inserted = [];\n` +
+        `for (let i = 0; i < Number(count); i++) {\n` +
+        `  const r = dlq.append({ id: 'shared-' + i, event: 'onRace', payload: { by: tag }, meta: { cwd: '/', projectName: 'p' }, subscriberId: 's', attempts: 3, lastError: 'boom', movedAt: new Date().toISOString() });\n` +
+        `  if (r.inserted) inserted.push(i);\n` +
+        `}\n` +
+        `appendFileSync(dlqFile + '.inserted', tag + ':' + inserted.join(',') + '\\n');\n`,
+    );
+    expect(stderr, `stderr of the writer processes: ${stderr}`).toBe('');
+    expect(codes).toEqual([0, 0, 0]);
+    const ids = new DlqStore(join(dir, 'dlq.ndjson')).readAll().map((e) => e.id);
+    expect(ids).toHaveLength(PER_WRITER);
+    expect(new Set(ids).size).toBe(PER_WRITER);
+    // Exactly one writer inserted each id, the others replaced it
+    const insertedBy = readFileSync(join(dir, 'dlq.ndjson.inserted'), 'utf-8').trim().split('\n')
+      .flatMap((line) => line.split(':')[1]!.split(',').filter((n) => n !== ''));
+    expect(insertedBy).toHaveLength(PER_WRITER);
+    expect(new Set(insertedBy).size).toBe(PER_WRITER);
+  });
+
+  it('removeEntries and clearEntries hand back exactly the rows they removed', () => {
+    const dlq = new DlqStore(join(dir, 'dlq.ndjson'));
+    dlq.append(dlqEntry('keep'));
+    dlq.append(dlqEntry('gone'));
+    expect(dlq.removeEntries(['gone', 'unknown']).map((e) => e.id)).toEqual(['gone']);
+    expect(dlq.clearEntries().map((e) => e.id)).toEqual(['keep']);
+    expect(dlq.readAll()).toEqual([]);
   });
 
   it('a single process still works as before (append, update, remove)', () => {

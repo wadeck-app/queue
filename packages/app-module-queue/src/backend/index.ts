@@ -269,6 +269,9 @@ export default function (ctx: ModuleContext): void {
       if (response.status === 'not-found') {
         return reply.code(404).send({ error: `No pending event with id ${eventId} (retry only applies to events still in the WAL)` });
       }
+      if (response.message !== undefined) {
+        return reply.code(409).send({ error: response.message });
+      }
       return reply.code(response.status === 'ok' ? 200 : 500).send(response);
     } catch (err) {
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });

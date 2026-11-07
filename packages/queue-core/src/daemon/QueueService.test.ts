@@ -885,6 +885,33 @@ describe('type action: the emit action and the daemon wiring', () => {
       expect(seen[1]!.payload).toEqual(seen[0]!.payload);
     });
 
+    it('retry refuses an entry already delivered (acked) instead of running its subscriber a second time', async () => {
+      const { service, seen } = await chainEndingInto(() => ({ success: true }));
+      const delivered = wal().find((entry) => entry.event === 'agent.message')!;
+      expect(delivered.status).toBe('acked');
+
+      const response = await service.commands.retry({ eventId: delivered.id });
+
+      expect(response.status).toBe('error');
+      expect(response.message).toMatch(/already delivered.*status acked.*queue replay <eventId>/);
+      expect(seen).toHaveLength(1);
+      expect(wal().find((entry) => entry.id === delivered.id)!.status).toBe('acked');
+    });
+
+    it('retry refuses an entry given up to the DLQ and points to dlq replay / dlq clear with its id', async () => {
+      const { service, seen } = await chainEndingInto(() => ({ success: false, error: 'refused', permanent: true }));
+      const given = wal().find((entry) => entry.event === 'agent.message')!;
+      expect(given.status).toBe('dlq');
+
+      const response = await service.commands.retry({ eventId: given.id });
+
+      expect(response.status).toBe('error');
+      expect(response.message).toContain(`queue dlq replay --id ${given.id}`);
+      expect(response.message).toContain(`queue dlq clear --id ${given.id}`);
+      expect(seen).toHaveLength(1);
+      expect(dlq()).toHaveLength(1);
+    });
+
     it('dlq-replay runs the action again with the hop counter and the first-push id of the original event', async () => {
       const { service, seen, firstPushId } = await chainEndingInto((call) => (call === 1 ? { success: false, error: 'refused', permanent: true } : { success: true }));
       const [entry] = dlq();

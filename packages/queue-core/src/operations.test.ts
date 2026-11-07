@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
 import { Wal } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
-import { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries } from './operations.js';
+import { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, clearDlqEntriesReturning, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries } from './operations.js';
 
 let configDir: string;
 let projectDir: string;
@@ -78,6 +78,18 @@ describe('listDlqEntries / clearDlqEntries', () => {
 
   it('clears everything when no id is given and reports how many', () => {
     expect(clearDlqEntries(configDir)).toBe(2);
+    expect(listDlqEntries(configDir)).toEqual([]);
+  });
+});
+
+describe('clearDlqEntriesReturning', () => {
+  it('returns the removed entries of one id, or of all, and nothing for an unknown id', () => {
+    const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
+    dlq.append(dlqEntry('x'));
+    dlq.append(dlqEntry('y'));
+    expect(clearDlqEntriesReturning(configDir, 'nope')).toEqual([]);
+    expect(clearDlqEntriesReturning(configDir, 'x').map((e) => e.id)).toEqual(['x']);
+    expect(clearDlqEntriesReturning(configDir).map((e) => e.id)).toEqual(['y']);
     expect(listDlqEntries(configDir)).toEqual([]);
   });
 });

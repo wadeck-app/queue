@@ -1139,6 +1139,16 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ error: expect.stringContaining('No pending event with id gone') });
   });
 
+  it('POST /retry/:eventId answers 409 with the reason when the daemon refuses an entry already delivered or in the DLQ', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockRetryEvent.mockResolvedValueOnce({ status: 'error', message: 'WAL entry wal-1 was already delivered (status acked)' });
+    const reply = fakeReply();
+    await routes.get('POST /retry/:eventId')!(fakeReq({ params: { eventId: 'wal-1' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(409);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'WAL entry wal-1 was already delivered (status acked)' });
+  });
+
   it('POST /retry/:eventId answers 500 when the daemon reports an error, 503 when it is not running', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);

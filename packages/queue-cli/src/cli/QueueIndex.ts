@@ -24,7 +24,7 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, findTemplateProblem, doubleStarProblem } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, findTemplateProblem, doubleStarProblem, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -160,7 +160,7 @@ Usage:
   queue stop
   queue relay start|stop|status [--json]   Webhook relay client (reads relay.yml from QUEUE_CONFIG_DIR)
   queue logs [--follow]
-  queue history [--event <name>] [--subscriber <id>] [--project <name|alias|id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]   (--project: the flag only, QUEUE_PROJECT does not narrow a view)
+  queue history [--event <name>] [--event-id <id>] [--subscriber <id>] [--project <name|alias|id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]   (--project: the flag only, QUEUE_PROJECT does not narrow a view)
   queue cli self-check
   queue cli update
   queue cli logs [--follow]
@@ -250,7 +250,7 @@ function isFlagPresent(args: string[], flag: string): boolean {
 }
 
 /** `projectRef`: the --project / -p given, a name, an alias or an id still to be resolved with the project registry. */
-export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; limit: number; offset: number; errors: string[]; projectRef?: string } {
+export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json: boolean; limit: number; offset: number; errors: string[]; projectRef?: string; eventId?: string } {
   const errors: string[] = [];
   const getArg = (flag: string): string | undefined => {
     const idx = args.indexOf(flag);
@@ -265,6 +265,20 @@ export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json
   };
 
   const filter: HistoryFilter = {};
+
+  // `--event-id` looks up one entry by its exact id: a different question from the filters of the list, so mixing them is refused
+  let eventId: string | undefined;
+  if (isFlagPresent(args, '--event-id')) {
+    eventId = getArg('--event-id');
+    if (eventId === undefined) {
+      errors.push('--event-id requires a value (the eventId shown by `queue history`)');
+    } else {
+      const clashing = ['--event', '--subscriber', '--status', '--since', '--project', '-p', '--limit', '-n', '--offset', '--follow', '-f'].filter((flag) => isFlagPresent(args, flag) || (flag === '--project' && args.some((arg) => arg.startsWith('--project='))));
+      if (clashing.length > 0) {
+        errors.push(`--event-id returns the one entry with that id and cannot be combined with ${clashing.join(', ')}: remove ${clashing.length === 1 ? 'it' : 'them'}`);
+      }
+    }
+  }
 
   if (isFlagPresent(args, '--event')) {
     const eventVal = getArg('--event');
@@ -348,7 +362,7 @@ export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json
     }
   }
 
-  return { filter, json: args.includes('--json'), limit, offset, errors, ...(projectRef !== undefined && { projectRef }) };
+  return { filter, json: args.includes('--json'), limit, offset, errors, ...(projectRef !== undefined && { projectRef }), ...(eventId !== undefined && { eventId }) };
 }
 
 // Helper to inject dependencies into follow mode for testing (with AbortSignal support).
@@ -425,11 +439,11 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
   // The project option (any of its three forms) is read by parseHistoryFlags through the project-sdk; the unknown-argument check sees the rest
   warnUnknownArgs(
     parseProjectFlag(args).args,
-    ['--event', '--subscriber', '--status', '--since', '--json', '--follow', '-f', '--limit', '-n', '--offset'],
+    ['--event', '--event-id', '--subscriber', '--status', '--since', '--json', '--follow', '-f', '--limit', '-n', '--offset'],
     'queue history',
-    new Set(['--event', '--subscriber', '--status', '--since', '--limit', '-n', '--offset']),
+    new Set(['--event', '--event-id', '--subscriber', '--status', '--since', '--limit', '-n', '--offset']),
   );
-  const { filter, json, limit, offset, errors, projectRef } = parseHistoryFlags(args);
+  const { filter, json, limit, offset, errors, projectRef, eventId } = parseHistoryFlags(args);
   if (errors.length > 0) {
     for (const err of errors) process.stderr.write(`[fail] ${err}\n`);
     process.exit(1);
@@ -444,6 +458,17 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
   }
 
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
+  if (eventId !== undefined) {
+    const entry = reader.findByEventId(eventId);
+    if (entry === undefined) {
+      process.stderr.write(
+        `[fail] No history entry for eventId ${eventId}. The history keeps at most ${HISTORY_MAX_AGE_DAYS} days and ${HISTORY_MAX_TOTAL_BYTES / (1024 * 1024)} MB, so an older event is gone; check the id with 'queue history' (the eventId is the id of the push, not the id of a retry or a DLQ entry).\n`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write((json ? JSON.stringify(entry, null, 2) : HistoryFormatter.format(entry)) + '\n');
+    return;
+  }
   const follow = args.includes('--follow') || args.includes('-f');
 
   if (!follow) {
@@ -971,6 +996,9 @@ async function main(): Promise<void> {
     const response = await client.send('retry', { eventId });
     if (response.status === 'ok') {
       process.stdout.write('[ok] retry enqueued\n');
+    } else if (response.message !== undefined) {
+      process.stderr.write(`[fail] ${response.message}\n`);
+      process.exit(1);
     } else {
       process.stdout.write(JSON.stringify(response) + '\n');
     }

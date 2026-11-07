@@ -40,7 +40,12 @@ export function subscribersFor(configLoader: ConfigLoader, req: { event?: string
 
 /** Removes one DLQ entry, or all of them when `id` is omitted; returns how many were removed. */
 export function removeFromDlq(dlq: DlqStore, id?: string): number {
-  return id ? dlq.remove(id) : dlq.clear();
+  return removeDlqEntries(dlq, id).length;
+}
+
+/** Same removal as {@link removeFromDlq}, returning the entries removed (read under the lock of the removal itself). */
+export function removeDlqEntries(dlq: DlqStore, id?: string): DlqEntry[] {
+  return id ? dlq.removeEntries(id) : dlq.clearEntries();
 }
 
 export function readQueueCounts(configDir: string, projectId?: string): QueueCounts {
@@ -115,6 +120,11 @@ export function listDlqEntries(configDir: string): DlqEntry[] {
 
 export function clearDlqEntries(configDir: string, id?: string): number {
   return removeFromDlq(new DlqStore(join(configDir, 'dlq.ndjson')), id);
+}
+
+/** Same as {@link clearDlqEntries}, returning the entries removed instead of their count. */
+export function clearDlqEntriesReturning(configDir: string, id?: string): DlqEntry[] {
+  return removeDlqEntries(new DlqStore(join(configDir, 'dlq.ndjson')), id);
 }
 
 /** `registryDir`: the project registry that says which project `cwd` is in, hence where its subscribers are kept. */

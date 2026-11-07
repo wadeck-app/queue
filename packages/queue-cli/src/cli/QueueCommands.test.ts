@@ -156,6 +156,16 @@ describe('queue retry', () => {
 	});
 });
 
+describe('queue retry refused by the daemon', () => {
+	it('prints the reason on stderr and exits 1 (not a bare JSON on stdout)', async () => {
+		mockSend.mockResolvedValue({ status: 'error', message: 'WAL entry w1 was already delivered (status acked)' });
+		const { stdout, stderr, exitCode } = await run(['retry', '--event', 'w1']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('[fail] WAL entry w1 was already delivered');
+		expect(stdout).toBe('');
+	});
+});
+
 // --- status ---
 
 describe('queue status', () => {

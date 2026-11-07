@@ -1,8 +1,9 @@
 import type { EventEnvelope } from '../types.js';
+import { FORBIDDEN_PATH_SEGMENTS, walkPayloadPath, type WalkOptions } from '../walkPayloadPath.js';
 
 /**
  * Templates of the `with:` values of a `type: action` subscriber. Rendered in Node, never in a shell, in one pass (a value
- * that holds `{{ ... }}` is not rendered again). Scope: `{{ payload.a.b }}` (nested, own properties only), `{{ payload }}`
+ * that holds `{{ ... }}` is not rendered again). Scope: `{{ payload.a.b }}` (an own key named `a.b` first, else nested, own properties only: walkPayloadPath), `{{ payload }}`
  * (the whole payload as JSON), `{{ event }}`, `{{ id }}`, `{{ timestamp }}`. A bare `{{ x }}` is an error: write `payload.x`
  * (the `cli` rule, a bare name is a payload field, is not applied here, so the two cannot be mixed up).
  */
@@ -13,7 +14,6 @@ export const MAX_RENDERED_FIELD_BYTES = 64 * 1024;
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 const PAYLOAD_SEGMENT = /^[\w-]+$/;
 const ENVELOPE_FIELDS = new Set(['event', 'id', 'timestamp']);
-const FORBIDDEN_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** A template cannot be rendered (or never will be). The message names the field and the placeholder, never a value of the event. */
 export class ActionTemplateError extends Error {
@@ -47,7 +47,7 @@ function expressionProblem(raw: string): string | undefined {
     if (!PAYLOAD_SEGMENT.test(segment)) {
       return `the placeholder {{ ${expression} }} is not valid: each part after 'payload.' must be letters, digits, '_' or '-' (a nested field is {{ payload.a.b }}).`;
     }
-    if (FORBIDDEN_SEGMENTS.has(segment)) {
+    if (FORBIDDEN_PATH_SEGMENTS.has(segment)) {
       return `the placeholder {{ ${expression} }} is refused: '${segment}' is never read from a payload.`;
     }
   }
@@ -66,18 +66,6 @@ export function findActionTemplateProblem(template: string): string | undefined 
     return "a '{{' without its closing '}}' (or a placeholder that holds braces). Fix: close it, e.g. {{ payload.text }}.";
   }
   return undefined;
-}
-
-/** The value found at the path, own properties only; undefined when any step is missing. */
-function readPayloadPath(payload: unknown, segments: string[]): unknown {
-  let current = payload;
-  for (const segment of segments) {
-    if (current === null || typeof current !== 'object' || !Object.hasOwn(current, segment)) {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
 }
 
 function stringify(value: unknown, field: string, expression: string): string {
@@ -102,7 +90,7 @@ function stringify(value: unknown, field: string, expression: string): string {
  * Throws ActionTemplateError: syntax or scope (also found by findActionTemplateProblem at load time), a NUL character,
  * or a rendered value over 64 KB. Every message names the field and the placeholder, never the value.
  */
-export function renderActionTemplate(template: string, envelope: EventEnvelope, field: string): string {
+export function renderActionTemplate(template: string, envelope: EventEnvelope, field: string, options: WalkOptions = {}): string {
   const syntax = findActionTemplateProblem(template);
   if (syntax !== undefined) {
     throw new ActionTemplateError(field, syntax);
@@ -115,7 +103,7 @@ export function renderActionTemplate(template: string, envelope: EventEnvelope, 
       case 'id': return envelope.meta.eventId ?? envelope.id;
       case 'timestamp': return envelope.timestamp;
       case 'payload': return stringify(envelope.payload, field, expression);
-      default: return stringify(readPayloadPath(envelope.payload, expression.split('.').slice(1)), field, expression);
+      default: return stringify(walkPayloadPath(envelope.payload, expression.slice('payload.'.length), options), field, expression);
     }
   });
   if (rendered.includes('\0')) {

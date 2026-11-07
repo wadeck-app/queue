@@ -29,11 +29,11 @@ export { pruneLogDir, describeRetention, listLogFiles, deleteLogFile, statQueueF
 export type { PruneOptions, PruneReport, PrunedFile, PruneFailure, RetentionKind, RetentionLine, RetentionAudience, RetentionIo, LogVariant, ProtectionReason, ListLogFilesOptions, LogFileInfo, LogFileListing, LogFileRef, DeleteLogFileOptions, DeleteLogFileResult, QueueFileInfo } from './storage/LogRetention.js';
 export { HistoryReader } from './storage/HistoryReader.js';
 export type { CausedBy } from './storage/HistoryLog.js';
-export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage } from './storage/HistoryReader.js';
+export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage, TriggerRecord } from './storage/HistoryReader.js';
 export { DEFAULT_HISTORY_LIMIT } from './storage/HistoryReader.js';
-export type { DlqEntry } from './storage/DlqStore.js';
+export type { DlqEntry, DlqAppendResult } from './storage/DlqStore.js';
 export type { ResolvedSubscriber } from './types.js';
-export { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries, STUCK_AFTER_MS } from './operations.js';
+export { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, clearDlqEntriesReturning, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries, STUCK_AFTER_MS } from './operations.js';
 export type { AbandonResult } from './operations.js';
 export type { QueueCounts } from './operations.js';
 export type { WalEntry } from './storage/Wal.js';

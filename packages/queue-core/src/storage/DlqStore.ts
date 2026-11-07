@@ -15,6 +15,13 @@ export interface DlqEntry {
   movedAt: string;
 }
 
+export interface DlqAppendResult {
+  /** False when an entry with the same id was already there and was replaced. */
+  inserted: boolean;
+  /** The oldest entry, dropped because the cap was reached. */
+  evicted?: DlqEntry;
+}
+
 export class DlqStore {
   private readonly filePath: string;
   private readonly maxSize: number;
@@ -44,16 +51,27 @@ export class DlqStore {
     renameReplacing(tmpPath, this.filePath);
   }
 
-  append(entry: DlqEntry): void {
+  /**
+   * Idempotent on `entry.id`: an entry with that id is replaced (and moves to the end, as the newest), so a retry of the same move after a crash
+   * never duplicates a row; `inserted` is false then. When a new row exceeds the cap, the oldest one is dropped and returned as `evicted`
+   * (a replacement never evicts: the size does not grow).
+   */
+  append(entry: DlqEntry): DlqAppendResult {
     this.ensureDir();
-    this.lock.withLock((held) => {
+    return this.lock.withLock((held) => {
       let entries = this.readAll();
-      if (entries.length >= this.maxSize) {
+      const existing = entries.some((e) => e.id === entry.id);
+      let evicted: DlqEntry | undefined;
+      if (existing) {
+        entries = entries.filter((e) => e.id !== entry.id);
+      } else if (entries.length >= this.maxSize) {
         process.stderr.write(`[queue] DLQ limit reached (${this.maxSize}). Removing oldest entry.\n`);
+        evicted = entries[0];
         entries = entries.slice(1);
       }
       entries.push(entry);
       this.write(entries, held);
+      return { inserted: !existing, ...(evicted !== undefined && { evicted }) };
     });
   }
 
@@ -79,21 +97,33 @@ export class DlqStore {
 
   /** Returns how many entries were removed (0 for an unknown id). */
   remove(id: string): number {
+    return this.removeEntries(id).length;
+  }
+
+  /** Removes the entries with these ids and returns them (read under the same lock as the removal); unknown ids are ignored. */
+  removeEntries(ids: string | readonly string[]): DlqEntry[] {
+    const wanted = new Set(typeof ids === 'string' ? [ids] : ids);
     this.ensureDir();
     return this.lock.withLock((held) => {
       const before = this.readAll();
-      const after = before.filter(e => e.id !== id);
-      this.write(after, held);
-      return before.length - after.length;
+      const removed = before.filter((e) => wanted.has(e.id));
+      this.write(before.filter((e) => !wanted.has(e.id)), held);
+      return removed;
     });
   }
 
+  /** Returns how many entries were removed. */
   clear(): number {
+    return this.clearEntries().length;
+  }
+
+  /** Removes every entry and returns them (read under the same lock as the removal). */
+  clearEntries(): DlqEntry[] {
     this.ensureDir();
     return this.lock.withLock((held) => {
-      const count = this.readAll().length;
+      const removed = this.readAll();
       this.write([], held);
-      return count;
+      return removed;
     });
   }
 }

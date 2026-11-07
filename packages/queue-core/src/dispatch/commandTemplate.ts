@@ -4,6 +4,8 @@
  * so a payload value can neither split into several arguments nor become shell code. Rules: docs/subscribers.md.
  */
 
+import { findForbiddenSegment, walkPayloadPath, type WalkOptions } from '../walkPayloadPath.js';
+
 /** One placeholder: `{{ field }}` or `{{ payload.field }}`. Sticky copies are used to match at a given position. */
 const PLACEHOLDER_SOURCE = '\\{\\{\\s*([\\w.]+)\\s*\\}\\}';
 
@@ -14,7 +16,7 @@ export interface LiteralPart {
 
 export interface FieldPart {
   kind: 'field';
-  /** Payload key, without the optional `payload.` prefix. */
+  /** Payload key or dotted path (see walkPayloadPath), without the optional `payload.` prefix. */
   field: string;
 }
 
@@ -204,6 +206,17 @@ export function findTemplateProblem(command: string): string | undefined {
       `a {{ }} placeholder is in the program position (the first word). A payload value must never choose which program runs. ` +
       `Fix: name the program literally and pass the value as an argument.`
     );
+  }
+  for (const token of result.tokens) {
+    for (const part of token) {
+      const forbidden = part.kind === 'field' ? findForbiddenSegment(part.field) : undefined;
+      if (part.kind === 'field' && forbidden !== undefined) {
+        return (
+          `the placeholder {{ ${part.field} }} is refused: '${forbidden}' is never read from a payload (it would reach the prototype of an object, not data). ` +
+          `Fix: use another payload key, or rename that key at the source.`
+        );
+      }
+    }
   }
   const interpreterProblem = findInterpreterProblem(result.tokens);
   if (interpreterProblem !== undefined) {
@@ -450,8 +463,12 @@ export interface SubstitutedArgument {
   fields: SubstitutedField[];
 }
 
-/** Replaces the placeholders of one argument with the payload values. A payload that is not an object has no field: every value is empty. */
-export function substituteToken(token: TemplateToken, payload: unknown): SubstitutedArgument {
+/**
+ * Replaces the placeholders of one argument with the payload values. A payload that is not an object has no field: every value is empty.
+ * A field is read by walkPayloadPath: the whole dotted key as an own key first, else a walk through own properties. Pure: `options.resolveRef`
+ * is the only way a value outside the payload can come in, and the caller supplies it.
+ */
+export function substituteToken(token: TemplateToken, payload: unknown, options: WalkOptions = {}): SubstitutedArgument {
   let text = '';
   const fields: SubstitutedField[] = [];
   for (const part of token) {
@@ -460,8 +477,7 @@ export function substituteToken(token: TemplateToken, payload: unknown): Substit
       continue;
     }
     // Own properties only: `{{ constructor }}` or `{{ toString }}` must not paste the source of an inherited function
-    const raw = typeof payload === 'object' && payload !== null && Object.hasOwn(payload, part.field) ? Reflect.get(payload, part.field) : undefined;
-    const value = valueToArgument(raw);
+    const value = valueToArgument(walkPayloadPath(payload, part.field, options));
     fields.push({ field: part.field, value });
     text += value;
   }

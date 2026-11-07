@@ -15,6 +15,24 @@ describe('renderActionTemplate', () => {
     expect(render('{{ payload.a }}/{{payload.b.c}}/{{ event }}/{{ timestamp }}', { a: 'x', b: { c: 'y' } })).toBe('x/y/onTicket.created/2026-01-02T03:04:05.000Z');
   });
 
+  it('an own key named like the whole dotted path is read first, as in the cli templates', () => {
+    expect(render('{{ payload.a.b }}', { 'a.b': 'x', a: { b: 'y' } })).toBe('x');
+    expect(render('{{ payload.a.b }}', { a: { b: 'y' } })).toBe('y');
+  });
+
+  it('reads array indexes but not length, and never a prototype segment', () => {
+    expect(render('{{ payload.l.1 }}|[{{ payload.l.length }}]', { l: ['a', 'b'] })).toBe('b|[]');
+    expect(findActionTemplateProblem('{{ payload.a.__proto__ }}')).toMatch(/'__proto__' is never read/);
+  });
+
+  it('follows a reference only through the callback it is given (one level, at the end it stays a reference)', () => {
+    const payload = { original: { $eventRef: 'ev-1' } };
+    const options = { resolveRef: (ref: string) => (ref === 'ev-1' ? { taskId: 9 } : undefined) };
+    expect(renderActionTemplate('{{ payload.original.taskId }}', envelope(payload), 'with.payload.text', options)).toBe('9');
+    expect(render('{{ payload.original.taskId }}', payload)).toBe('');
+    expect(renderActionTemplate('{{ payload.original }}', envelope(payload), 'with.payload.text', options)).toBe('{"$eventRef":"ev-1"}');
+  });
+
   it('{{ id }} is the id of the first push when the meta holds it, so a retry renders the same value; else the envelope id', () => {
     expect(render('{{ id }}', {}, { eventId: 'first-push' })).toBe('first-push');
     expect(render('{{ id }}')).toBe('wal-id');

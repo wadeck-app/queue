@@ -55,8 +55,59 @@ describe('tokenizeTemplate - quoting rules', () => {
 });
 
 describe('substituteToken', () => {
-  it('strips the optional payload. prefix and takes only top-level keys', () => {
+  it('strips the optional payload. prefix; an own key named like the whole dotted path is read first', () => {
     expect(argv('x {{ payload.a }} {{ a }} {{ a.b }}', { a: 1, 'a.b': 'dotted' })).toEqual(['x', '1', '1', 'dotted']);
+  });
+
+  describe('nested paths', () => {
+    it('an own dotted key wins over the nesting it could also mean', () => {
+      expect(argv('{{ a.b }}|{{ payload.a.b }}', { 'a.b': 'x', a: { b: 'y' } })).toEqual(['x|x']);
+    });
+
+    it('without such a key, walks the own properties segment by segment (this used to render empty)', () => {
+      expect(argv('{{ a.b }}|{{ payload.a.b.c }}|{{ a.b.c }}', { a: { b: { c: 1 } } })).toEqual(['{"c":1}|1|1']);
+      expect(argv('{{ a.b }}', { a: { b: 1 } })).toEqual(['1']);
+    });
+
+    it('a dotted key below level one is not tried', () => {
+      expect(argv('[{{ a.b.c }}]', { a: { 'b.c': 'hidden' } })).toEqual(['[]']);
+    });
+
+    it('a missing step, a step through a primitive or null gives an empty string', () => {
+      expect(argv('[{{ a.x.y }}][{{ s.length }}][{{ n.z }}]', { a: {}, s: 'text', n: null })).toEqual(['[][][]']);
+    });
+
+    it('an object at the end is JSON, as for a top-level field', () => {
+      expect(argv('{{ a.b }}', { a: { b: { k: [1] } } })).toEqual(['{"k":[1]}']);
+    });
+
+    it('an array answers its index segments, not its length or its methods', () => {
+      expect(argv('{{ list.0 }}|{{ list.1.n }}|{{ list.5 }}|[{{ list.length }}]|[{{ list.map }}]', { list: ['a', { n: 2 }] })).toEqual(['a|2||[]|[]']);
+    });
+
+    it.each(['__proto__', 'constructor', 'prototype'])('never reads %s, even from an own property or in the middle of a path', (segment) => {
+      const payload = JSON.parse(`{"${segment}": {"x": "leak"}, "a": {"${segment}": {"x": "leak"}}}`) as unknown;
+      expect(argv(`[{{ ${segment} }}][{{ ${segment}.x }}][{{ a.${segment}.x }}]`, payload)).toEqual(['[][][]']);
+    });
+
+    it('findTemplateProblem refuses such a segment at load time and says what to do', () => {
+      for (const segment of ['__proto__', 'constructor', 'prototype']) {
+        for (const placeholder of [`{{ ${segment} }}`, `{{ payload.a.${segment}.b }}`]) {
+          expect(findTemplateProblem(`tool ${placeholder}`)).toMatch(new RegExp(`'${segment}' is never read from a payload.*Fix: use another payload key`));
+        }
+      }
+      expect(findTemplateProblem('tool {{ a.b.c }} {{ payload.constructors }} {{ myconstructor }}')).toBeUndefined();
+    });
+
+    it('substituteToken stays pure: a reference is resolved only through the callback of the caller', () => {
+      const token = tokenizeTemplate('{{ payload.original.taskId }}')[0]!;
+      const payload = { original: { $eventRef: 'ev-1' } };
+      expect(substituteToken(token, payload).text).toBe('');
+      const calls: unknown[][] = [];
+      const substituted = substituteToken(token, payload, { resolveRef: (ref, walked) => { calls.push([ref, walked]); return { taskId: 42 }; } });
+      expect(substituted).toEqual({ text: '42', fields: [{ field: 'original.taskId', value: '42' }] });
+      expect(calls).toEqual([['ev-1', ['original']]]);
+    });
   });
 
   it('a missing field, a null field and a payload that is not an object give an empty string', () => {

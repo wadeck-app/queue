@@ -13,7 +13,12 @@ Why: payloads come from outside (relay webhooks, `queue push`). Pasting them int
 
 ## Placeholders
 
-- `{{ field }}` and `{{ payload.field }}` read a **top-level** key of the payload (a key may contain dots; no nested paths).
+- `{{ field }}` and `{{ payload.field }}` read the payload by path, same rule for `cli` and action templates:
+  1. an **own key** named exactly like the whole dotted path wins (`{"a.b": "x", "a": {"b": "y"}}` gives `x` for `{{ a.b }}`);
+  2. otherwise the path is walked through own properties, one segment per dot (`{{ a.b }}` against `{"a": {"b": 1}}` gives `1`). Before this rule it rendered empty.
+  A dotted key below level one is not tried (`{"a": {"b.c": 1}}` is not reachable). Array elements are reached by index (`{{ list.0 }}`); `length` and methods are not.
+- `__proto__`, `constructor` and `prototype` are never read from a payload: a placeholder with such a segment is refused at load time (`cli` and action).
+- `cli` only: the `payload.` prefix is stripped once, so `{{ payload.a }}` and `{{ a }}` are the same field. For a payload key that is itself named `payload`, write `{{ payload.payload.a }}`.
 - Missing, `null` or non-object payload: empty string (the argument stays, empty).
 - String, number, boolean: its text. Object or array: one JSON argument.
 - Replaced inside quotes too, single quotes included.
@@ -150,7 +155,8 @@ Rendered in Node, never in a shell, in one pass. Differences with `cli`:
 
 | | `cli` | action |
 |---|---|---|
-| Payload field | `{{ title }}` | `{{ payload.title }}`; nested `{{ payload.a.b }}` (own properties only) |
+| Payload field | `{{ title }}` or `{{ payload.title }}` | `{{ payload.title }}` |
+| Nested field | `{{ a.b }}` or `{{ payload.a.b }}` | `{{ payload.a.b }}` (an own key `a.b` first, then own properties; see Placeholders) |
 | Envelope | n/a | `{{ event }}`, `{{ id }}`, `{{ timestamp }}`, `{{ payload }}` (whole payload as JSON) |
 | Bare `{{ x }}` | payload field | **load-time error**: write `payload.x` |
 | Shell metacharacters | refused | allowed (no shell) |

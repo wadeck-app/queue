@@ -443,6 +443,13 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       if (!entry) {
         return { status: 'not-found' };
       }
+      // A delivered entry would run its subscriber a second time; a DLQ entry has its own row there and a retry would run it behind its back
+      if (entry.status === 'acked') {
+        return { status: 'error', message: `WAL entry ${entry.id} was already delivered (status acked): retrying it would run ${entry.subscriberId} a second time. To run the event again, use 'queue replay <eventId>' with the eventId of the original push (see 'queue history').` };
+      }
+      if (entry.status === 'dlq') {
+        return { status: 'error', message: `WAL entry ${entry.id} was given up and sits in the dead-letter queue: retrying it from the WAL would duplicate it. Use 'queue dlq replay --id ${entry.id}' to run it again, or 'queue dlq clear --id ${entry.id}' to drop it.` };
+      }
 
       const cwd = entry.meta.cwd;
       let subscribers: ResolvedSubscriber[];
