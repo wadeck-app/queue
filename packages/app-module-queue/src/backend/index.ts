@@ -13,7 +13,6 @@ import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
 import { getLogFiles, pruneLogFiles, deleteLogFileEntry } from './logFiles.js';
-import { crossSiteRefusal } from './requestGuard.js';
 import { getEvents, getEventPage, pushTestEvent, validateEventPayload } from './events.js';
 import { retryEvent } from './retry.js';
 import { giveUpPending, giveUpStuck } from './pending.js';
@@ -179,12 +178,8 @@ export default function (ctx: ModuleContext): void {
   });
 
   // Deletes what the retention policy would delete now in one directory (kind: logs | history); recomputed here, never the preview.
-  // 403 from another site, 400 bad kind, 500 unreadable directory; a file that cannot be deleted is reported in the 200 body
+  // 400 bad kind, 500 unreadable directory; a file that cannot be deleted is reported in the 200 body
   ctx.registerRoute('POST', '/log-files/:kind/prune', (req, reply) => {
-    const refusal = crossSiteRefusal(req);
-    if (refusal !== undefined) {
-      return reply.code(403).send({ error: refusal });
-    }
     const { kind } = req.params;
     try {
       return reply.code(200).send(pruneLogFiles(configDir, kind));
@@ -193,13 +188,9 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  // Deletes ONE log file named by kind, day and variant (never a path). 403 other site, 400 malformed, 404 no such combination,
+  // Deletes ONE log file named by kind, day and variant (never a path). 400 malformed, 404 no such combination,
   // 409 protected (today, future, recently modified), 500 not deletable; a file already gone is a 200 with deleted: false
   ctx.registerRoute('POST', '/log-files/:kind/:day/:variant/delete', (req, reply) => {
-    const refusal = crossSiteRefusal(req);
-    if (refusal !== undefined) {
-      return reply.code(403).send({ error: refusal });
-    }
     const { kind, day, variant } = req.params;
     try {
       return reply.code(200).send(deleteLogFileEntry(configDir, kind, day, variant));

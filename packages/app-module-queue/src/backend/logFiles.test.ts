@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import type { QueueLogWriter } from '@wadeck-app/queue-core';
 import { clearLastPrune, deleteLogFileEntry, formatBytes, getLogFiles, parseKind, pruneLogFiles } from './logFiles.js';
 import { InvalidQueryError, LogFileInUseError, LogFileNotFoundError } from './errors.js';
-import { crossSiteRefusal } from './requestGuard.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const TODAY = '2026-10-19';
@@ -299,27 +298,5 @@ describe('deleteLogFileEntry', () => {
   it('throws an error carrying the cause and the fix when the file cannot be deleted', () => {
     mkdirSync(join(configDir, 'logs', '2020-01-01.ndjson'), { recursive: true });
     expect(() => deleteLogFileEntry(configDir, 'logs', '2020-01-01', 'daemon', NOW, fakeLogger())).toThrow(/2020-01-01\.ndjson could not be deleted: .*not a regular file.*Remove or rename/);
-  });
-});
-
-describe('crossSiteRefusal', () => {
-  it.each(['cross-site', 'same-site'])('refuses Sec-Fetch-Site %s with an actionable text', site => {
-    const text = crossSiteRefusal({ headers: { 'sec-fetch-site': site } });
-    expect(text).toContain(`Sec-Fetch-Site: ${site}`);
-    expect(text).toContain('open the dashboard');
-  });
-
-  it.each(['same-origin', 'none'])('accepts %s', site => {
-    expect(crossSiteRefusal({ headers: { 'sec-fetch-site': site } })).toBeUndefined();
-  });
-
-  it('accepts a request without the header (curl, the CLI, tests) and a request without headers at all', () => {
-    expect(crossSiteRefusal({ headers: {} })).toBeUndefined();
-    expect(crossSiteRefusal({})).toBeUndefined();
-    expect(crossSiteRefusal(undefined)).toBeUndefined();
-  });
-
-  it('reads the first value when the header is repeated', () => {
-    expect(crossSiteRefusal({ headers: { 'sec-fetch-site': ['cross-site', 'same-origin'] } })).toContain('cross-site');
   });
 });

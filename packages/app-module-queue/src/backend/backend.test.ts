@@ -895,31 +895,6 @@ describe('backend', () => {
     }
   });
 
-  it.each(['cross-site', 'same-site'])('the log-files POST routes answer 403 with an actionable error for Sec-Fetch-Site: %s, and do nothing', async (site) => {
-    const { routes, ctx } = collectRoutes();
-    backend(ctx);
-    for (const [route, params] of [
-      ['POST /log-files/:kind/prune', { kind: 'logs' }],
-      ['POST /log-files/:kind/:day/:variant/delete', { kind: 'logs', day: '2026-10-10', variant: 'daemon' }],
-    ] as const) {
-      const reply = fakeReply();
-      await routes.get(route)!(fakeReq({ params, headers: { 'sec-fetch-site': site } }), asReply(reply));
-      expect(reply.code).toHaveBeenCalledWith(403);
-      expect(reply.send).toHaveBeenCalledWith({ error: expect.stringContaining(`Sec-Fetch-Site: ${site}`) });
-    }
-    expect(mockPruneLogFiles).not.toHaveBeenCalled();
-    expect(mockDeleteLogFileEntry).not.toHaveBeenCalled();
-  });
-
-  it.each(['same-origin', 'none', undefined])('the log-files POST routes accept Sec-Fetch-Site: %s', async (site) => {
-    const { routes, ctx } = collectRoutes();
-    backend(ctx);
-    mockPruneLogFiles.mockReturnValue({ message: 'ok' });
-    const reply = fakeReply();
-    await routes.get('POST /log-files/:kind/prune')!(fakeReq({ params: { kind: 'logs' }, headers: site === undefined ? {} : { 'sec-fetch-site': site } }), asReply(reply));
-    expect(reply.code).toHaveBeenCalledWith(200);
-  });
-
   it('GET /events forwards the query to getEvents', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);

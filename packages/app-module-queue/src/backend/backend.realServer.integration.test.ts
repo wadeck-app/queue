@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { request as httpRequest } from 'node:http';
 import { addProject, removeProject } from '@wadeck-app/project-sdk';
 
 /**
@@ -22,7 +23,8 @@ const SERVER_START_TIMEOUT_MS = 300_000;
 const PACKAGE_TIMEOUT_MS = 300_000;
 
 const cliPackageJson = createRequire(import.meta.url).resolve('@wadeck-app/app-core-cli/package.json');
-const cliEntry = join(dirname(cliPackageJson), 'dist/cli.bundle.js');
+// QUEUE_TEST_APP_CORE_CLI_ENTRY: another app-core-cli bundle (e.g. the global one) when the devDependency is older than the server-wide request guard
+const cliEntry = process.env['QUEUE_TEST_APP_CORE_CLI_ENTRY'] ?? join(dirname(cliPackageJson), 'dist/cli.bundle.js');
 
 let child: ChildProcess;
 let workDir: string;
@@ -100,6 +102,25 @@ function packageModule(out: string): void {
   }
 }
 
+/** One raw HTTP call, because fetch cannot set a Host header; resolves with the status and the parsed JSON body. */
+function rawCall(url: string, method: string, headers: Record<string, string>): Promise<{ status: number; body: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(url, { method, headers }, (res) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode ?? 0, body: JSON.parse(data) as Record<string, unknown> });
+        } catch (err) {
+          reject(new Error(`Not JSON (status ${res.statusCode}): ${data}`, { cause: err }));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function startServer(builtModule: string): Promise<string> {
   return new Promise((resolve, reject) => {
     let output = '';
@@ -148,6 +169,16 @@ describe('the packaged module through a real app-core server', () => {
     await removeProject(registryDir, deletedProjectId);
     packageModule(builtModule);
     baseUrl = await startServer(builtModule);
+    // The cross-site protection of the log-file POST routes belongs to app-core (server-wide request guard, app-core >= 21f5150), not to this module.
+    // Probe it here so an older app-core-cli fails loudly and tells what to do, instead of the tests below failing on a bare status code.
+    const probe = await rawCall(`${baseUrl}/api/modules/queue/dlq/probe/clear`, 'POST', { 'Sec-Fetch-Site': 'cross-site' });
+    if (probe.status !== 403 || probe.body['error'] !== 'cross-site-request') {
+      throw new Error(
+        `The app-core-cli used by this test (${cliEntry}) does not refuse a cross-site POST (got ${probe.status} ${JSON.stringify(probe.body)}): it is older than app-core 21f5150. ` +
+        'The log-file delete and prune routes rely on that server-wide guard for their CSRF protection. Update the @wadeck-app/app-core-cli devDependency of packages/app-module-queue (npm install), ' +
+        'or point QUEUE_TEST_APP_CORE_CLI_ENTRY at the dist/cli.bundle.js of a recent app-core-cli (global: app-core-cli update).',
+      );
+    }
   });
 
   afterAll(async () => {
@@ -353,17 +384,32 @@ describe('the packaged module through a real app-core server', () => {
       expect(String(body['error'])).toContain('kind must be one of logs, history');
     });
 
-    it.each(['cross-site', 'same-site'])('both POST routes refuse a browser request started by another site (Sec-Fetch-Site: %s) with a 403 and delete nothing', async (site) => {
+    // The refusal is app-core's server-wide request guard (>= 21f5150): the module has no guard of its own. The beforeAll probe fails loudly on an older app-core-cli.
+    it.each(['cross-site', 'same-site'])('both POST routes are refused by app-core for Sec-Fetch-Site: %s (403 cross-site-request) and delete nothing', async (site) => {
       const headers = { 'Sec-Fetch-Site': site };
       const prune = await call('POST', '/log-files/logs/prune', { headers });
       const del = await call('POST', `/log-files/logs/${OLD_DAEMON_LOG.slice(0, 10)}/daemon/delete`, { headers });
       expect([prune.status, del.status]).toEqual([403, 403]);
-      expect(String(del.body['error'])).toContain('another site');
+      expect([prune.body['error'], del.body['error']]).toEqual(['cross-site-request', 'cross-site-request']);
       expect(existsSync(join(logsDir(), OLD_DAEMON_LOG))).toBe(true);
     });
 
-    it('accepts Sec-Fetch-Site: same-origin (the dashboard itself) on the delete route', async () => {
-      // A file that is already gone: proves the request got past the guard without needing a fixture
+    it('a POST with a foreign Origin is refused by app-core (403 cross-site-request) and deletes nothing', async () => {
+      const { status, body } = await call('POST', `/log-files/logs/${OLD_DAEMON_LOG.slice(0, 10)}/daemon/delete`, { headers: { Origin: 'https://evil.example' } });
+      expect(status).toBe(403);
+      expect(body['error']).toBe('cross-site-request');
+      expect(existsSync(join(logsDir(), OLD_DAEMON_LOG))).toBe(true);
+    });
+
+    it('a POST addressed to a Host that is not this machine is refused by app-core (403 host-not-allowed) and deletes nothing', async () => {
+      const { status, body } = await rawCall(`${baseUrl}/api/modules/queue/log-files/logs/${OLD_DAEMON_LOG.slice(0, 10)}/daemon/delete`, 'POST', { Host: 'evil.example' });
+      expect(status).toBe(403);
+      expect(body['error']).toBe('host-not-allowed');
+      expect(existsSync(join(logsDir(), OLD_DAEMON_LOG))).toBe(true);
+    });
+
+    it('lets Sec-Fetch-Site: same-origin (the dashboard itself) through app-core to the delete route', async () => {
+      // A file that is already gone: proves the request got past app-core's guard without needing a fixture
       const { status, body } = await call('POST', '/log-files/logs/2026-01-09/daemon/delete', { headers: { 'Sec-Fetch-Site': 'same-origin' } });
       expect(status).toBe(200);
       expect(body['deleted']).toBe(false);
