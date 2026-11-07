@@ -5,9 +5,11 @@ const mockSend = vi.fn();
 
 vi.mock('@wadeck-app/queue-relay-client/dist/relayClient.js', () => ({
   createRelayClient: vi.fn(() => ({ isRunning: mockIsRunning, send: mockSend })),
+  relayStateDir: (dir: string) => `${dir}/relay-daemon`,
 }));
 
 import { getRelayInfo } from './relay.js';
+import { RelayStatusError } from './errors.js';
 
 beforeEach(() => {
   mockIsRunning.mockReset();
@@ -42,5 +44,16 @@ describe('getRelayInfo', () => {
     await expect(getRelayInfo('/cfg')).resolves.toMatchObject({
       state: 'not connected', label: 'Relay disconnected', tone: 'warning', running: true, connected: false, lastError: 'ECONNREFUSED 127.0.0.1:1',
     });
+  });
+
+  it('a relay that runs but does not answer its status throws RelayStatusError with the cause, what to do and its log (the route turns it into a JSON { error })', async () => {
+    mockIsRunning.mockResolvedValue(true);
+    mockSend.mockRejectedValue(new Error('socket hang up'));
+    const error = await getRelayInfo('/cfg').catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(RelayStatusError);
+    const message = (error as Error).message;
+    expect(message).toContain('did not answer its status: socket hang up');
+    expect(message).toContain('queue relay stop');
+    expect(message).toContain('relay.log');
   });
 });

@@ -24,7 +24,8 @@ export interface DlqReplayRequest { id: string; }
 // `error`: the replay did not start and the entry is still in the dead-letter queue; `message` says why and what to fix (an unreadable subscribers.yml, a subscriber that was renamed)
 export interface DlqReplayResponse { status: 'ok' | 'not-found' | 'error'; message?: string; }
 export interface DlqClearRequest { id?: string; }
-export interface DlqClearResponse { cleared: number; }
+/** `reason` is set (and `cleared` is 0) when the request was refused as malformed; a plain 0 means no entry has that id. */
+export interface DlqClearResponse { cleared: number; reason?: string; }
 // `give-up` / `give-up-stuck`: the daemon runs the move of an event that nobody retries any more to the DLQ ITSELF and emits the `queue.dlq.*` events from the rows it moved.
 // The requests carry an id (give-up) or nothing (give-up-stuck): no client supplies the data an event is built from, whatever else a request body contains is ignored.
 export interface GiveUpRequest { id: string; }

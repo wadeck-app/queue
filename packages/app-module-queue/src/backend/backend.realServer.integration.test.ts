@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
 import { addProject, removeProject } from '@wadeck-app/project-sdk';
+import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
+import { createQueueService } from '@wadeck-app/queue-core';
 
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
@@ -253,10 +255,33 @@ describe('the packaged module through a real app-core server', () => {
     expect(String(body['error'])).toContain('Daemon is not running');
   });
 
-  it('POST /dlq/:id/clear gets the id and works without any daemon (it edits the DLQ file): an unknown id clears 0', async () => {
+  // Replaces a test that pinned "an unknown id answers 200 with cleared: 0", which made the dashboard toast "Entry removed" for an entry that did not exist
+  it('POST /dlq/:id/clear gets the id and works without any daemon (it edits the DLQ file): an unknown id is a 404 "no such DLQ entry", not a success', async () => {
     const { status, body } = await call('POST', '/dlq/some-id/clear');
-    expect(status).toBe(200);
-    expect(body['cleared']).toBe(0);
+    expect(status).toBe(404);
+    expect(String(body['error'])).toContain('no such DLQ entry');
+    expect(String(body['error'])).toContain('some-id');
+  });
+
+  it('POST /push of an event of the reserved queue. namespace, with a real daemon that rejects it, answers 422 with the reason and a fix (never a 200 the toast reads as "pushed")', async () => {
+    // A real daemon on the config dir the server reads (port 0: a free one); it is stopped at the end of the test, the other tests expect none
+    const service = createQueueService(configDir, { registryDir });
+    const daemon = await createDaemon({
+      configDir,
+      port: 0,
+      idleTimeout: null,
+      commands: service.commands,
+      hooks: { onStart: () => service.onStart(), onShutdown: () => service.onShutdown() },
+    });
+    try {
+      const { status, body } = await call('POST', '/push', { headers: { 'Content-Type': 'application/json' }, body: { event: 'queue.dlq.added', payload: {} } });
+      expect(status).toBe(422);
+      expect(String(body['error'])).toContain('queue.');
+      expect(String(body['error'])).toContain('Fix:');
+      expect(body).not.toHaveProperty('status');
+    } finally {
+      await daemon.stop('signal');
+    }
   });
 
   it('POST /dlq/:id/clear removes the row and says in its message that queue.dlq.removed could not be sent because the daemon is not running (the clear stands)', async () => {

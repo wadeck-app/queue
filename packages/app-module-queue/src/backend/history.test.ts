@@ -90,6 +90,65 @@ describe('listHistory', () => {
     });
   });
 
+  describe('detailsText (the compact details of the row expansion)', () => {
+    const detailsOf = (eventId: string): Record<string, unknown> => {
+      const entry = listHistory(configDir).entries.find((candidate) => candidate.eventId === eventId)!;
+      return JSON.parse(entry.detailsText!) as Record<string, unknown>;
+    };
+
+    it('says which subscriber of which event emitted this one (causedBy)', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e1', event: 'agent.message', matchedCount: 0, totalCount: 0, payload: {}, causedBy: { eventId: 'base-1', subscriberId: 'app/notify' } },
+      ]);
+      expect(detailsOf('e1')).toEqual({ causedBy: 'emitted by app/notify of event base-1' });
+    });
+
+    it('says which event this one replays (replayOf)', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e2', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: {}, replayOf: 'e0' },
+      ]);
+      expect(detailsOf('e2')).toEqual({ replayOf: 'replay of event e0' });
+    });
+
+    it('explains an orphan entry (only an outcome is recorded: a retry, or a push older than the retention) and lists its outcome', () => {
+      writeDay('2026-01-01', [
+        { type: 'outcome', ts: '2026-01-01T00:00:01.000Z', eventId: 'wal-9', event: 'onFoo', subscriberId: 'sub1', status: 'failed' },
+      ]);
+      const details = detailsOf('wal-9');
+      expect(String(details['orphan'])).toMatch(/no push record.*retry.*retention.*no payload.*cannot be replayed/s);
+      expect(details['subscribers']).toEqual(['sub1: failed']);
+    });
+
+    it('lists the outcome of every subscriber, so the Outcome filter shows what it filtered on, with the reason of a filtered one', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e3', event: 'onFoo', matchedCount: 2, totalCount: 3, payload: { x: 1 } },
+        { type: 'outcome', ts: '2026-01-01T00:00:01.000Z', eventId: 'e3', event: 'onFoo', subscriberId: 'a', status: 'success' },
+        { type: 'outcome', ts: '2026-01-01T00:00:02.000Z', eventId: 'e3', event: 'onFoo', subscriberId: 'b', status: 'dlq' },
+        { type: 'filtered', ts: '2026-01-01T00:00:03.000Z', eventId: 'e3', event: 'onFoo', subscriberId: 'c', filter: 'payload.x=2', actual: '1' },
+      ]);
+      expect(detailsOf('e3')['subscribers']).toEqual(['a: success', 'b: dlq', 'c: filtered (when: payload.x=2, actual: 1)']);
+    });
+
+    it('is absent when there is nothing to say, and the row is expandable only when it has a payload or details', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'plain', event: 'onFoo', matchedCount: 0, totalCount: 0 },
+        { type: 'trigger', ts: '2026-01-01T00:00:01.000Z', eventId: 'payload-only', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { a: 1 } },
+      ]);
+      const byId = Object.fromEntries(listHistory(configDir).entries.map((entry) => [entry.eventId, entry]));
+      expect('detailsText' in byId['plain']!).toBe(false);
+      expect(byId['plain']!.expandable).toBeUndefined();
+      expect('detailsText' in byId['payload-only']!).toBe(false);
+      expect(byId['payload-only']!.expandable).toBe(true);
+    });
+
+    it('does not carry anything that is not a fact of the entry: the payload stays in payloadText only', () => {
+      writeDay('2026-01-01', [
+        { type: 'trigger', ts: '2026-01-01T00:00:00.000Z', eventId: 'e4', event: 'onFoo', matchedCount: 0, totalCount: 0, payload: { secret: 'S3CRET' }, replayOf: 'e0' },
+      ]);
+      expect(listHistory(configDir).entries[0]!.detailsText).not.toContain('S3CRET');
+    });
+  });
+
   it('applies limit/offset pagination, defaulting to 20', () => {
     const records = Array.from({ length: 25 }, (_, i) => ({
       type: 'trigger', ts: `2026-01-01T${String(i).padStart(2, '0')}:00:00.000Z`, eventId: `e${i}`, event: 'onFoo', matchedCount: 0, totalCount: 0,

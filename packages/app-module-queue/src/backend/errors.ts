@@ -31,3 +31,6 @@ export class LogFileNotFoundError extends Error {}
 
 /** The log file is protected (today, in the future, or modified recently): it may still be written to. */
 export class LogFileInUseError extends Error {}
+
+/** The relay client runs but did not answer its status request (it is hung or restarting). */
+export class RelayStatusError extends Error {}

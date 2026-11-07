@@ -121,9 +121,22 @@ describe('DLQ_EVENT_DECLARATIONS', () => {
     expect(DLQ_EVENT_DECLARATIONS.map((declared) => declared.name)).toEqual([DLQ_ADDED_EVENT, DLQ_REMOVED_EVENT]);
   });
 
+  it('states exactly when the events are emitted and when they are not (no "always")', () => {
+    const [added, removed] = DLQ_EVENT_DECLARATIONS;
+    expect(added!.description).toContain('every delivery that enters the dead-letter queue');
+    expect(added!.description).toContain('retried');
+    expect(added!.description).toContain('hop cap');
+    expect(added!.description).toContain('queue.*');
+    expect(removed!.description).toContain('every entry that leaves the dead-letter queue');
+    expect(removed!.description).toContain('not retried');
+    expect(removed!.description).toContain('hop cap');
+    expect(removed!.description).toContain('queue.*');
+  });
+
   it('documents the reference convention, the daemon origin and the absence of a payload copy', () => {
     for (const declared of DLQ_EVENT_DECLARATIONS) {
-      expect(declared.description).toContain('Emitted by the daemon, always');
+      expect(declared.description).toContain('Emitted by the daemon');
+      expect(declared.description).not.toContain('always');
       expect(declared.description).toContain('$eventRef');
       expect(JSON.stringify(declared.schema)).toContain('$eventRef');
     }

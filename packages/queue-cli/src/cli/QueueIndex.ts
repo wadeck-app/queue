@@ -16,6 +16,8 @@ import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { createQueueClient } from './QueueClient.js';
 import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { relayStop } from './relayStop.js';
+import { daemonStop } from './daemonStop.js';
+import { exitCodesHelp } from './exitCodes.js';
 import { pinRelay } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
 import { queueWaitCommand } from './waitCli.js';
 import { eventsCommand } from './eventsCli.js';
@@ -53,7 +55,7 @@ const DLQ_GROUP_HELP = `queue dlq - Dead Letter Queue management
 Usage:
   queue dlq list [--project <name|alias|id>]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
   queue dlq replay --id <id>
-  queue dlq clear [--id <id>]
+  queue dlq clear [--id <id>]   Without --id the WHOLE DLQ is cleared (the count is printed); --id without a value is an error, an unknown id exits 1
 `;
 
 const RELAY_GROUP_HELP = `queue relay - GitHub/Slack/Jira webhook relay client
@@ -122,8 +124,9 @@ Options:
 Aliases: queue subscribers
 `;
 
-function usage(): void {
-  process.stdout.write(`queue v${VERSION}
+/** The global help text (queue --help). */
+export function usageText(): string {
+  return `queue v${VERSION}
 
 Concepts:
   event       Dot-separated string, e.g. test.hello or before.save
@@ -149,7 +152,7 @@ Usage:
   queue list-subscribers [event] [--json]
   queue dlq list [--project <name|alias|id>]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
   queue dlq replay --id <id>
-  queue dlq clear [--id <id>]
+  queue dlq clear [--id <id>]   Without --id the WHOLE DLQ is cleared (the count is printed); --id without a value is an error, an unknown id exits 1
   queue sub list [event] [--json] [--scope global|project]
   queue sub add <event> --name <name> --type cli --command "<cmd>" [options] [--scope global|project]
   queue sub add <event> --name <name> --type http --url "<url>" [options] [--scope global|project]
@@ -183,18 +186,53 @@ Sub add/edit options:
   --set key=value               Action only, repeatable: a setting of the action; a dotted key nests (--set payload.text=hi)
 
 Status --json fields:
-  daemonRunning, pendingCount, dlqCount, uptimeSec, pid, orchAvailable
+  Daemon running:  daemonRunning (true), pendingCount, dlqCount, uptimeSec, pid, orchAvailable, projectId (only with --project),
+                   daemonVersion, port, cliVersion, source ("daemon", or "queue-files" when --project narrows the counts)
+  Daemon not running (exit 0 too): daemonRunning (false), pendingCount, dlqCount (both read from the queue files),
+                   projectId (only with --project), cliVersion, source ("queue-files")
 
-Exit codes:
-  0  success
-  1  error
-  2  daemon not running
+History --json shapes:
+  queue history --json                 { "entries": [...], "total": N, "limit": N, "offset": N } (newest first; total counts the matches before paging)
+  queue history --event-id <id> --json one entry object (the entry of that push), not wrapped
+  queue history --follow --json        one entry object per line (NDJSON), oldest first, until interrupted
+  --event-id returns one entry and cannot be combined with the filters or paging. --project <name|alias|id> keeps one project's entries (QUEUE_PROJECT does not narrow a view).
 
+${exitCodesHelp()}
 Environment variables:
   QUEUE_CONFIG_DIR  Override config directory (default: ~/.config/queue)
   QUEUE_DAEMON_PORT Port the queue daemon asks for when it starts (1024-65535, default: 47910)
   QUEUE_RELAY_PORT  Port the relay daemon asks for when it starts (1024-65535, default: 47911)
-`);
+`;
+}
+
+function usage(): void {
+  process.stdout.write(usageText());
+}
+
+const noDlqEntryMessage = (id: string): string => `no DLQ entry with id ${id} (queue dlq list shows the ids)`;
+
+/**
+ * The arguments of `queue dlq replay|clear` (after the subcommand): only `--id <id>` (or `--id=<id>`). A `--id` without a real value is an error and so is an
+ * argument that is not known: for `clear`, "no id" means the whole DLQ, so a lost value or a typo of the flag must never be read as "no id".
+ */
+export function parseDlqIdArgs(args: string[]): { id?: string; error?: string } {
+  let id: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--id' || arg.startsWith('--id=')) {
+      const value = arg === '--id' ? args[i + 1] : arg.slice('--id='.length);
+      if (value === undefined || value === '' || value.startsWith('-')) {
+        return { error: '--id needs a value: the id of a DLQ entry (queue dlq list shows the ids)' };
+      }
+      if (arg === '--id') {
+        i++;
+      }
+      id = value;
+      continue;
+    }
+    return { error: `Unknown argument '${arg}' (the only option is --id <id>)` };
+  }
+  return id === undefined ? {} : { id };
 }
 
 function getConfigDir(): string {
@@ -696,7 +734,8 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
     if (!running) {
       const data = { relayRunning: false, connected: false };
       if (process.stdout.isTTY && !jsonFlag) {
-        process.stdout.write('[fail] relay client: not running\n');
+        // Not an error (exit 0): a stopped relay is a valid answer of a status query
+        process.stdout.write('[warn] relay client: not running (start it with: queue relay start)\n');
       } else {
         process.stdout.write(JSON.stringify(data) + '\n');
       }
@@ -1019,13 +1058,16 @@ async function main(): Promise<void> {
     const response = await client.send('retry', { eventId });
     if (response.status === 'ok') {
       process.stdout.write('[ok] retry enqueued\n');
-    } else if (response.message !== undefined) {
-      process.stderr.write(`[fail] ${response.message}\n`);
-      process.exit(1);
-    } else {
-      process.stdout.write(JSON.stringify(response) + '\n');
+      return;
     }
-    return;
+    if (response.message !== undefined) {
+      process.stderr.write(`[fail] ${response.message}\n`);
+    } else if (response.status === 'not-found') {
+      process.stderr.write(`[fail] no WAL entry with id ${eventId}: nothing was retried. The id is the WAL id of a pending or failed delivery (the Pending page of the dashboard shows it); the eventId of 'queue history' is not one.\n`);
+    } else {
+      process.stderr.write(`[fail] the daemon refused to retry ${eventId} without saying why (answer: ${JSON.stringify(response)}). Fix: 'queue logs' has the reason in the daemon log.\n`);
+    }
+    process.exit(1);
   }
 
   if (command === 'replay') {
@@ -1096,11 +1138,24 @@ async function main(): Promise<void> {
     const client = createQueueClient(configDir);
     const running = await client.isRunning().catch(() => false);
     if (!running) {
-      const data = { daemonRunning: false, pendingCount: 0, dlqCount: 0, ...(projectId !== undefined && { projectId }) };
+      // The queue files hold the counts whether or not a daemon runs: read them like the dashboard does, never a made-up zero
+      let counts: ReturnType<typeof readQueueCounts>;
+      try {
+        counts = readQueueCounts(configDir, projectId);
+      } catch (err) {
+        process.stderr.write(`[fail] the daemon is not running and the queue files in ${configDir} could not be read: ${getErrorMessage(err)}. Fix: check that folder and its wal.ndjson / dlq.ndjson, or start the daemon (queue start).\n`);
+        process.exit(1);
+      }
+      const data = { daemonRunning: false, pendingCount: counts.pendingCount, dlqCount: counts.dlqCount, ...(projectId !== undefined && { projectId }), cliVersion: getVersion(), source: 'queue-files' };
       if (process.stdout.isTTY && !jsonFlag) {
-        process.stdout.write('[fail] daemon: not running\n');
-        process.stdout.write('       pending: 0\n');
-        process.stdout.write('       dlq:     0\n');
+        // Not an error: the status of a stopped daemon is a valid answer (exit 0), so no [fail]
+        process.stdout.write('[warn] daemon: not running\n');
+        process.stdout.write('       daemon not running; counts read from the queue files\n');
+        if (projectId !== undefined) {
+          process.stdout.write(`       project: ${projectId} (pending and dlq count this project only)\n`);
+        }
+        process.stdout.write(`       pending: ${counts.pendingCount}\n`);
+        process.stdout.write(`       dlq:     ${counts.dlqCount}\n`);
       } else {
         process.stdout.write(JSON.stringify(data) + '\n');
       }
@@ -1120,7 +1175,8 @@ async function main(): Promise<void> {
     const daemonVersion = await readDaemonVersion(configDir);
     const mismatch = versionMismatchWarning(daemonVersion, getVersion());
     const daemonPort = readDaemonPort(configDir);
-    const data = { ...response, ...(projectId !== undefined && { projectId }), orchAvailable, ...(daemonVersion !== undefined && { daemonVersion }), ...(daemonPort !== undefined && { port: daemonPort }), cliVersion: getVersion() };
+    // `source`: where pendingCount and dlqCount were read (the daemon, or the queue files for the counts of one project)
+    const data = { ...response, ...(projectId !== undefined && { projectId }), orchAvailable, ...(daemonVersion !== undefined && { daemonVersion }), ...(daemonPort !== undefined && { port: daemonPort }), cliVersion: getVersion(), source: projectId === undefined ? 'daemon' : 'queue-files' };
     if (mismatch !== undefined) {
       process.stderr.write(`[warn] ${mismatch}
 `);
@@ -1195,30 +1251,53 @@ async function main(): Promise<void> {
     }
 
     if (sub === 'replay') {
-      const idIdx = rest.indexOf('--id');
-      const id = idIdx !== -1 ? rest[idIdx + 1] : undefined;
-      if (!id) {
-        process.stderr.write('Usage: queue dlq replay --id <id>\n');
+      const parsed = parseDlqIdArgs(rest.slice(1));
+      if (parsed.error !== undefined || parsed.id === undefined) {
+        process.stderr.write(parsed.error !== undefined ? `[fail] ${parsed.error}\nUsage: queue dlq replay --id <id>\n` : 'Usage: queue dlq replay --id <id>\n');
         process.exit(1);
       }
+      const id = parsed.id;
       await ensureDaemon(configDir);
       const client = createQueueClient(configDir);
       const response = await client.send('dlq-replay', { id });
       if (response.status === 'ok') {
         process.stdout.write('[ok] replayed\n');
-      } else {
-        process.stdout.write(JSON.stringify(response) + '\n');
+        return;
       }
-      return;
+      if (response.status === 'not-found') {
+        process.stderr.write(`[fail] ${noDlqEntryMessage(id)}\n`);
+      } else if (response.status === 'error' && typeof response.message === 'string') {
+        process.stderr.write(`[fail] ${response.message}\n`);
+      } else {
+        process.stderr.write(`[fail] the daemon gave an answer this CLI does not understand, so the replay of ${id} cannot be confirmed: ${JSON.stringify(response)}. Check 'queue dlq list', and update the CLI and the daemon so they agree (queue stop, then queue start).\n`);
+      }
+      process.exit(1);
     }
 
     if (sub === 'clear') {
-      const idIdx = rest.indexOf('--id');
-      const id = idIdx !== -1 ? rest[idIdx + 1] : undefined;
+      const parsed = parseDlqIdArgs(rest.slice(1));
+      if (parsed.error !== undefined) {
+        process.stderr.write(`[fail] ${parsed.error}. Nothing was cleared. To clear the whole DLQ, run 'queue dlq clear' without --id.\n`);
+        process.exit(1);
+      }
       await ensureDaemon(configDir);
       const client = createQueueClient(configDir);
-      const response = await client.send('dlq-clear', { id });
-      process.stdout.write(`[ok] cleared ${response.cleared} entries\n`);
+      const response = await client.send('dlq-clear', { id: parsed.id });
+      if (response.reason !== undefined) {
+        process.stderr.write(`[fail] ${response.reason}\n`);
+        process.exit(1);
+      }
+      if (parsed.id !== undefined) {
+        if (response.cleared === 0) {
+          process.stderr.write(`[fail] ${noDlqEntryMessage(parsed.id)}\n`);
+          process.exit(1);
+        }
+        process.stdout.write(`[ok] cleared ${response.cleared} entries (id ${parsed.id})\n`);
+      } else if (response.cleared === 0) {
+        process.stdout.write('[ok] the DLQ was already empty: 0 entries cleared\n');
+      } else {
+        process.stdout.write(`[ok] cleared ${response.cleared} entries (the whole DLQ)\n`);
+      }
       return;
     }
 
@@ -1253,12 +1332,10 @@ async function main(): Promise<void> {
 
   if (command === 'stop') {
     const client = createQueueClient(configDir);
-    try {
-      // 'quit' is a built-in daemon command; cast to bypass typing
-      await (client.send as (cmd: string, payload?: unknown) => Promise<unknown>)('quit', undefined);
-      process.stdout.write('[ok] daemon stopped\n');
-    } catch {
-      process.stderr.write('[fail] daemon not running or failed to stop\n');
+    // 'quit' is a built-in daemon command; cast to bypass typing
+    const exitCode = await daemonStop({ isRunning: () => client.isRunning(), send: client.send as (cmd: 'quit', payload: undefined) => Promise<unknown> }, { stdout: process.stdout, stderr: process.stderr });
+    if (exitCode !== 0) {
+      process.exit(exitCode);
     }
     return;
   }

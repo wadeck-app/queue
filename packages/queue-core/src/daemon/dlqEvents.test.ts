@@ -442,7 +442,7 @@ describe('catalog', () => {
     expect(catalog.problems).toEqual([]);
     const source = catalog.sources.find((s) => s.source === 'queue')!;
     expect(source.events.map((e) => e.name)).toEqual(['queue.dlq.added', 'queue.dlq.removed']);
-    expect(source.events[0]!.description).toContain('Emitted by the daemon, always');
+    expect(source.events[0]!.description).toContain('Emitted by the daemon for every delivery that enters the dead-letter queue');
     expect(JSON.stringify(source.events[0]!.schema)).toContain('$eventRef');
     // the wire still cannot claim the source
     expect(svc.commands['register-events']({ source: 'queue', events: [{ name: 'x.y', description: 'd' }] }).status).toBe('rejected');

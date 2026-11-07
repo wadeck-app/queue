@@ -354,3 +354,23 @@ describe('the WAL does not keep what left the DLQ for good', () => {
     expect(lines.mock.calls.some((call) => call[0].message.includes('removed 1 WAL entry in status dlq'))).toBe(true);
   });
 });
+
+describe('dlq-clear refuses an id that is not a non-empty string (it never means "everything")', () => {
+  it.each([[''], [null], [0], [{}]])('id %j: nothing cleared, the answer says why', (id) => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqEntry('keep-1'), dlqEntry('keep-2')].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    const answer = service().commands['dlq-clear']({ id }) as { cleared: number; reason?: string };
+    expect(answer.cleared).toBe(0);
+    expect(answer.reason).toMatch(/non-empty string/);
+    expect(answer.reason).toMatch(/omit the id/);
+    expect(listDlqEntries(configDir).map((row) => row.id)).toEqual(['keep-1', 'keep-2']);
+  });
+
+  it('an absent id clears everything, an unknown id clears 0 without a reason', () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqEntry('one'), dlqEntry('two')].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    const svc = service();
+    expect(svc.commands['dlq-clear']({ id: 'unknown' })).toEqual({ cleared: 0 });
+    expect(listDlqEntries(configDir)).toHaveLength(2);
+    expect(svc.commands['dlq-clear']({})).toEqual({ cleared: 2 });
+    expect(svc.commands['dlq-clear'](undefined)).toEqual({ cleared: 0 });
+  });
+});

@@ -67,13 +67,26 @@ sections:
   - $type: DataTable
     rows: $sources.history.entries
     # `row` is not injected into the expansion: pass it with $ctx.row.
-    expansionCondition: payloadText
+    # `expandable` is true when the row has a payload or details (see history.ts)
+    expansionCondition: expandable
     expansion:
-      $type: JsonViewer
-      row: $ctx.row
-      field: payloadText
-      # Webhook payloads run to thousands of lines: scroll inside the block.
-      maxHeight: 20rem
+      $type: HorizontalStack
+      gap: gap-3
+      align: items-start
+      items:
+        # The facts no column shows: who emitted the event (causedBy), what it replays, the orphan notice and the outcome of each subscriber (what the Outcome filter filters on).
+        # `row` is passed explicitly to each viewer (it is not injected); a viewer is drawn only when its field exists.
+        - $type: JsonViewer
+          $if: $ctx.row.detailsText
+          row: $ctx.row
+          field: detailsText
+          maxHeight: 20rem
+        - $type: JsonViewer
+          $if: $ctx.row.payloadText
+          row: $ctx.row
+          field: payloadText
+          # Webhook payloads run to thousands of lines: scroll inside the block.
+          maxHeight: 20rem
     emptyMessage: No events on this page
     columns:
       - { key: "ts", label: "Time", format: "datetime" }

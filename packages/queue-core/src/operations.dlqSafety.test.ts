@@ -6,7 +6,7 @@ import { Wal } from './storage/Wal.js';
 import type { WalEntry } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
 import type { DlqEntry } from './storage/DlqStore.js';
-import { abandonInFlightEntryDetailed, abandonStuckEntriesDetailed, clearDlqEntries, clearDlqEntriesReturning, listDlqEntries, pruneOrphanedDlqWalEntries } from './operations.js';
+import { abandonInFlightEntryDetailed, abandonStuckEntriesDetailed, clearDlqEntries, clearDlqEntriesReturning, listDlqEntries, pruneOrphanedDlqWalEntries, removeDlqEntries } from './operations.js';
 
 // Item 4: the give-up is a compare-and-set on the WAL (no acked -> dlq with a row in the DLQ). Item 5: the WAL does not keep the payload of a row that left the DLQ.
 
@@ -144,5 +144,22 @@ describe('pruneOrphanedDlqWalEntries (a dlq-status WAL entry no DLQ row refers t
 
   it('is a no-op on a config dir without files', () => {
     expect(pruneOrphanedDlqWalEntries(configDir, { now: NOW })).toEqual({ pruned: 0 });
+  });
+});
+
+describe('an empty id is invalid, never "everything"', () => {
+  it('clearDlqEntries / clearDlqEntriesReturning / removeDlqEntries refuse an empty id and clear nothing; an absent id clears all', () => {
+    for (const id of ['a', 'b']) {
+      wal().append(walEntry(id, 'dlq'));
+      dlq().append(dlqEntry(id));
+    }
+    expect(() => clearDlqEntries(configDir, '')).toThrow(/empty.*id.*omit the id/i);
+    expect(() => clearDlqEntriesReturning(configDir, '')).toThrow(/empty.*id/i);
+    expect(() => removeDlqEntries(dlq(), wal(), '')).toThrow(/empty.*id/i);
+    expect(listDlqEntries(configDir).map((row) => row.id)).toEqual(['a', 'b']);
+    expect(wal().readAll()).toHaveLength(2);
+    // the explicit way to clear everything is no id at all
+    expect(clearDlqEntries(configDir, undefined)).toBe(2);
+    expect(listDlqEntries(configDir)).toEqual([]);
   });
 });

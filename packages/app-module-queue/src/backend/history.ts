@@ -35,7 +35,11 @@ export const MAX_PAYLOAD_TEXT_CHARS = 20_000;
 /** First app-core that matches `:name` route segments; before it GET /history/:eventId answers 404. */
 const MIN_APP_CORE_FOR_ROUTE_PARAMS = '2026.10.17-023';
 
-export type ApiHistoryEntry = Omit<HistoryEntry, 'payload'> & { payloadText?: string };
+/**
+ * `detailsText`: the facts the row expansion shows next to the payload (JSON text, see {@link detailsOf}); `expandable`: true when the row has a payload or details, which is what
+ * the DataTable tests to offer the expand toggle.
+ */
+export type ApiHistoryEntry = Omit<HistoryEntry, 'payload'> & { payloadText?: string; detailsText?: string; expandable?: true };
 export type ApiHistoryPage = Omit<HistoryPage, 'entries'> & { entries: ApiHistoryEntry[] };
 
 /**
@@ -46,16 +50,42 @@ export type ApiHistoryPage = Omit<HistoryPage, 'entries'> & { entries: ApiHistor
  * because the DataTable only shows the expand toggle for a truthy field.
  */
 function withPayloadText(entry: HistoryEntry): ApiHistoryEntry {
-  const { payload, ...rest } = entry;
+  const { payload, ...base } = entry;
+  const detailsText = detailsOf(entry);
+  const rest = detailsText === undefined ? base : { ...base, detailsText };
   if (payload === undefined) {
-    return rest;
+    return detailsText === undefined ? rest : { ...rest, expandable: true };
   }
   const text = JSON.stringify(payload, null, 2);
   if (text.length <= MAX_PAYLOAD_TEXT_CHARS) {
-    return { ...rest, payloadText: text };
+    return { ...rest, payloadText: text, expandable: true };
   }
   const marker = `\n... truncated (${MAX_PAYLOAD_TEXT_CHARS} of ${text.length} characters shown). Full payload: GET /api/modules/queue/history/${entry.eventId} (needs app-core >= ${MIN_APP_CORE_FOR_ROUTE_PARAMS})`;
-  return { ...rest, payloadText: text.slice(0, MAX_PAYLOAD_TEXT_CHARS) + marker };
+  return { ...rest, payloadText: text.slice(0, MAX_PAYLOAD_TEXT_CHARS) + marker, expandable: true };
+}
+
+/**
+ * The facts of an entry that no column shows, as the JSON text a JsonViewer renders: who emitted it (causedBy), what it replays, why it has no payload (orphan) and the outcome of
+ * each subscriber (what the Outcome filter filters on). Only facts of the entry, never the payload. Undefined when there is nothing to say.
+ */
+function detailsOf(entry: HistoryEntry): string | undefined {
+  const details: Record<string, unknown> = {};
+  if (entry.causedBy !== undefined) {
+    details['causedBy'] = `emitted by ${entry.causedBy.subscriberId} of event ${entry.causedBy.eventId}`;
+  }
+  if (entry.replayOf !== undefined) {
+    details['replayOf'] = `replay of event ${entry.replayOf}`;
+  }
+  if (entry.orphan) {
+    details['orphan'] = 'no push record for this id, only the outcome of a delivery: it is a retry, or its push is older than the history retention. There is no payload, so it cannot be replayed from here.';
+  }
+  if (entry.subscribers.length > 0) {
+    details['subscribers'] = entry.subscribers.map((outcome) => {
+      const reason = outcome.status === 'filtered' && outcome.filter !== undefined ? ` (when: ${outcome.filter}${outcome.actual !== undefined ? `, actual: ${outcome.actual}` : ''})` : '';
+      return `${outcome.subscriberId}: ${outcome.status}${reason}`;
+    });
+  }
+  return Object.keys(details).length === 0 ? undefined : JSON.stringify(details, null, 2);
 }
 
 /** Looks up a single event by its eventId, e.g. to populate a replay confirmation dialog. */

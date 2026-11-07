@@ -909,6 +909,24 @@ describe('type action: the emit action and the daemon wiring', () => {
       expect(wal().find((entry) => entry.id === delivered.id)!.status).toBe('acked');
     });
 
+    it('retry that cannot start says why and what to fix: the subscriber is gone, or the configuration does not load', async () => {
+      const { service } = await chainEndingInto(() => ({ success: false, error: 'try later' }));
+      const failed = wal().find((entry) => entry.event === 'agent.message')!;
+      expect(failed.status).toBe('failed');
+      const projectId = failed.meta.projectId!;
+
+      writeFor(projectId, ['subscribers:', '  onOther:', '    - { type: cli, name: x, command: echo hi }', ''].join(String.fromCharCode(10)));
+      const gone = await service.commands.retry({ eventId: failed.id });
+      expect(gone.status).toBe('error');
+      expect(gone.message).toMatch(/subscriber .* no longer exists.*subscribers[.]yml.*Fix:/s);
+
+      writeFor(projectId, 'subscribers: [unclosed');
+      const broken = await service.commands.retry({ eventId: failed.id });
+      expect(broken.status).toBe('error');
+      expect(broken.message).toMatch(/configuration for event agent[.]message does not load.*Fix:/s);
+      expect(wal().find((entry) => entry.id === failed.id)!.status).toBe('failed');
+    });
+
     it('retry refuses an entry given up to the DLQ and points to dlq replay / dlq clear with its id', async () => {
       const { service, seen } = await chainEndingInto(() => ({ success: false, error: 'refused', permanent: true }));
       const given = wal().find((entry) => entry.event === 'agent.message')!;

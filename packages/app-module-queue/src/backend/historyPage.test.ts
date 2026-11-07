@@ -177,33 +177,46 @@ describe('history-page.yaml pagination structure', () => {
 	});
 });
 
-describe('history-page.yaml payload row expansion', () => {
+// Replaces the tests of the old expansion, which was one JsonViewer on payloadText with the toggle on payloadText. The expansion now holds two viewers (the details of the
+// entry, then the payload) and the toggle is `expandable` (payload or details), so an orphan row, which has no payload, can be opened to read why. Every property the old
+// tests asserted on the payload viewer is asserted again on it below.
+describe('history-page.yaml row expansion (details, then payload)', () => {
 	const yamlPath = join(__dirname, '../dsl-views/history-page.yaml');
 	const doc = yaml.load(readFileSync(yamlPath, 'utf-8')) as YamlDoc;
 	const dataTable = (doc.sections as Section[]).find((s) => s.$type === 'DataTable') as Section;
 	const expansion = dataTable?.expansion as Section;
+	const viewers = (expansion?.items as Section[]) ?? [];
+	const payloadViewer = viewers.find((viewer) => viewer.field === 'payloadText') as Section;
+	const detailsViewer = viewers.find((viewer) => viewer.field === 'detailsText') as Section;
 
-	it('DataTable only offers the expand toggle on rows that have a payloadText', () => {
-		expect(dataTable.expansionCondition).toBe('payloadText');
+	it('DataTable offers the expand toggle on rows that have a payload or details (expandable), not only a payload', () => {
+		expect(dataTable.expansionCondition).toBe('expandable');
 	});
 
-	it('expansion is a JsonViewer reading the payloadText field', () => {
-		expect(expansion?.$type).toBe('JsonViewer');
-		// A plain string: JsonViewer does String(row[field]), a "$"-prefixed value would be resolved as an expression.
-		expect(expansion?.field).toBe('payloadText');
+	it('the expansion is a HorizontalStack (a layout the page already uses) of two JsonViewers: the details, then the payload', () => {
+		expect(expansion?.$type).toBe('HorizontalStack');
+		expect(viewers.map((viewer) => [viewer.$type, viewer.field])).toEqual([['JsonViewer', 'detailsText'], ['JsonViewer', 'payloadText']]);
 	});
 
-	it('expansion passes the row explicitly (JsonViewer gets no row otherwise and renders an empty block)', () => {
-		expect(expansion?.row).toBe('$ctx.row');
+	it('each viewer reads a plain string field (JsonViewer does String(row[field]), a "$"-prefixed value would be resolved as an expression)', () => {
+		expect(payloadViewer.field).toBe('payloadText');
+		expect(detailsViewer.field).toBe('detailsText');
 	});
 
-	it('the toggle condition and the displayed field are the same key', () => {
-		expect(dataTable.expansionCondition).toBe(expansion?.field);
+	it('each viewer passes the row explicitly (JsonViewer gets no row otherwise and renders an empty block)', () => {
+		expect(payloadViewer.row).toBe('$ctx.row');
+		expect(detailsViewer.row).toBe('$ctx.row');
 	});
 
-	it('caps the expanded payload height so a huge webhook payload cannot push the pagination off-screen', () => {
+	it('each viewer is drawn only when its field exists on the row: the toggle opens a row with details but no payload (orphan) without an empty payload block', () => {
+		expect(payloadViewer.$if).toBe('$ctx.row.payloadText');
+		expect(detailsViewer.$if).toBe('$ctx.row.detailsText');
+	});
+
+	it('caps the height of both blocks so a huge webhook payload cannot push the pagination off-screen', () => {
 		// JsonViewer `maxHeight` needs @wadeck-app/dsl-ui >= 2026.10.17-095-7b2c28f1; older frontends ignore it.
-		expect(expansion?.maxHeight).toBe('20rem');
+		expect(payloadViewer.maxHeight).toBe('20rem');
+		expect(detailsViewer.maxHeight).toBe('20rem');
 	});
 
 	it('shows an explicit empty state that talks about the page, not the whole history', () => {

@@ -1,4 +1,7 @@
-import { createRelayClient } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
+import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
+import { join } from 'node:path';
+import { getErrorMessage } from '@wadeck-app/queue-core';
+import { RelayStatusError } from './errors.js';
 
 export type RelayState = 'connected' | 'not connected' | 'stopped';
 
@@ -24,7 +27,12 @@ export async function getRelayInfo(configDir: string): Promise<RelayInfo> {
   if (!running) {
     return { state: 'stopped', label: 'Relay disconnected', tone: 'default', running: false, connected: false, pid: null, uptimeSec: null, lastError: null };
   }
-  const status = await client.send('status', undefined);
+  let status: Awaited<ReturnType<typeof client.send<'status'>>>;
+  try {
+    status = await client.send('status', undefined);
+  } catch (err) {
+    throw new RelayStatusError(`The relay client is running but did not answer its status: ${getErrorMessage(err)}. Fix: queue relay stop, then queue relay start; its log is ${join(relayStateDir(configDir), 'relay.log')}.`);
+  }
   return {
     state: status.connected ? 'connected' : 'not connected',
     label: status.connected ? 'Relay connected' : 'Relay disconnected',

@@ -38,7 +38,7 @@ export function subscribersFor(configLoader: ConfigLoader, req: { event?: string
   return Array.from(configLoader.load(req.cwd, req.project).values()).flat();
 }
 
-/** Removes one DLQ entry, or all of them when `id` is omitted; returns how many were removed. The WAL entries that carried their payload go too (see {@link removeDlqEntries}). */
+/** Removes one DLQ entry, or all of them when `id` is omitted (`undefined`; an empty id throws); returns how many were removed. The WAL entries that carried their payload go too (see {@link removeDlqEntries}). */
 export function removeFromDlq(dlq: DlqStore, wal: Wal, id?: string): number {
   return removeDlqEntries(dlq, wal, id).length;
 }
@@ -49,7 +49,11 @@ export function removeFromDlq(dlq: DlqStore, wal: Wal, id?: string): number {
  * status is left alone: it is a replay of that row running under the same id.
  */
 export function removeDlqEntries(dlq: DlqStore, wal: Wal, id?: string): DlqEntry[] {
-  const removed = id ? dlq.removeEntries(id) : dlq.clearEntries();
+  // Absent id = everything, on purpose; an empty one is a caller bug (a missing value) and must not wipe the DLQ
+  if (id !== undefined && (typeof id !== 'string' || id === '')) {
+    throw new Error(`An empty DLQ entry id is invalid (got ${JSON.stringify(id)}): nothing was removed. Fix: pass the id shown by 'queue dlq list', or omit the id to clear the whole DLQ.`);
+  }
+  const removed = id !== undefined ? dlq.removeEntries(id) : dlq.clearEntries();
   purgeWalOfDlqRows(wal, removed);
   return removed;
 }

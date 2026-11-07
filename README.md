@@ -24,7 +24,7 @@ queue <command> [options]
 | `list-subscribers [event] [--json]` | List registered subscribers |
 | `dlq list` | List dead-letter entries |
 | `dlq replay --id <id>` | Replay a dead-letter entry |
-| `dlq clear [--id <id>]` | Clear dead-letter entries (all or one) |
+| `dlq clear [--id <id>]` | Clear one entry, or the whole DLQ without `--id` (the count is printed); `--id` without a value or an unknown id exits 1 |
 | `wait <event> [--when <expr>] [--since <d>]` | Block until a queue event is recorded |
 | `wait ci [<sha>] [--workflow <name>] [--timeout <dur>] [--json]` | Block until the GitHub CI of a commit is done |
 | `events list [--source S] [--prefix P] [--match PAT] [--declared-only] [--terminal] [--json]` | List the declared events and what was seen |

@@ -6,7 +6,7 @@ import { HistoryLog, projectRefsOf, type CausedBy } from '../storage/HistoryLog.
 import { HistoryReader } from '../storage/HistoryReader.js';
 import { ConfigLoader, resolveProjectName, type ProjectConfigSource } from '../ConfigLoader.js';
 import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.js';
-import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
+import { AsyncDispatcher, inFlightWalUpdater } from '../dispatch/AsyncDispatcher.js';
 import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
 import { PayloadFilter } from '../dispatch/PayloadFilter.js';
 import { RetryScheduler } from '../dispatch/RetryScheduler.js';
@@ -131,7 +131,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   const syncDispatcher = new SyncDispatcher(eventLogger, historyLog, actionTransport, refs);
   const startedAt = Date.now();
   const asyncDispatcher = new AsyncDispatcher(
-    (id, updates) => wal.updateEntry(id, updates),
+    inFlightWalUpdater(wal),
     async (walEntry, lastError, info) => {
       const dlqEntry: DlqEntry = {
         id: walEntry.id,
@@ -673,8 +673,9 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       try {
         subscribers = loadSubscribers(entry.event, cwd, undefined, entry.meta.projectId);
       } catch (err) {
-        eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
-        return { status: 'error' };
+        const reason = getErrorMessage(err);
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `config error for event ${entry.event}: ${reason}` });
+        return { status: 'error', message: `WAL entry ${entry.id} was not retried: the configuration for event ${entry.event} does not load (${reason}). Fix: repair subscribers.yml, then retry again (queue retry --event ${entry.id}).` };
       }
       const sub = findSubscriber(subscribers, entry.subscriberId);
       if (!sub) {
@@ -682,7 +683,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           source: 'QueueDaemon.retry',
           message: `subscriber ${entry.subscriberId} no longer exists in subscribers.yml for event ${entry.event}; WAL entry ${entry.id} cannot be retried`,
         });
-        return { status: 'error' };
+        return { status: 'error', message: `WAL entry ${entry.id} was not retried: the subscriber ${entry.subscriberId} no longer exists in subscribers.yml for event ${entry.event}. Fix: restore that subscriber and retry again (queue retry --event ${entry.id}), or give the entry up from the Pending page of the dashboard.` };
       }
 
       const envelope: EventEnvelope = {
@@ -821,6 +822,10 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
     'dlq-clear'(payload?: unknown): DlqClearResponse {
       const req = payload as DlqClearRequest | undefined;
+      // No id at all clears everything; an id that is not a non-empty string (a client that lost the value) clears nothing and says so
+      if (req?.id !== undefined && (typeof req.id !== 'string' || req.id === '')) {
+        return { cleared: 0, reason: `dlq-clear needs the id of one entry as { id: '<id>' } (a non-empty string), or no id to clear the whole DLQ; got ${JSON.stringify(req.id)}. Fix: send the id shown by the DLQ list, or omit the id to clear everything; nothing was cleared` };
+      }
       const removed = removeDlqEntries(dlq, wal, req?.id);
       // After the clear returned: the events are pushed in the background, the answer does not wait for them
       void emitDlqRemoved(removed, 'cleared');

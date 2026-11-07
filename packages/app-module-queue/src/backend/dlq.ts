@@ -19,7 +19,7 @@ export function listDlq(configDir: string, projectId?: string): Array<DlqEntry &
 export async function clearDlqEntry(configDir: string, id?: string): Promise<DlqClearResponse & { message?: string }> {
   const attempt = await tryDaemon(configDir, (client) => client.send('dlq-clear', id === undefined ? {} : { id }));
   if (attempt.reached) {
-    return { cleared: attempt.value.cleared };
+    return { cleared: attempt.value.cleared, ...(attempt.value.reason !== undefined && { reason: attempt.value.reason }) };
   }
   const removed = clearDlqEntriesReturning(configDir, id);
   if (removed.length === 0) {

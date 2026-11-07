@@ -214,6 +214,72 @@ describe('queue status', () => {
 	});
 });
 
+describe('queue status with the daemon down reads the queue files', () => {
+	function seedQueueFiles(): void {
+		const configDir = process.env['QUEUE_CONFIG_DIR'] as string;
+		const wal = (id: string, status: string) => ({ id, timestamp: new Date().toISOString(), event: 'onFoo', payload: {}, meta: { cwd: '/p' }, subscriberId: 's', status, attempts: 0 });
+		writeFileSync(join(configDir, 'wal.ndjson'), [wal('a', 'pending'), wal('b', 'pending'), wal('c', 'acked')].map((line) => JSON.stringify(line)).join('\n') + '\n');
+		const row = (id: string) => ({ id, event: 'onFoo', payload: {}, meta: { cwd: '/p' }, subscriberId: 's', attempts: 3, lastError: 'boom', movedAt: new Date().toISOString() });
+		writeFileSync(join(configDir, 'dlq.ndjson'), [row('d1')].map((line) => JSON.stringify(line)).join('\n') + '\n');
+	}
+
+	async function statusDown(args: string[], tty: boolean): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+		mockIsRunning.mockResolvedValue(false);
+		Object.defineProperty(process.stdout, 'isTTY', { value: tty, configurable: true });
+		try {
+			return await run(args);
+		} finally {
+			Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+		}
+	}
+
+	it('--json: the real counts, daemonRunning false, where the counts come from; nothing asked of the daemon', async () => {
+		seedQueueFiles();
+		const { stdout, exitCode } = await statusDown(['status', '--json'], false);
+		expect(exitCode).toBe(0);
+		expect(JSON.parse(stdout)).toMatchObject({ daemonRunning: false, pendingCount: 2, dlqCount: 1, source: 'queue-files' });
+		expect(JSON.parse(stdout).cliVersion).toEqual(expect.any(String));
+		expect(mockSend).not.toHaveBeenCalled();
+	});
+
+	it('terminal output: says the daemon is not running and the counts come from the queue files, with the numbers, exit 0, no [fail]', async () => {
+		seedQueueFiles();
+		const { stdout, stderr, exitCode } = await statusDown(['status'], true);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain('daemon not running; counts read from the queue files');
+		expect(stdout).toContain('pending: 2');
+		expect(stdout).toContain('dlq:     1');
+		expect(stdout + stderr).not.toContain('[fail]');
+	});
+
+	it('a running daemon is reported with source daemon', async () => {
+		mockIsRunning.mockResolvedValue(true);
+		mockSend.mockResolvedValue({ pendingCount: 3, dlqCount: 1, daemonRunning: true, uptimeSec: 5, pid: 1 });
+		Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+		const { stdout } = await run(['status', '--json']);
+		Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+		expect(JSON.parse(stdout)).toMatchObject({ daemonRunning: true, pendingCount: 3, source: 'daemon' });
+	});
+});
+
+describe('queue retry: every refusal is a failure with a message', () => {
+	it('an id that is not in the WAL (not-found) exits 1 and says how to find a valid one', async () => {
+		mockSend.mockResolvedValue({ status: 'not-found' });
+		const { stdout, stderr, exitCode } = await run(['retry', '--event', 'nope']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('[fail] no WAL entry with id nope');
+		expect(stdout).toBe('');
+	});
+
+	it('an error without a message exits 1 and points to the daemon log', async () => {
+		mockSend.mockResolvedValue({ status: 'error' });
+		const { stdout, stderr, exitCode } = await run(['retry', '--event', 'w1']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain("queue logs");
+		expect(stdout).toBe('');
+	});
+});
+
 // --- dlq ---
 
 describe('queue dlq', () => {
@@ -242,6 +308,107 @@ describe('queue dlq', () => {
 		const { stdout } = await run(['dlq', 'clear']);
 		expect(mockSend).toHaveBeenCalledWith('dlq-clear', { id: undefined });
 		expect(stdout).toContain('cleared 2');
+	});
+});
+
+// --- dlq: destructive arguments are explicit ---
+
+describe('queue dlq: a missing value never widens the operation', () => {
+	const sentCommands = (): string[] => mockSend.mock.calls.map((call) => String(call[0]));
+
+	it.each([
+		['--id without a value', ['dlq', 'clear', '--id']],
+		['--id followed by another flag', ['dlq', 'clear', '--id', '--json']],
+		['--id with an empty value', ['dlq', 'clear', '--id', '']],
+	])('dlq clear %s: usage error, exit 1, nothing sent, so nothing cleared', async (_name, args) => {
+		const { stderr, stdout, exitCode } = await run(args);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('--id needs a value');
+		expect(stderr).toContain('Nothing was cleared');
+		expect(stderr).toContain("'queue dlq clear' without --id");
+		expect(stdout).toBe('');
+		expect(sentCommands()).not.toContain('dlq-clear');
+	});
+
+	it('dlq clear refuses an argument it does not know (a typo of --id must not clear everything)', async () => {
+		for (const args of [['dlq', 'clear', '--idd', 'x'], ['dlq', 'clear', 'x']]) {
+			const { stderr, exitCode } = await run(args);
+			expect(exitCode, args.join(' ')).toBe(1);
+			expect(stderr).toContain(`Unknown argument '${args[2]}'`);
+		}
+		expect(sentCommands()).not.toContain('dlq-clear');
+	});
+
+	it('dlq clear without --id clears everything on purpose and says how many', async () => {
+		mockSend.mockResolvedValue({ cleared: 3 });
+		const { stdout, exitCode } = await run(['dlq', 'clear']);
+		expect(exitCode).toBe(0);
+		expect(mockSend).toHaveBeenCalledWith('dlq-clear', { id: undefined });
+		expect(stdout).toContain('[ok] cleared 3 entries (the whole DLQ)');
+	});
+
+	it('dlq clear of an empty DLQ says so', async () => {
+		mockSend.mockResolvedValue({ cleared: 0 });
+		const { stdout, exitCode } = await run(['dlq', 'clear']);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain('the DLQ was already empty');
+	});
+
+	it('dlq clear --id <id> reports the entry it cleared', async () => {
+		mockSend.mockResolvedValue({ cleared: 1 });
+		const { stdout, exitCode } = await run(['dlq', 'clear', '--id', 'abc']);
+		expect(exitCode).toBe(0);
+		expect(mockSend).toHaveBeenCalledWith('dlq-clear', { id: 'abc' });
+		expect(stdout).toContain('[ok] cleared 1 entries (id abc)');
+	});
+
+	it('dlq clear --id <unknown> exits 1 and says where to find the ids', async () => {
+		mockSend.mockResolvedValue({ cleared: 0 });
+		const { stderr, stdout, exitCode } = await run(['dlq', 'clear', '--id', 'nope']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('no DLQ entry with id nope (queue dlq list shows the ids)');
+		expect(stdout).not.toContain('[ok]');
+	});
+
+	it('dlq clear surfaces the reason when the daemon refuses the request', async () => {
+		mockSend.mockResolvedValue({ cleared: 0, reason: 'dlq-clear needs the id of one entry' });
+		const { stderr, exitCode } = await run(['dlq', 'clear', '--id', 'x']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('dlq-clear needs the id of one entry');
+	});
+
+	it.each([
+		['--id without a value', ['dlq', 'replay', '--id']],
+		['--id followed by another flag', ['dlq', 'replay', '--id', '--json']],
+	])('dlq replay %s: usage error, exit 1, nothing sent', async (_name, args) => {
+		const { stderr, exitCode } = await run(args);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('--id needs a value');
+		expect(sentCommands()).not.toContain('dlq-replay');
+	});
+
+	it('dlq replay --id <unknown> (daemon: not-found) exits 1 with a message on stderr and no JSON on stdout', async () => {
+		mockSend.mockResolvedValue({ status: 'not-found' });
+		const { stderr, stdout, exitCode } = await run(['dlq', 'replay', '--id', 'nope']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('no DLQ entry with id nope (queue dlq list shows the ids)');
+		expect(stdout).toBe('');
+	});
+
+	it('dlq replay: a daemon error is printed as it is on stderr, exit 1, no JSON on stdout', async () => {
+		mockSend.mockResolvedValue({ status: 'error', message: 'The replay of DLQ entry e1 did not start: Fix: repair subscribers.yml' });
+		const { stderr, stdout, exitCode } = await run(['dlq', 'replay', '--id', 'e1']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('[fail] The replay of DLQ entry e1 did not start: Fix: repair subscribers.yml');
+		expect(stdout).toBe('');
+	});
+
+	it('dlq replay: an answer the CLI does not know is a failure that shows the answer, not a silent success', async () => {
+		mockSend.mockResolvedValue({ status: 'weird' });
+		const { stderr, stdout, exitCode } = await run(['dlq', 'replay', '--id', 'e1']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain('{"status":"weird"}');
+		expect(stdout).toBe('');
 	});
 });
 

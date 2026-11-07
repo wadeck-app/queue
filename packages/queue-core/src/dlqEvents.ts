@@ -125,8 +125,9 @@ const COMMON_PROPERTIES = {
 export const DLQ_EVENT_DECLARATIONS: EventDeclaration[] = [
   {
     name: DLQ_ADDED_EVENT,
-    description: 'Emitted by the daemon, always, when a delivery enters the dead-letter queue. Carries facts and a reference to the base event ({ "$eventRef": "<eventId>" }), never its payload; '
-      + '{{ payload.original.<field> }} in a template reads the base payload. Not emitted for a base event named queue.*.',
+    description: 'Emitted by the daemon for every delivery that enters the dead-letter queue. A failed emit is retried at the daemon start and after the next successful push. '
+      + 'Not announced: a base event named queue.* and a delivery at the hop cap. '
+      + 'Carries facts and a reference to the base event ({ "$eventRef": "<eventId>" }), never its payload; {{ payload.original.<field> }} reads the base payload.',
     outcome: 'failure',
     correlationKey: ['payload.entryId'],
     // Documentation of the shape: the daemon alone emits this event, nothing can push the example
@@ -159,8 +160,9 @@ export const DLQ_EVENT_DECLARATIONS: EventDeclaration[] = [
   },
   {
     name: DLQ_REMOVED_EVENT,
-    description: 'Emitted by the daemon, always, when an entry leaves the dead-letter queue (replayed, cleared or evicted at the cap). Carries facts and a reference to the base event ({ "$eventRef": "<eventId>" }), never its payload. '
-      + 'A replay that fails again gives removed then added with the same entryId. Not emitted for a base event named queue.*.',
+    description: 'Emitted by the daemon for every entry that leaves the dead-letter queue (replayed, cleared or evicted at the cap). If the emit fails it is not retried. '
+      + 'Not announced: a base event named queue.* and an entry at the hop cap. Carries facts and a reference to the base event ({ "$eventRef": "<eventId>" }), never its payload. '
+      + 'A replay that fails again gives removed then added with the same entryId.',
     outcome: 'info',
     correlationKey: ['payload.entryId'],
     // Documentation of the shape: the daemon alone emits this event, nothing can push the example

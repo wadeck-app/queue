@@ -54,6 +54,11 @@ describe('clearDlqEntry, daemon reachable: the daemon does the work', () => {
     expect(listDlq(configDir).map(e => e.id)).toEqual(['d1', 'd2']);
   });
 
+  it('passes the reason through when the daemon refuses the request as malformed (cleared 0 plus reason), so the route can say why', async () => {
+    mockSend.mockResolvedValue({ cleared: 0, reason: 'dlq-clear needs the id of one entry' });
+    expect(await clearDlqEntry(configDir, 'd1')).toEqual({ cleared: 0, reason: 'dlq-clear needs the id of one entry' });
+  });
+
   it('without an id the whole queue is cleared by the daemon in ONE request (no chunks, no entries sent)', async () => {
     writeFileSync(join(configDir, 'dlq.ndjson'), Array.from({ length: 450 }, (_, i) => dlqLine('d' + i)).join('\n') + '\n');
     mockSend.mockResolvedValue({ cleared: 450 });

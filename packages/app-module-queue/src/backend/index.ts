@@ -8,7 +8,7 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError, RelayStatusError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
@@ -27,6 +27,7 @@ import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery, validateSingleString } from './historyQuery.js';
 import { getOverviewRange } from './overviewRange.js';
+import { pushAnswer, dlqReplayAnswer, dlqClearAnswer, retryAnswer } from './httpAnswers.js';
 
 interface QueryParams { [key: string]: string | string[] | undefined }
 
@@ -140,7 +141,8 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('POST', '/history/:eventId/replay', async (req, reply) => {
     const { eventId } = req.params;
     try {
-      return reply.code(200).send(await replayEvent(configDir, eventId));
+      const answer = pushAnswer(await replayEvent(configDir, eventId));
+      return reply.code(answer.code).send(answer.body);
     } catch (err) {
       // DaemonUnreachableError => 503 (daemon not running)
       // ReplayNotFoundError => 404 (unknown eventId)
@@ -241,7 +243,8 @@ export default function (ctx: ModuleContext): void {
     const body = (req as { body?: unknown }).body;
     const payloadText = isRecord(body) && typeof body['payload'] === 'string' ? body['payload'] : undefined;
     try {
-      return reply.code(200).send(await pushTestEvent(configDir, name, ...(payloadText === undefined ? [] : [payloadText])));
+      const answer = pushAnswer(await pushTestEvent(configDir, name, ...(payloadText === undefined ? [] : [payloadText])));
+      return reply.code(answer.code).send(answer.body);
     } catch (err) {
       if (err instanceof TestPayloadNotFoundError) {
         return reply.code(404).send({ error: getErrorMessage(err) });
@@ -256,14 +259,8 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('POST', '/retry/:eventId', async (req, reply) => {
     const { eventId } = req.params;
     try {
-      const response = await retryEvent(configDir, eventId);
-      if (response.status === 'not-found') {
-        return reply.code(404).send({ error: `No pending event with id ${eventId} (retry only applies to events still in the WAL)` });
-      }
-      if (response.message !== undefined) {
-        return reply.code(409).send({ error: response.message });
-      }
-      return reply.code(response.status === 'ok' ? 200 : 500).send(response);
+      const answer = retryAnswer(await retryEvent(configDir, eventId), eventId);
+      return reply.code(answer.code).send(answer.body);
     } catch (err) {
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
@@ -298,11 +295,12 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
+  // The navbar badge reads this route on every page: a failure is always a JSON { error } with what to do (502 when the relay runs but does not answer its status)
   ctx.registerRoute('GET', '/relay', async (_req, reply) => {
     try {
       return reply.code(200).send(await getRelayInfo(configDir));
     } catch (err) {
-      return reply.code(500).send({ error: getErrorMessage(err) });
+      return reply.code(err instanceof RelayStatusError ? 502 : 500).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -344,7 +342,8 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('POST', '/dlq/:id/replay', async (req, reply) => {
     const { id } = req.params;
     try {
-      return reply.code(200).send(await replayDlqEntry(configDir, id));
+      const answer = dlqReplayAnswer(await replayDlqEntry(configDir, id), id);
+      return reply.code(answer.code).send(answer.body);
     } catch (err) {
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
@@ -354,7 +353,8 @@ export default function (ctx: ModuleContext): void {
   ctx.registerRoute('POST', '/dlq/:id/clear', async (req, reply) => {
     const { id } = req.params;
     try {
-      return reply.code(200).send(await clearDlqEntry(configDir, id));
+      const answer = dlqClearAnswer(await clearDlqEntry(configDir, id), id);
+      return reply.code(answer.code).send(answer.body);
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }
@@ -442,7 +442,8 @@ export default function (ctx: ModuleContext): void {
     }
 
     try {
-      return reply.code(200).send(await pushEvent(configDir, event, payload, { cwd: cwd as string | undefined, timeout: timeout as number | undefined }));
+      const answer = pushAnswer(await pushEvent(configDir, event, payload, { cwd: cwd as string | undefined, timeout: timeout as number | undefined }));
+      return reply.code(answer.code).send(answer.body);
     } catch (err) {
       if (err instanceof DaemonUnreachableError) {
         return reply.code(503).send({ error: getErrorMessage(err) });
