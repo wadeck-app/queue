@@ -103,6 +103,17 @@ For any other batch file, a value holding any of `& | < > ^ % ! "`, a backtick o
 
 Other extensions found on `PATHEXT` (`.ps1`, `.js`, ...) cannot be started without a shell: use their interpreter.
 
+## Filters (`when:`)
+
+The filter is evaluated on the whole envelope (`event`, `payload`, `meta`, ...). Two forms:
+
+| Form | Rule |
+|---|---|
+| `path=value` | Dotted path, split at the FIRST `=`; equality only (a number compares as a number). One comparison, no "or", no "and". `payload.newStatus=done` |
+| JSONPath starting with `$` | Matches when the first result is truthy. Use `@root` to reach the envelope from inside a filter: `$[?(@root.payload.projectId=='64f4ae91' && (@root.payload.event=='onTaskCreated' \|\| @root.payload.event=='onStatusChange'))]` |
+
+A filter such as `$.payload[?(@.projectId=='x')]` filters the children of `payload`, not the payload itself: it does not do what it looks like. A filter that does not match is logged with why (`queue logs`). A `when:` filter never loads a `queue.dlq.*` base event: it sees the reference (see below).
+
 ## Caveats
 
 - A value that starts with `-` is still an option for the program (`--help`). Write `--title={{ title }}` or use the program's `--` separator.
