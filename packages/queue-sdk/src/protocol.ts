@@ -6,7 +6,7 @@ import { parseRange, parseVersion, satisfies, compareVersions } from './semver.j
 // included, so there is exactly one place that says what version is spoken.
 
 /** The protocol version this SDK speaks and the daemon of the same release implements. */
-export const PROTOCOL_VERSION = '1.4.0';
+export const PROTOCOL_VERSION = '1.5.0';
 /** Daemon protocol versions whose answers this SDK can read. */
 export const SDK_UNDERSTANDS = '^1.0.0';
 /** Client protocol versions the daemon accepts. While a MAJOR is deprecated, both stay listed (e.g. `^1.0.0 || ^2.0.0`). */
@@ -75,6 +75,17 @@ export function checkPushDirection(value: unknown): DirectionCheck {
     return { ok: false, reason: `unknown direction ${unknown.map((item) => JSON.stringify(item)).join(', ')}: the accepted values are ${accepted}` };
   }
   return { ok: true, directions: [...new Set(value.filter(known))] };
+}
+
+/** The protocol version that reserved the `queue.` event namespace; an older daemon accepts such an event name from any client. */
+export const RESERVED_NAMESPACE_MIN_VERSION = '1.5.0';
+
+/** Prefix of the event names only the queue daemon may emit (`queue.dlq.added`, ...). Every external entry (push, `emit` action, register-events) refuses it. */
+export const RESERVED_EVENT_PREFIX = 'queue.';
+
+/** Whether an event name is in the namespace reserved for the events the queue daemon builds itself. */
+export function isReservedEventName(event: string): boolean {
+  return event.startsWith(RESERVED_EVENT_PREFIX);
 }
 
 /** A daemon whose GET /version has no `queueProtocol` predates versioning and speaks the original contract. */

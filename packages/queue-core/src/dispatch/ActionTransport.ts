@@ -3,6 +3,7 @@ import type { ActionRegistry } from '../actions/ActionRegistry.js';
 import { getErrorMessage } from '../errors.js';
 import type { EventEnvelope } from '../types.js';
 import type { DispatchResult } from './DispatchResult.js';
+import type { RefResolver } from './refResolver.js';
 
 /**
  * Builds what a plugin may do for one run: bound to the envelope the subscriber received and to the id of that subscriber
@@ -15,6 +16,8 @@ export class ActionTransport {
   constructor(
     private readonly registry: ActionRegistry,
     private readonly contextFor: ActionContextFactory,
+    // Absent: an action renders its templates without following any payload reference
+    private readonly refs?: RefResolver,
   ) {}
 
   async dispatch(action: string, config: Record<string, unknown>, envelope: EventEnvelope, timeoutMs: number, subscriber: string): Promise<DispatchResult> {
@@ -29,7 +32,7 @@ export class ActionTransport {
       timer = setTimeout(() => resolve('timeout'), timeoutMs);
     });
     try {
-      const run = Promise.resolve().then(() => plugin.run(config, envelope, this.contextFor(envelope, subscriber)));
+      const run = Promise.resolve().then(() => plugin.run(config, envelope, this.contextForRun(envelope, subscriber)));
       // If the timeout wins, the plugin keeps running (it cannot be cancelled): its late outcome must not become an unhandled rejection
       run.catch(() => undefined);
       const outcome = await Promise.race([run, timeout]);
@@ -44,6 +47,12 @@ export class ActionTransport {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** The context of one run: the host's, plus the reference follower of this run (so a base event is loaded once per run). */
+  private contextForRun(envelope: EventEnvelope, subscriber: string): ActionContext {
+    const context = this.contextFor(envelope, subscriber);
+    return this.refs === undefined ? context : { ...context, resolveRef: this.refs.forEnvelope(envelope) };
   }
 
   private toResult(outcome: ActionResult, action: string, subscriber: string, durationMs: number): DispatchResult {

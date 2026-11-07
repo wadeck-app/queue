@@ -5,6 +5,7 @@
  */
 
 import { findForbiddenSegment, walkPayloadPath, type WalkOptions } from '../walkPayloadPath.js';
+import { EventRefError } from './refResolver.js';
 
 /** One placeholder: `{{ field }}` or `{{ payload.field }}`. Sticky copies are used to match at a given position. */
 const PLACEHOLDER_SOURCE = '\\{\\{\\s*([\\w.]+)\\s*\\}\\}';
@@ -466,7 +467,8 @@ export interface SubstitutedArgument {
 /**
  * Replaces the placeholders of one argument with the payload values. A payload that is not an object has no field: every value is empty.
  * A field is read by walkPayloadPath: the whole dotted key as an own key first, else a walk through own properties. Pure: `options.resolveRef`
- * is the only way a value outside the payload can come in, and the caller supplies it.
+ * is the only way a value outside the payload can come in, and the caller supplies it. A reference that cannot be followed for good (the base event
+ * is gone) throws CommandTemplateError naming the field and the reference; one that failed for now (history unreadable) throws EventRefError (retryable).
  */
 export function substituteToken(token: TemplateToken, payload: unknown, options: WalkOptions = {}): SubstitutedArgument {
   let text = '';
@@ -477,7 +479,16 @@ export function substituteToken(token: TemplateToken, payload: unknown, options:
       continue;
     }
     // Own properties only: `{{ constructor }}` or `{{ toString }}` must not paste the source of an inherited function
-    const value = valueToArgument(walkPayloadPath(payload, part.field, options));
+    let value: string;
+    try {
+      value = valueToArgument(walkPayloadPath(payload, part.field, options));
+    } catch (err) {
+      if (err instanceof EventRefError) {
+        const located = err.withContext(`payload field '${part.field}'`);
+        throw located.permanent ? new CommandTemplateError(located.message) : located;
+      }
+      throw err;
+    }
     fields.push({ field: part.field, value });
     text += value;
   }

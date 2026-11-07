@@ -58,5 +58,20 @@
     "name": "1.4.0: an unknown direction is rejected and nothing is recorded",
     "request": { "event": "on.contract.sideways", "payload": {}, "protocol": "1.4.0", "project": "<registered-project>", "direction": ["sideways"] },
     "response": { "status": "rejected", "eventId": "absent" }
+  },
+  {
+    "name": "1.5.0: an event in the reserved queue. namespace is rejected and nothing is recorded (only the daemon builds those events)",
+    "request": { "event": "queue.dlq.added", "payload": {}, "protocol": "1.5.0", "project": "<registered-project>" },
+    "response": { "status": "rejected", "eventId": "absent" }
+  },
+  {
+    "name": "1.5.0: the reserved namespace is refused whatever protocol the client claims, a client without one included",
+    "request": { "event": "queue.custom", "payload": {} },
+    "response": { "status": "rejected", "eventId": "absent" }
+  },
+  {
+    "name": "1.5.0: a name that only contains queue is not reserved",
+    "request": { "event": "myapp.queue.done", "payload": {}, "protocol": "1.5.0" },
+    "response": { "status": "queued", "eventId": "present" }
   }
 ]

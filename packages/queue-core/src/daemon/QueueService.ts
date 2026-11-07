@@ -3,6 +3,7 @@ import { Wal } from '../storage/Wal.js';
 import { DlqStore } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
 import { HistoryLog, projectRefsOf, type CausedBy } from '../storage/HistoryLog.js';
+import { HistoryReader } from '../storage/HistoryReader.js';
 import { ConfigLoader, resolveProjectName, type ProjectConfigSource } from '../ConfigLoader.js';
 import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.js';
 import { AsyncDispatcher } from '../dispatch/AsyncDispatcher.js';
@@ -10,6 +11,8 @@ import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
 import { PayloadFilter } from '../dispatch/PayloadFilter.js';
 import { RetryScheduler } from '../dispatch/RetryScheduler.js';
 import { ActionTransport } from '../dispatch/ActionTransport.js';
+import { RefResolver } from '../dispatch/refResolver.js';
+import { reservedEventProblem } from '../reservedEvents.js';
 import { describeSearchPath } from '../dispatch/windowsProgram.js';
 import type { ActionRegistry } from '../actions/ActionRegistry.js';
 import { createActionRegistry } from '../actions/createActionRegistry.js';
@@ -18,7 +21,7 @@ import type { ActionPushRequest, ActionPushResult } from '../actions/ActionPlugi
 import { findActionCycles, type CycleSubscriber } from '../actions/findActionCycles.js';
 import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
-import { checkClientProtocol, checkPushDirection } from '@wadeck-app/queue-sdk/protocol';
+import { checkClientProtocol, checkPushDirection, isReservedEventName, RESERVED_EVENT_PREFIX } from '@wadeck-app/queue-sdk/protocol';
 import type { PushDirection } from '@wadeck-app/queue-sdk/protocol';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { countQueue, subscribersFor, removeFromDlq } from '../operations.js';
@@ -62,6 +65,11 @@ export interface QueueService {
   /** Synchronously reschedules the pending WAL entries so a retry survives the shutdown. */
   onShutdown(): void;
   eventLogger: EventLogger;
+  /**
+   * Records and dispatches an event the daemon builds about itself, the only way to a `queue.` event name: it carries `meta.origin = 'queue'`, the condition
+   * under which the payload references of `queue.dlq.*` events are followed. Internal to the daemon process: no RPC command, wire request or action reaches it.
+   */
+  pushDaemonEvent(request: PushRequest, options?: { hops?: number; causedBy?: CausedBy }): Promise<PushResponse>;
 }
 
 /** The subscriber a WAL or DLQ entry was written for, by its id; none when it was renamed or removed (the caller reports "no longer exists"). */
@@ -103,8 +111,14 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   const actions = options.actions ?? createActionRegistry();
   const configLoader = new ConfigLoader(configDir, { actions });
   // The context of a run is bound lazily to the internal push: the transport exists before the push it will call
-  const actionTransport = new ActionTransport(actions, (source, subscriberId) => ({ push: (request) => emitFrom(source, subscriberId, request) }));
-  const syncDispatcher = new SyncDispatcher(eventLogger, historyLog, actionTransport);
+  // Follows the payload references of the events the daemon builds (the policy is canResolveRef): the base event is read from the history, lazily
+  const historyReader = new HistoryReader(join(configDir, 'history'));
+  const refs = new RefResolver((eventId) => {
+    const trigger = historyReader.findTrigger(eventId);
+    return trigger === undefined ? undefined : { payload: trigger.payload };
+  });
+  const actionTransport = new ActionTransport(actions, (source, subscriberId) => ({ push: (request) => emitFrom(source, subscriberId, request) }), refs);
+  const syncDispatcher = new SyncDispatcher(eventLogger, historyLog, actionTransport, refs);
   const startedAt = Date.now();
   const asyncDispatcher = new AsyncDispatcher(
     (id, updates) => wal.updateEntry(id, updates),
@@ -124,6 +138,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     eventLogger,
     historyLog,
     actionTransport,
+    refs,
   );
 
   let activeDispatches = 0;
@@ -140,6 +155,11 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         permanent: true,
         error: `loop guard: the event '${source.event}' was itself emitted by ${hops} actions in a chain (cap ${MAX_ACTION_HOPS}), so '${request.event}' was not emitted. Fix: break the cycle between the action subscribers of subscribers.yml (an action that emits an event another action listens to).`,
       };
+    }
+    // The queue. namespace is the daemon's own: refused here with a message that names the action, and again by the internal push (which would also refuse it)
+    const reserved = reservedEventProblem(request.event, 'an action');
+    if (reserved !== undefined) {
+      return { success: false, permanent: true, error: reserved };
     }
     // A before* event is dispatched synchronously and answers once: an action has nobody to answer to
     if (request.event.startsWith('before')) {
@@ -190,12 +210,23 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    * Records an event and dispatches it. `hops` is how many actions in a chain emitted it: it is given by the daemon's own code only, never by a client
    * (it is not part of PushRequest and is not read from the wire); the RPC push starts every event at 0.
    * `causedBy` is the provenance of an event emitted by an action, given the same way (the RPC push has none).
+   * `origin` is `'queue'` for the events the daemon builds about itself, given the same way (never read from the wire, the RPC push has none): it alone
+   * allows a name in the reserved `queue.` namespace, and it is required there.
    */
-  async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy }): Promise<PushResponse> {
+  async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy; origin?: 'queue' }): Promise<PushResponse> {
     // before anything is recorded or counted: a client that speaks a protocol this daemon does not accept gets a loud refusal
     const protocol = checkClientProtocol(req.protocol);
     if (!protocol.ok) {
       return { status: 'rejected', reason: protocol.reason, supported: protocol.supported };
+    }
+    // The queue. namespace (protocol 1.5.0) is built by the daemon alone: a client, an action or a replay cannot produce such an event
+    if (internal.origin !== 'queue') {
+      const reserved = typeof req.event === 'string' ? reservedEventProblem(req.event, 'a push') : undefined;
+      if (reserved !== undefined) {
+        return { status: 'rejected', reason: `${reserved}; the event was not recorded` };
+      }
+    } else if (!isReservedEventName(req.event)) {
+      return { status: 'rejected', reason: `an event built by the daemon must be named '${RESERVED_EVENT_PREFIX}...', got '${req.event}'; the event was not recorded` };
     }
     // Same for the direction: a wrong value or a combination that cannot work is refused before anything is recorded
     const direction = checkPushDirection(req.direction);
@@ -247,6 +278,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           // The id of this first push: a retry or a dlq-replay gets a new WAL id, an action template renders this one
           eventId,
           ...(internal.hops > 0 && { hops: internal.hops }),
+          ...(internal.origin !== undefined && { origin: internal.origin }),
         },
       };
 
@@ -579,6 +611,14 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           problems: checked.problems,
         };
       }
+      // The daemon declares its own events in source 'queue' by writing the file itself; no client may claim that source or a queue. event name
+      if (checked.declaration.source === 'queue') {
+        return { status: 'rejected', reason: `the source 'queue' is reserved for the events the queue daemon declares itself, so a client cannot register it. Fix: register your events under your own source name (the name of your program).` };
+      }
+      const reservedEvent = checked.declaration.events.find((declared) => isReservedEventName(declared.name));
+      if (reservedEvent !== undefined) {
+        return { status: 'rejected', reason: `events[${checked.declaration.events.indexOf(reservedEvent)}].name: ${reservedEventProblem(reservedEvent.name, `the source '${checked.declaration.source}'`)}` };
+      }
       writeSourceDeclaration(configDir, checked.declaration);
       return { status: 'registered', source: checked.declaration.source, count: checked.declaration.events.length };
     },
@@ -592,6 +632,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   return {
     commands,
     eventLogger,
+    pushDaemonEvent: (request, options = {}) => pushInternal(request, { hops: options.hops ?? 0, ...(options.causedBy !== undefined && { causedBy: options.causedBy }), origin: 'queue' }),
     isIdle: () => wal.pendingCount() === 0 && activeDispatches === 0,
     onStart: () => {
       declareActionEvents();

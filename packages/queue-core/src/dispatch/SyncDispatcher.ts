@@ -1,6 +1,7 @@
 import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
 import type { ActionTransport } from './ActionTransport.js';
+import type { RefResolver } from './refResolver.js';
 import { runSubscriber, targetOf } from './runSubscriber.js';
 import { OutputCapture } from './OutputCapture.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
@@ -30,6 +31,8 @@ export class SyncDispatcher {
     private readonly historyLog: HistoryWriter,
     // Absent: an action subscriber aborts the chain with a message that says no actions run in this process
     private readonly actionTransport?: ActionTransport,
+    // Absent: no payload reference is followed in the templates of a cli subscriber
+    private readonly refs?: RefResolver,
   ) {}
 
   async dispatch(
@@ -42,7 +45,7 @@ export class SyncDispatcher {
     for (const sub of subscribers) {
       const currentEnvelope: EventEnvelope = { ...envelope, payload: currentPayload };
 
-      const outcome = await runSubscriber(sub, currentEnvelope, timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport });
+      const outcome = await runSubscriber(sub, currentEnvelope, timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport, refs: this.refs });
       if (outcome.kind === 'config') {
         return this.abort(envelope, sub, outcome.error);
       }

@@ -13,6 +13,12 @@ export interface EventMeta {
   hops?: number;
   /** Id of the push that created the event, set at the first push: a retry or a dlq-replay gets a new WAL id, so `{{ id }}` of an action template renders this one (stable dedupe key). */
   eventId?: string;
+  /**
+   * `'queue'` on the events the daemon builds about itself (`queue.dlq.added`, ...). Set only by the daemon's internal push through an internal option,
+   * never read from a wire request (a client-sent `origin` is ignored), like `hops`; it survives the WAL, the DLQ, retry and dlq-replay unchanged.
+   * It is the condition under which a `$eventRef` of the payload is followed (see dispatch/refResolver.ts).
+   */
+  origin?: 'queue';
 }
 
 export interface EventEnvelope {

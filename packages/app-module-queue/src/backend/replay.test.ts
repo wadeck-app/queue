@@ -43,6 +43,18 @@ describe('replayEvent', () => {
     await expect(replayEvent(configDir, 'missing')).rejects.toThrow(ReplayNotFoundError);
   });
 
+  it('refuses to replay a queue.* trigger (reserved namespace) before anything is sent, with an actionable message', async () => {
+    writeTrigger('e-dlq', 'queue.dlq.added', { entryId: 'x' }, tmpdir());
+    mockIsRunning.mockResolvedValue(true);
+    const error = await replayEvent(configDir, 'e-dlq').catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(ReplayError);
+    expect(error).not.toBeInstanceOf(ReplayNotFoundError);
+    expect(getErrorMessage(error)).toContain("'queue.' namespace");
+    expect(getErrorMessage(error)).toContain('cannot be replayed');
+    expect(getErrorMessage(error)).toContain('Fix:');
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
   it('throws ReplayError when the entry has no recorded payload', async () => {
     writeTrigger('e1', 'onFoo');
     await expect(replayEvent(configDir, 'e1')).rejects.toThrow(ReplayError);

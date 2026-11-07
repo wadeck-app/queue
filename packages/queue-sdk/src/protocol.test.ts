@@ -13,12 +13,15 @@ import {
   daemonSupportsPushDirection,
   checkPushDirection,
   PUSH_DIRECTIONS,
+  RESERVED_EVENT_PREFIX,
+  RESERVED_NAMESPACE_MIN_VERSION,
+  isReservedEventName,
 } from './protocol.js';
 import { satisfies } from './semver.js';
 
 describe('protocol constants', () => {
   it('start at 1.1.0 and are consistent with each other', () => {
-    expect(PROTOCOL_VERSION).toBe('1.4.0');
+    expect(PROTOCOL_VERSION).toBe('1.5.0');
     expect(satisfies(PROTOCOL_VERSION, DAEMON_ACCEPTS)).toBe(true);
     expect(satisfies(PROTOCOL_VERSION, SDK_UNDERSTANDS)).toBe(true);
   });
@@ -193,5 +196,18 @@ describe('daemonSupportsPushProject (the project field of a push arrived with pr
     ['1.10.0', true],
   ])('a daemon speaking %s -> %s', (version, expected) => {
     expect(daemonSupportsPushProject(version)).toBe(expected);
+  });
+});
+
+describe('reserved event namespace (protocol 1.5.0)', () => {
+  it('reserves exactly the names that start with "queue."', () => {
+    expect(RESERVED_EVENT_PREFIX).toBe('queue.');
+    expect(RESERVED_NAMESPACE_MIN_VERSION).toBe('1.5.0');
+    expect(isReservedEventName('queue.dlq.added')).toBe(true);
+    expect(isReservedEventName('queue.x')).toBe(true);
+    expect(isReservedEventName('queue')).toBe(false);
+    expect(isReservedEventName('queuex.dlq')).toBe(false);
+    expect(isReservedEventName('myapp.queue.done')).toBe(false);
+    expect(isReservedEventName('onQueue.x')).toBe(false);
   });
 });

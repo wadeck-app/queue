@@ -1,6 +1,6 @@
 # Push protocol
 
-The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.4.0**.
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.5.0**.
 
 Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
 
@@ -44,7 +44,7 @@ No authentication.
   "config_dir": "C:\\Users\\me\\.config\\queue",
   "sdkVersion": 1,
   "port": 47910,
-  "queueProtocol": { "version": "1.4.0", "accepts": "^1.0.0" }
+  "queueProtocol": { "version": "1.5.0", "accepts": "^1.0.0" }
 }
 ```
 
@@ -55,12 +55,12 @@ No authentication.
 Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 ```json
-{ "protocol": "1.4.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+{ "protocol": "1.5.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
-| `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `>` the rest; a `**` segment is refused in `subscribers.yml`) |
+| `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `>` the rest; a `**` segment is refused in `subscribers.yml`). Names starting with `queue.` are reserved, see [Reserved namespace](#reserved-namespace) |
 | `payload` | yes | Any JSON value |
 | `cwd` | yes, unless `project` is given | Directory used to find the registered project (its subscribers) and the project name. Since 1.3.0 it may be omitted when `project` names the project (an event of a virtual project, which has no folder); with neither, the push is `rejected`. A daemon older than 1.3.0 answers HTTP 500 to a push without `cwd` |
 | `protocol` | no | Protocol version the client speaks; absent = `1.0.0` |
@@ -76,7 +76,7 @@ Answer, HTTP 200: `{ "ok": true, "result": <PushResponse> }`.
 | `queued` | Recorded; `on*` subscribers run in the background | `eventId`, `subscriberCount` |
 | `dispatched` | A `before*` event ran synchronously | `eventId`, `result` (the subscribers' answer) |
 | `aborted` | A subscriber refused, or `subscribers.yml` is invalid | `reason`, `eventId` |
-| `rejected` | The client protocol is not accepted, or the `project` is not in the registry (or the registry cannot be read); nothing was recorded | `reason`, `supported` (the accepted range, for a protocol refusal) |
+| `rejected` | The client protocol is not accepted, the `project` is not in the registry (or the registry cannot be read), or the `event` is in the reserved `queue.` namespace; nothing was recorded | `reason`, `supported` (the accepted range, for a protocol refusal) |
 
 A client must treat an unknown `status` as a failure and ignore unknown fields.
 
@@ -119,7 +119,7 @@ Answer, HTTP 200: `{ "ok": true, "result": <RegisterResponse> }`.
 | `result.status` | Meaning | Other fields |
 |---|---|---|
 | `registered` | Stored | `source`, `count` (number of events) |
-| `rejected` | Nothing was stored: the protocol is not accepted, or the declaration breaks a rule above | `reason`; `problems` `[{ "path": "events[3].name", "message": "..." }]` (every problem at once, `path` is empty for the declaration as a whole); `supported` (the accepted range) for a protocol rejection |
+| `rejected` | Nothing was stored: the protocol is not accepted, the declaration breaks a rule above, or it uses the source `queue` or an event name starting with `queue.` (since 1.5.0, see [Reserved namespace](#reserved-namespace)) | `reason`; `problems` `[{ "path": "events[3].name", "message": "..." }]` (every problem at once, `path` is empty for the declaration as a whole); `supported` (the accepted range) for a protocol rejection |
 
 | HTTP | Meaning |
 |---|---|
@@ -140,6 +140,19 @@ curl -s -X POST http://127.0.0.1:47910/push \
 
 The port above is the default (47910); the daemon takes the next free one up to 47920, so read `config.port`.
 
+## Reserved namespace
+
+Since 1.5.0, event names starting with `queue.` (`queue.dlq.added`, ...) belong to the daemon: it builds those events itself and no client can produce one. A subscriber on `queue.>` can trust that the event comes from the daemon.
+
+| Entry | Behaviour |
+|---|---|
+| `POST /push` (`queue push`, the SDK, the relay client, the dashboard) | `rejected` with a `reason` that names the event and says to choose another name; nothing is recorded. Whatever `protocol` the client claims |
+| `POST /register-events` | `rejected` for the source `queue` and for an event name starting with `queue.`; nothing is stored |
+| `emit` action (`with.event`) | Refused when `subscribers.yml` is loaded, and again at run time (permanent failure) |
+| `queue replay`, dashboard replay | Refused for a `queue.*` trigger: a replay is a push |
+
+The daemon does not use these paths for its own events, and a client cannot set the internal `meta.origin` that marks them (an `origin` in a request body is ignored). A daemon older than 1.5.0 accepts such a name from any client: check `queueProtocol.version` before relying on it.
+
 ## Actions
 
 `type: action` subscribers (see [subscribers.md](subscribers.md)) change only the `subscribers.yml` schema. The wire is unchanged: an action emits through the daemon's internal push, which has the `/push` semantics, and the hop counter is never a request field.
@@ -148,6 +161,7 @@ The port above is the default (47910); the daemon takes the next free one up to 
 
 | Version | Change |
 |---|---|
+| 1.5.0 | Additive (MINOR): the `queue.` event namespace is reserved for events the daemon builds itself. A new `rejected` reason on `push` (an event name starting with `queue.`) and on `register-events` (source `queue`, or a `queue.` event name). No field is added or removed; a client that never used such a name is unaffected. Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.4.0 | Additive (MINOR): the optional `direction` of a push (`to-parents` by default, `to-children`, or both); the descendants' own subscribers fire under their own project id, with `emitterProjectId`. Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.3.0 | Additive (MINOR): `cwd` is optional when `project` is named, so a virtual project (no folder) can emit events. Its subscribers run from their own `cwd:`; one without it fails with the project name. A subscriber always runs from the main folder of the project that owns its file (not the emitter's). Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.2.0 | Additive (MINOR): the optional `project` of a push (id of a project of the project registry) |

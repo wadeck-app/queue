@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { EVENT_REF_KEY, findForbiddenSegment, walkPayloadPath } from './walkPayloadPath.js';
+import { EVENT_REF_KEY, KEEP_AS_DATA, findForbiddenSegment, walkPayloadPath } from './walkPayloadPath.js';
 
 describe('walkPayloadPath', () => {
   it('reads a top-level key', () => {
@@ -113,6 +113,24 @@ describe('walkPayloadPath', () => {
       expect(walkPayloadPath({ o: Object.create({ [EVENT_REF_KEY]: 'ev-1' }) as object }, 'o.x', { resolveRef })).toBeUndefined();
       expect(walkPayloadPath({ o: [] }, 'o.x', { resolveRef })).toBeUndefined();
       expect(resolveRef).not.toHaveBeenCalled();
+    });
+
+    it('KEEP_AS_DATA: the walk continues in the object itself, as plain data, and a reference deeper is still a candidate', () => {
+      const resolveRef = vi.fn().mockReturnValue(KEEP_AS_DATA);
+      expect(walkPayloadPath({ x: { [EVENT_REF_KEY]: 'ev-1', own: 'mine' } }, 'x.own', { resolveRef })).toBe('mine');
+      expect(walkPayloadPath({ x: { [EVENT_REF_KEY]: 'ev-1' } }, 'x.missing', { resolveRef })).toBeUndefined();
+      expect(resolveRef).toHaveBeenCalledWith('ev-1', ['x']);
+      // not resolved, so a second reference below is offered to the callback too (it decides again)
+      expect(walkPayloadPath({ x: { [EVENT_REF_KEY]: 'ev-1', y: { [EVENT_REF_KEY]: 'ev-2', z: 1 } } }, 'x.y.z', { resolveRef })).toBe(1);
+      expect(resolveRef).toHaveBeenCalledWith('ev-2', ['x', 'y']);
+    });
+
+    it('a null $eventRef is a reference to nothing: the callback is called with null (it decides, e.g. a legacy dead-letter entry)', () => {
+      const resolveRef = vi.fn().mockImplementation(() => { throw new Error('no base event'); });
+      expect(() => walkPayloadPath({ original: { [EVENT_REF_KEY]: null } }, 'original.taskId', { resolveRef })).toThrow('no base event');
+      expect(resolveRef).toHaveBeenCalledWith(null, ['original']);
+      // at the end of the path it is returned as it is
+      expect(walkPayloadPath({ original: { [EVENT_REF_KEY]: null } }, 'original', { resolveRef })).toEqual({ [EVENT_REF_KEY]: null });
     });
 
     it('an own dotted key still wins, with no resolution', () => {

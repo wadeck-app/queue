@@ -53,3 +53,6 @@ export { ConfigLoader } from './ConfigLoader.js';
 export { findActionCycles } from './actions/findActionCycles.js';
 export type { ActionCycleFinding, ActionCycleOptions, CycleSubscriber } from './actions/findActionCycles.js';
 export { MAX_ACTION_HOPS } from './actions/hopCap.js';
+export { reservedEventProblem, replayReservedProblem } from './reservedEvents.js';
+export { canResolveRef, RefResolver, EventRefError } from './dispatch/refResolver.js';
+export type { RefLookup, ResolvedEvent } from './dispatch/refResolver.js';

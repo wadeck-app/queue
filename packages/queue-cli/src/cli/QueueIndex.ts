@@ -24,7 +24,7 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, findTemplateProblem, doubleStarProblem, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, findTemplateProblem, doubleStarProblem, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES, replayReservedProblem } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -1016,6 +1016,12 @@ async function main(): Promise<void> {
     const entry = reader.findByEventId(eventId);
     if (!entry) {
       process.stderr.write(`[fail] No history entry found for eventId ${eventId}\n`);
+      process.exit(1);
+    }
+    // An event of the reserved queue. namespace is built by the daemon: a replay is a push, which refuses it
+    const reserved = replayReservedProblem(entry.event, eventId);
+    if (reserved !== undefined) {
+      process.stderr.write(`[fail] ${reserved}\n`);
       process.exit(1);
     }
     if (entry.payload === undefined) {

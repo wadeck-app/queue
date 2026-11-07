@@ -30,6 +30,8 @@ describe('emit: validate', () => {
     [{ event: 'agent.{{ payload.kind }}' }, /literal event name, not a template/],
     [{ event: 'agent.*' }, /not a pattern/],
     [{ event: 'agent.>' }, /not a pattern/],
+    [{ event: 'queue.dlq.added' }, /'with.event'.*'queue.' namespace.*'emit' action cannot produce it/],
+    [{ event: 'queue.custom' }, /reserved for events the queue daemon emits itself/],
     [{ event: 'agent..message' }, /dot-separated segments/],
     [{ event: 'agent message' }, /dot-separated segments/],
     [{ event: 'a', extra: 1 }, /unknown field 'extra'/],
@@ -95,5 +97,19 @@ describe('emit: run', () => {
   it('passes the refusal of the push on, permanent or not', async () => {
     expect(await emitAction.run({ event: 'x' }, envelope, context({ success: false, error: 'loop guard', permanent: true }))).toEqual({ success: false, error: 'loop guard', permanent: true });
     expect(await emitAction.run({ event: 'x' }, envelope, context({ success: false, error: 'aborted' }))).toEqual({ success: false, error: 'aborted' });
+  });
+});
+
+describe('emit: the reserved queue. namespace', () => {
+  it('run refuses a queue. event again at run time (whoever built the config) and pushes nothing, for good', async () => {
+    const ctx = context();
+    const result = await emitAction.run({ event: 'queue.dlq.added', payload: {} }, envelope, ctx);
+    expect(result).toMatchObject({ success: false, permanent: true });
+    expect(result.error).toContain("'queue.' namespace");
+    expect(ctx.push).not.toHaveBeenCalled();
+  });
+
+  it('emits() gives no event name for it (it is not a valid emit target)', () => {
+    expect(emitAction.emits?.({ event: 'queue.dlq.added' })).toBeUndefined();
   });
 });

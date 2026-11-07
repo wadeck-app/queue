@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { getHistoryEntry } from './history.js';
 import { createQueueAppClient } from './client.js';
 import { DaemonUnreachableError, ReplayError, ReplayNotFoundError } from './errors.js';
-import type { PushResponse } from '@wadeck-app/queue-core';
+import { replayReservedProblem, type PushResponse } from '@wadeck-app/queue-core';
 
 /**
  * Resubmits a past event's recorded payload as a new event, tagged `replayOf <eventId>`.
@@ -14,6 +14,11 @@ export async function replayEvent(configDir: string, eventId: string): Promise<P
   const entry = getHistoryEntry(configDir, eventId);
   if (!entry) {
     throw new ReplayNotFoundError(`No history entry found for eventId ${eventId}`);
+  }
+  // An event of the reserved queue. namespace is built by the daemon: a replay is a push, which refuses it
+  const reserved = replayReservedProblem(entry.event, eventId);
+  if (reserved !== undefined) {
+    throw new ReplayError(reserved);
   }
   if (entry.payload === undefined) {
     throw new ReplayError(

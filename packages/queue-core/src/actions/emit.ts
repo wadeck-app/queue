@@ -4,6 +4,9 @@ import { getErrorMessage } from '../errors.js';
 import type { ActionConfig, ActionPlugin, ActionResult } from './ActionPlugin.js';
 import { ActionTemplateError, findActionTemplateProblem, renderActionTemplate } from './renderActionTemplate.js';
 import type { EventEnvelope } from '../types.js';
+import type { WalkOptions } from '../walkPayloadPath.js';
+import { reservedEventProblem } from '../reservedEvents.js';
+import { EventRefError } from '../dispatch/refResolver.js';
 
 const ALLOWED_KEYS = ['event', 'payload'];
 // Guards a cyclic structure (a YAML alias can build one) and an absurdly nested `with.payload`
@@ -16,6 +19,10 @@ function eventNameProblem(value: unknown): string | undefined {
   }
   if (value.includes('{{')) {
     return `'with.event' must be a literal event name, not a template (${JSON.stringify(value)}): a payload must not choose which event is pushed. Fix: write the name itself.`;
+  }
+  const reserved = reservedEventProblem(value, "the 'emit' action");
+  if (reserved !== undefined) {
+    return `'with.event': ${reserved}`;
   }
   if (/[*>]/.test(value)) {
     return `'with.event' must be one concrete event name, not a pattern (${JSON.stringify(value)}): '*' and '>' are wildcards for subscribers.yml keys only. Fix: write the name of the event to push.`;
@@ -56,21 +63,21 @@ function payloadTemplateProblem(value: unknown, path: string, depth: number): st
 }
 
 /** Renders every string leaf of `value` (keys are kept as written). */
-function renderPayload(value: unknown, envelope: EventEnvelope, path: string, depth: number): unknown {
+function renderPayload(value: unknown, envelope: EventEnvelope, path: string, depth: number, walk: WalkOptions): unknown {
   if (depth > MAX_DEPTH) {
     throw new ActionTemplateError(path, `nested more than ${MAX_DEPTH} levels deep (or refers to itself).`);
   }
   if (typeof value === 'string') {
-    return renderActionTemplate(value, envelope, path);
+    return renderActionTemplate(value, envelope, path, walk);
   }
   if (Array.isArray(value)) {
-    return value.map((item, i) => renderPayload(item, envelope, `${path}[${i}]`, depth + 1));
+    return value.map((item, i) => renderPayload(item, envelope, `${path}[${i}]`, depth + 1, walk));
   }
   if (isRecord(value)) {
     const rendered: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
       // defineProperty: a key such as '__proto__' written in the YAML stays a plain own property of the new object
-      Object.defineProperty(rendered, key, { value: renderPayload(child, envelope, `${path}.${key}`, depth + 1), enumerable: true, writable: true, configurable: true });
+      Object.defineProperty(rendered, key, { value: renderPayload(child, envelope, `${path}.${key}`, depth + 1, walk), enumerable: true, writable: true, configurable: true });
     }
     return rendered;
   }
@@ -119,8 +126,12 @@ export const emitAction: ActionPlugin = {
     const event = config['event'] as string;
     let payload: unknown;
     try {
-      payload = renderPayload(config['payload'] ?? {}, envelope, 'with.payload', 0);
+      payload = renderPayload(config['payload'] ?? {}, envelope, 'with.payload', 0, context.resolveRef === undefined ? {} : { resolveRef: context.resolveRef });
     } catch (err) {
+      // The history could not be read right now: a retry can work
+      if (err instanceof EventRefError) {
+        return { success: false, error: `action 'emit' cannot render 'with.payload': ${err.message}` };
+      }
       if (err instanceof ActionTemplateError) {
         return { success: false, permanent: true, error: `action 'emit' cannot render ${err.message}` };
       }

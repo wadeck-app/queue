@@ -3,12 +3,15 @@ import type { ActionTransport } from './ActionTransport.js';
 import type { CliTransport } from './CliTransport.js';
 import type { DispatchResult } from './DispatchResult.js';
 import type { HttpTransport } from './HttpTransport.js';
+import type { RefResolver } from './refResolver.js';
 
 export interface Transports {
   cli: CliTransport;
   http: HttpTransport;
   /** Absent when the host runs no actions (an action subscriber then fails for good, with the reason). */
   action?: ActionTransport;
+  /** Follows the payload references of the events the daemon builds, in the templates of a cli command. Absent: none is followed. */
+  refs?: RefResolver;
 }
 
 /** The subscriber cannot run at all: the configuration is the problem, not the event. */
@@ -44,7 +47,7 @@ export async function runSubscriber(sub: ResolvedSubscriber, envelope: EventEnve
       if (sub.cwdProblem !== undefined) {
         return { kind: 'config', error: sub.cwdProblem };
       }
-      return { kind: 'dispatched', result: await transports.cli.dispatch(sub.command, envelope, timeoutMs, sub.cwd, sub.env, sub.subscriberId) };
+      return { kind: 'dispatched', result: await transports.cli.dispatch(sub.command, envelope, timeoutMs, sub.cwd, sub.env, sub.subscriberId, transports.refs?.forEnvelope(envelope)) };
     }
     case 'http': {
       if (!sub.url) {

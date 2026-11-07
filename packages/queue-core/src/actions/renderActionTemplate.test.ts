@@ -27,7 +27,7 @@ describe('renderActionTemplate', () => {
 
   it('follows a reference only through the callback it is given (one level, at the end it stays a reference)', () => {
     const payload = { original: { $eventRef: 'ev-1' } };
-    const options = { resolveRef: (ref: string) => (ref === 'ev-1' ? { taskId: 9 } : undefined) };
+    const options = { resolveRef: (ref: string | null) => (ref === 'ev-1' ? { taskId: 9 } : undefined) };
     expect(renderActionTemplate('{{ payload.original.taskId }}', envelope(payload), 'with.payload.text', options)).toBe('9');
     expect(render('{{ payload.original.taskId }}', payload)).toBe('');
     expect(renderActionTemplate('{{ payload.original }}', envelope(payload), 'with.payload.text', options)).toBe('{"$eventRef":"ev-1"}');

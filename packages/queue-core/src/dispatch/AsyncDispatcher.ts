@@ -1,6 +1,7 @@
 import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
 import type { ActionTransport } from './ActionTransport.js';
+import type { RefResolver } from './refResolver.js';
 import { runSubscriber, targetOf } from './runSubscriber.js';
 import { RetryScheduler } from './RetryScheduler.js';
 import { OutputCapture } from './OutputCapture.js';
@@ -23,6 +24,8 @@ export class AsyncDispatcher {
     private readonly historyLog: HistoryWriter,
     // Absent: an action subscriber fails for good with a message that says no actions run in this process
     private readonly actionTransport?: ActionTransport,
+    // Absent: no payload reference is followed in the templates of a cli subscriber
+    private readonly refs?: RefResolver,
   ) {}
 
   async dispatch(
@@ -41,7 +44,7 @@ export class AsyncDispatcher {
           return;
         }
 
-        const outcome = await runSubscriber(sub, envelope, sub.timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport });
+        const outcome = await runSubscriber(sub, envelope, sub.timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport, refs: this.refs });
         if (outcome.kind === 'config') {
           this.failConfig(envelope, walEntry, sub, outcome.error);
           return;

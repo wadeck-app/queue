@@ -102,6 +102,13 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 - **Threat:** `with` may hold a token, a recipient or a message; `GET /subscribers` travels to a browser.
 - **Mitigation:** every `with` value is masked (`***`), keys are kept, like `headers` and `env`.
 
+### Forged `$eventRef` and the reserved `queue.` namespace
+
+- **Threat:** The events the daemon emits about the dead-letter queue carry `original: { "$eventRef": "<eventId>" }`, and a template placeholder that walks into it reads the payload of another event from the history. A client that pushes `{"x": {"$eventRef": "<victim id>"}}` (or a `queue.dlq.added` event, or an `origin` in its body) could make a subscriber template read a payload it never sent.
+- **Mitigation:** one policy, `canResolveRef` (`dispatch/refResolver.ts`): a reference is followed only when `meta.origin === 'queue'` (set by the daemon's internal push, never read from a request, kept through WAL, DLQ, retry and replay), the event is exactly `queue.dlq.added` or `queue.dlq.removed`, and the reference sits at the top-level key `original`. Anything else is plain data. The `queue.` namespace is reserved on every external entry (wire push, `emit` action at load time and run time, `register-events`, replay of a `queue.*` trigger), so no client can produce an event the policy accepts. Only the payload of the base event is returned (not its metadata), one level deep (a reference in a resolved payload is not followed), by event id (an unguessable UUID). Templates only: `when:`, http bodies and stdin never resolve. Errors name the reference, never a value.
+- **Wildcard subscribers** (`*`, `queue.>`) and the history see only the reference, not the base payload: the event adds no copy of sensitive data to the WAL, DLQ, history or an http subscriber's body. A subscriber whose template reads `original` receives base fields, as it would from the original event.
+- **Risk accepted:** a daemon older than push protocol 1.5.0 accepts `queue.` names from a client; it also builds no such event. The id of a base event is a capability for `queue history --event-id` for any local process (see the local RPC threat).
+
 ### Action loops and fan-out
 
 - **Threat:** An action that emits an event another action (or itself) listens to loops; one event can also fan out to many actions.

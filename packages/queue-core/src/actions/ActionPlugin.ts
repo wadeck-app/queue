@@ -1,5 +1,6 @@
 import type { EventDeclaration } from '../catalog/EventCatalog.js';
 import type { EventEnvelope } from '../types.js';
+import type { ResolveRef } from '../walkPayloadPath.js';
 
 /** The `with:` block of a `type: action` subscriber, as written in subscribers.yml (values are not rendered yet). */
 export type ActionConfig = Record<string, unknown>;
@@ -32,6 +33,11 @@ export interface ActionPushResult {
 /** What an action may do to the outside, handed to `run`. Bound to the envelope the subscriber received. */
 export interface ActionContext {
   push(request: ActionPushRequest): Promise<ActionPushResult>;
+  /**
+   * Follows the payload references of the event the daemon built (`queue.dlq.*`) when the action renders its templates: pass it as the `resolveRef` option of
+   * renderActionTemplate. Bound to this run (a base event is loaded once). Absent when the host follows none.
+   */
+  resolveRef?: ResolveRef;
 }
 
 export interface ActionResult {

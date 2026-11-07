@@ -1,5 +1,6 @@
 import type { EventEnvelope } from '../types.js';
 import { FORBIDDEN_PATH_SEGMENTS, walkPayloadPath, type WalkOptions } from '../walkPayloadPath.js';
+import { EventRefError } from '../dispatch/refResolver.js';
 
 /**
  * Templates of the `with:` values of a `type: action` subscriber. Rendered in Node, never in a shell, in one pass (a value
@@ -86,6 +87,22 @@ function stringify(value: unknown, field: string, expression: string): string {
 }
 
 /**
+ * Reads a payload placeholder. A reference that cannot be followed for good becomes an ActionTemplateError naming the field and the placeholder;
+ * one that failed for now (history unreadable) is rethrown as a retryable EventRefError.
+ */
+function walkWithRefs(envelope: EventEnvelope, expression: string, field: string, options: WalkOptions): unknown {
+  try {
+    return walkPayloadPath(envelope.payload, expression.slice('payload.'.length), options);
+  } catch (err) {
+    if (err instanceof EventRefError) {
+      const located = err.withContext(`the placeholder {{ ${expression} }}`);
+      throw located.permanent ? new ActionTemplateError(field, located.message) : located.withContext(field);
+    }
+    throw err;
+  }
+}
+
+/**
  * Renders one template string against the envelope. `field` names where the template sits (`with.payload.text`) for the errors.
  * Throws ActionTemplateError: syntax or scope (also found by findActionTemplateProblem at load time), a NUL character,
  * or a rendered value over 64 KB. Every message names the field and the placeholder, never the value.
@@ -103,7 +120,7 @@ export function renderActionTemplate(template: string, envelope: EventEnvelope, 
       case 'id': return envelope.meta.eventId ?? envelope.id;
       case 'timestamp': return envelope.timestamp;
       case 'payload': return stringify(envelope.payload, field, expression);
-      default: return stringify(walkPayloadPath(envelope.payload, expression.slice('payload.'.length), options), field, expression);
+      default: return stringify(walkWithRefs(envelope, expression, field, options), field, expression);
     }
   });
   if (rendered.includes('\0')) {

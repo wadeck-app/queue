@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { extname } from 'node:path';
 import type { EventEnvelope } from '../types.js';
+import type { ResolveRef } from '../walkPayloadPath.js';
+import { EventRefError } from './refResolver.js';
 import { getErrorMessage } from '../errors.js';
 import { CommandTemplateError, findCmdMetacharacter, hasPlaceholders, substituteToken, tokenizeTemplate } from './commandTemplate.js';
 import type { DispatchResult } from './DispatchResult.js';
@@ -25,9 +27,9 @@ function quoteForCmd(arg: string): string {
 
 /**
  * Plans the start of a command that holds `{{ }}` placeholders. Throws CommandTemplateError (a permanent failure) when it cannot be run safely.
- * `subscriber` only labels the errors.
+ * `subscriber` only labels the errors. `resolveRef` follows the payload references the daemon allows (dispatch/refResolver.ts); absent, none is followed.
  */
-function planDirectLaunch(command: string, envelope: EventEnvelope, cwd: string | undefined, env: NodeJS.ProcessEnv | undefined, subscriber: string, baseOptions: SpawnOptions): DirectLaunch {
+function planDirectLaunch(command: string, envelope: EventEnvelope, cwd: string | undefined, env: NodeJS.ProcessEnv | undefined, subscriber: string, baseOptions: SpawnOptions, resolveRef?: ResolveRef): DirectLaunch {
   const label = `subscriber '${subscriber}'`;
   const tokens = tokenizeTemplate(command);
   const programToken = tokens[0];
@@ -37,7 +39,19 @@ function planDirectLaunch(command: string, envelope: EventEnvelope, cwd: string 
     );
   }
   const program = programToken.map((part) => (part.kind === 'literal' ? part.text : '')).join('');
-  const substituted = tokens.slice(1).map((token) => substituteToken(token, envelope.payload));
+  let substituted: ReturnType<typeof substituteToken>[];
+  try {
+    substituted = tokens.slice(1).map((token) => substituteToken(token, envelope.payload, resolveRef === undefined ? {} : { resolveRef }));
+  } catch (err) {
+    // The label first: which subscriber, then the field and the reference
+    if (err instanceof CommandTemplateError) {
+      throw new CommandTemplateError(`${label}: ${err.message}`);
+    }
+    if (err instanceof EventRefError) {
+      throw err.withContext(label);
+    }
+    throw err;
+  }
 
   for (const argument of substituted) {
     for (const { field, value } of argument.fields) {
@@ -108,9 +122,10 @@ export class CliTransport {
   /**
    * Runs a `cli` subscriber command and feeds the event envelope to its stdin.
    * Without `{{ }}` the command goes to a shell as written (it comes from the trusted subscribers.yml). With `{{ }}` it is split into arguments first and
-   * started without a shell, so payload values stay data (docs/subscribers.md). `subscriber` only labels the errors.
+   * started without a shell, so payload values stay data (docs/subscribers.md). `subscriber` only labels the errors. `resolveRef` is the callback of this
+   * dispatch that follows the payload references the daemon allows; only the placeholders of the command use it (never stdin, which is the envelope as it is).
    */
-  async dispatch(command: string, envelope: EventEnvelope, timeoutMs: number, cwd?: string, env?: Record<string, string>, subscriber = 'unknown'): Promise<DispatchResult> {
+  async dispatch(command: string, envelope: EventEnvelope, timeoutMs: number, cwd?: string, env?: Record<string, string>, subscriber = 'unknown', resolveRef?: ResolveRef): Promise<DispatchResult> {
     const start = Date.now();
     const spawnEnv = env ? { ...process.env, ...env } : undefined;
     const baseOptions: SpawnOptions = { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], cwd, env: spawnEnv };
@@ -119,10 +134,14 @@ export class CliTransport {
     if (hasPlaceholders(command)) {
       let plan: DirectLaunch;
       try {
-        plan = planDirectLaunch(command, envelope, cwd, spawnEnv, subscriber, baseOptions);
+        plan = planDirectLaunch(command, envelope, cwd, spawnEnv, subscriber, baseOptions, resolveRef);
       } catch (err) {
         if (err instanceof CommandTemplateError) {
           return { success: false, error: err.message, permanent: true, durationMs: Date.now() - start };
+        }
+        // The history could not be read right now: a retry can work
+        if (err instanceof EventRefError) {
+          return { success: false, error: err.message, durationMs: Date.now() - start };
         }
         throw err;
       }

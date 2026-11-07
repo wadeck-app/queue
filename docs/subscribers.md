@@ -165,6 +165,18 @@ Objects render as JSON; a NUL character refuses the delivery; each rendered fiel
 
 YAML pitfall: an unquoted `text: {{ payload.x }}` parses as a flow mapping. Always quote: `text: "{{ payload.x }}"`.
 
+### Lazy references in `queue.dlq.*` events
+
+The events the daemon emits about the dead-letter queue (`queue.dlq.added`, `queue.dlq.removed`) carry no copy of the failed event's payload. They carry a reference to it, `"original": { "$eventRef": "<eventId>" }`, and a template placeholder that walks into `original` reads the payload of that base event, loaded from the history only when a placeholder needs it (once per delivery): `{{ payload.original.taskId }}` is the `taskId` of the base event.
+
+- Followed only for an event the daemon built (`meta.origin`, never settable from a push), named exactly `queue.dlq.added` or `queue.dlq.removed`, at the top-level key `original`, one level deep. Anywhere else `{"$eventRef": ...}` is plain data, so a pushed payload cannot read another event.
+- Only the payload of the base event is readable, never its metadata. A reference inside that payload is not followed.
+- Templates only (`cli` arguments and action `with` values). `when:` filters, http bodies and the envelope on stdin show the reference, not the base payload.
+- A terminal `{{ payload.original }}` renders the reference JSON as it is, without loading anything.
+- Base event gone (the history keeps at most 90 days and 200 MB) or reference `null` (a dead-letter entry written before events were tracked by id): permanent failure naming the field and the reference, never a payload value. Fix: read what you need before then, or run `queue history --event-id <id> --json` by hand.
+- An unreadable history is a plain failure and is retried.
+- `queue.` names are reserved: no push, `emit` action or `register-events` can produce them (see [push-protocol.md](push-protocol.md#reserved-namespace)).
+
 ### Delivery and idempotence
 
 - Delivery is at-least-once: a retry, `queue dlq replay` or a daemon restart can emit the same message again.
