@@ -18,6 +18,9 @@ export function buildLaunchScript(nodePath: string, scriptPath: string, env: Rec
     'Set oShell = CreateObject("WScript.Shell")',
     ...envLines,
     `oShell.Run """${safeNode}"" ""${safeScript}""", 0, False`,
+    // The self-delete is housekeeping: if the file is already gone (a temp cleaner, a test cleanup) Windows Script Host would show a modal
+    // "File not found" dialog on the user's desktop. A failed LAUNCH (the Run line above) stays loud.
+    'On Error Resume Next',
     'CreateObject("Scripting.FileSystemObject").DeleteFile WScript.ScriptFullName',
   ].join('\r\n');
 }

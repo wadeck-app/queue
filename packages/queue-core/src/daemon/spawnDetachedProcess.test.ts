@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -62,6 +63,41 @@ describe('buildLaunchScript', () => {
     );
     expect(deleteLineIndex).toBeGreaterThan(runLineIndex);
     expect(deleteLineIndex).toBe(lines.length - 1);
+  });
+
+  it('ignores an error of the self-delete only: On Error Resume Next sits right before it, after the Run line', () => {
+    const lines = buildLaunchScript(NODE_PATH, SCRIPT_PATH, { FOO: 'bar' }).split('\r\n');
+    const run = lines.findIndex((line) => line.includes('oShell.Run'));
+    const del = lines.findIndex((line) => line.includes('DeleteFile'));
+    expect(lines[del - 1]).toBe('On Error Resume Next');
+    expect(del - 1).toBeGreaterThan(run);
+    expect(lines.some((line, i) => i < run && /On Error/i.test(line))).toBe(false);
+  });
+
+  // The user saw a modal "Fichier introuvable" (800A0035) dialog when another process deleted the script before its last line ran
+  it.skipIf(process.platform !== 'win32')('does not fail when the script file is already gone at the self-delete (no dialog); without the guard it does', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'queue-vbs-'));
+    try {
+      const jsPath = join(dir, 'noop.js');
+      writeFileSync(jsPath, '', 'utf-8');
+      const generated = buildLaunchScript(process.execPath, jsPath, {});
+      // A second self-delete after the first: the file is gone by then, exactly the situation of the dialog
+      const secondDelete = '\r\nCreateObject("Scripting.FileSystemObject").DeleteFile WScript.ScriptFullName';
+      const guarded = join(dir, 'guarded.vbs');
+      const unguarded = join(dir, 'unguarded.vbs');
+      writeFileSync(guarded, generated + secondDelete, 'utf-8');
+      writeFileSync(unguarded, (generated + secondDelete).replace('On Error Resume Next\r\n', ''), 'utf-8');
+      // cscript runs the same VBScript engine as wscript but never opens a dialog: a runtime error is PRINTED (language of the machine) and the exit code
+      // stays 0, so the signal is any output at all (these scripts print nothing); wscript //B swallows errors silently and cannot tell them apart
+      const output = (file: string): string => {
+        const run = spawnSync('cscript.exe', ['//NoLogo', file], { windowsHide: true, timeout: 300_000, encoding: 'utf-8' });
+        return `${run.stdout}${run.stderr}`.trim();
+      };
+      expect(output(unguarded), 'the control (no guard) must report an error, otherwise this test proves nothing').not.toBe('');
+      expect(output(guarded)).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('should have proper VBScript structure', () => {

@@ -4,8 +4,9 @@
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { runQueueCommand } from './QueueIndex.js';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 
@@ -53,7 +54,6 @@ vi.mock('node:child_process', async () => {
 // --- helpers ---
 
 let tmpDir: string;
-let testStartedAt = 0;
 
 function withArgv(args: string[], fn: () => Promise<void>): Promise<void> {
 	const orig = process.argv;
@@ -99,7 +99,6 @@ async function run(args: string[]): Promise<{ stdout: string; stderr: string; ex
 }
 
 beforeEach(() => {
-	testStartedAt = Date.now();
 	tmpDir = mkdtempSync(join(tmpdir(), 'queue-test-'));
 	process.env['QUEUE_CONFIG_DIR'] = tmpDir;
 	process.env['LAUNCHER_BUNDLE_OVERRIDE'] = join(tmpDir, 'queue.cjs');
@@ -110,11 +109,14 @@ afterEach(() => {
 	delete process.env['QUEUE_CONFIG_DIR'];
 	delete process.env['LAUNCHER_BUNDLE_OVERRIDE'];
 	rmSync(tmpDir, { recursive: true, force: true });
-	// A daemon spawn writes a queue-spawn-<ms>-<random>.vbs that the (mocked) wscript never runs, so nobody deletes it: remove those this test caused
-	for (const name of readdirSync(tmpdir())) {
-		const written = /^queue-spawn-(\d+)-.*\.vbs$/.exec(name);
-		if (written !== null && Number(written[1]) >= testStartedAt) {
-			rmSync(join(tmpdir(), name), { force: true });
+	// A daemon spawn writes a queue-spawn-<ms>-<random>.vbs that the (mocked) wscript never runs, so nobody deletes it: remove exactly the ones this
+	// test handed to the mocked wscript. Never "everything newer than my start" in the shared temp dir: a REAL daemon started at the same time by another
+	// test run or session would lose its launch script before wscript deletes it itself, and Windows would show a modal "File not found" dialog.
+	for (const call of vi.mocked(spawn).mock.calls) {
+		const [command, args] = call as unknown as [string, string[] | undefined];
+		const vbsPath = args?.[0];
+		if (command === 'wscript.exe' && vbsPath !== undefined && /queue-spawn-\d+-.*\.vbs$/.test(vbsPath)) {
+			rmSync(vbsPath, { force: true });
 		}
 	}
 });
