@@ -32,8 +32,8 @@ describe('locateDaemon', () => {
   });
 
   it('reads port and pid', () => {
-    writePortFile(JSON.stringify({ sdkVersion: 1, port: 47910, pid: 123, startedAt: 'now' }));
-    expect(locateDaemon(dir)).toMatchObject({ state: 'found', file: { port: 47910, pid: 123 } });
+    writePortFile(JSON.stringify({ sdkVersion: 1, port: 43210, pid: 123, startedAt: 'now' }));
+    expect(locateDaemon(dir)).toMatchObject({ state: 'found', file: { port: 43210, pid: 123 } });
   });
 
   it('tolerates a trailing newline and a BOM', () => {
@@ -122,10 +122,10 @@ function scripted(outcome: HttpOutcome, alive = true): Script {
 }
 
 function versionAnswer(extra: Record<string, unknown> = {}, pid = 4242, configDir = dir): HttpOutcome {
-  return { kind: 'response', status: 200, text: JSON.stringify({ version: '1.2.3', pid, config_dir: configDir, sdkVersion: 1, port: 47910, ...extra }) };
+  return { kind: 'response', status: 200, text: JSON.stringify({ version: '1.2.3', pid, config_dir: configDir, sdkVersion: 1, port: 43210, ...extra }) };
 }
 
-function seedFiles(pid = 4242, port = 47910): void {
+function seedFiles(pid = 4242, port = 43210): void {
   writePortFile(JSON.stringify({ sdkVersion: 1, port, pid, startedAt: 'now' }));
   writeFileSync(join(dir, 'health_token'), 'tok\n');
 }
@@ -150,9 +150,9 @@ describe('createDaemonResolver', () => {
     seedFiles();
     const { deps, calls } = scripted(versionAnswer());
     const result = await createDaemonResolver(dir, deps).resolve();
-    expect(result).toMatchObject({ state: 'ready', daemon: { port: 47910, pid: 4242, version: '1.2.3', protocol: { version: '1.0.0', accepts: '^1.0.0' }, negotiated: PROTOCOL_VERSION } });
+    expect(result).toMatchObject({ state: 'ready', daemon: { port: 43210, pid: 4242, version: '1.2.3', protocol: { version: '1.0.0', accepts: '^1.0.0' }, negotiated: PROTOCOL_VERSION } });
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ port: 47910, method: 'GET', path: '/version' });
+    expect(calls[0]).toMatchObject({ port: 43210, method: 'GET', path: '/version' });
     expect(calls[0]?.headers?.['Authorization']).toBeUndefined();
   });
 
@@ -230,7 +230,7 @@ describe('createDaemonResolver', () => {
     const { deps, calls } = scripted(versionAnswer());
     const resolver = createDaemonResolver(dir, deps);
     await resolver.resolve();
-    seedFiles(4242, 47911);
+    seedFiles(4242, 43211);
     await resolver.resolve();
     expect(calls).toHaveLength(2);
   });

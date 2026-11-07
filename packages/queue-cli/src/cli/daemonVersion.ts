@@ -8,18 +8,26 @@ import { isRecord } from '@wadeck-app/queue-core';
 const ANSWER_TIMEOUT_MS = 2000;
 
 /**
+ * The port the daemon of that state dir really bound, from its `config.port` (what every client must use: the port asked for at start
+ * can differ, see QUEUE_DAEMON_PORT), or undefined when there is no readable port file.
+ */
+export function readDaemonPort(stateDir: string): number | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(stateDir, 'config.port'), 'utf-8'));
+    const port = isRecord(parsed) ? parsed['port'] : undefined;
+    return typeof port === 'number' ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The queue release the running daemon reports (GET /version, no authentication), or undefined when there is no daemon to ask:
  * no port file, no answer, an answer that is not a version.
  */
 export async function readDaemonVersion(configDir: string): Promise<string | undefined> {
-  let port: unknown;
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(join(configDir, 'config.port'), 'utf-8'));
-    port = isRecord(parsed) ? parsed['port'] : undefined;
-  } catch {
-    return undefined;
-  }
-  if (typeof port !== 'number') {
+  const port = readDaemonPort(configDir);
+  if (port === undefined) {
     return undefined;
   }
   return new Promise<string | undefined>((resolve) => {

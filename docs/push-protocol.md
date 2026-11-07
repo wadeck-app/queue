@@ -138,7 +138,7 @@ curl -s -X POST http://127.0.0.1:47910/push \
   -d '{"protocol":"1.1.0","event":"demo.hello","payload":{},"cwd":"/path/to/project"}'
 ```
 
-The port above is the default (47910); the daemon takes the next free one up to 47920, so read `config.port`.
+The port above is the default (47910, override with `QUEUE_DAEMON_PORT`); the daemon takes the next free one up to 47920, so read `config.port`.
 
 ## Reserved namespace
 

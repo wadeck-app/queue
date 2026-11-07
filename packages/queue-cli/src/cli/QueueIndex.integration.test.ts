@@ -1,30 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
 import { spawnOwned, waitFor, removeDirWhenFree, withHangGuard } from '../testWaitFor.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { testBundleFile } from '../testing/testBundle.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = join(__dirname, '../..');
-const bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
+const bundlePath = testBundleFile('queue.cjs');
 
 let tempConfigDir: string;
 let iso: IsolatedCliEnv | undefined;
 
 beforeAll(() => {
-  // Build the bundle before running integration tests
-  execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
-    cwd: rootDir,
-    stdio: 'inherit',
-    env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-    windowsHide: true,
-  });
-
   // Throwaway config dir, home, npm prefix and unreachable registry: the spawned CLI must never touch the real machine state
   iso = createIsolatedCliEnv();
   tempConfigDir = iso.configDir;
@@ -88,12 +77,12 @@ describe('bundled app-module manifest (integration)', () => {
   it('carries the build version, so app-core re-imports the backend after every update', () => {
     // app-core's loader imports `backend.cjs?v=<manifest.version>`; a constant version means the
     // import cache returns the previous backend after `queue cli update` (page= was silently ignored).
-    const manifest = JSON.parse(readFileSync(join(rootDir, 'dist-bundle/app-module/manifest.json'), 'utf-8')) as { version: string };
+    const manifest = JSON.parse(readFileSync(testBundleFile('app-module/manifest.json'), 'utf-8')) as { version: string };
     expect(manifest.version).toBe('0.0.0-test-integration');
   });
 
   it('is the module artifact built by app-core-cli package: packaged manifest, a callable backend, JSON views, no sources', () => {
-    const appModuleDir = join(rootDir, 'dist-bundle/app-module');
+    const appModuleDir = testBundleFile('app-module');
     const manifest = JSON.parse(readFileSync(join(appModuleDir, 'manifest.json'), 'utf-8')) as { backendEntryPath: string; extensionPoints: { view: { value: string } }[] };
     expect(manifest.backendEntryPath).toBe('./api-backend/backend.cjs');
     for (const point of manifest.extensionPoints) {
@@ -107,7 +96,7 @@ describe('bundled app-module manifest (integration)', () => {
   });
 
   it('keeps the module id: app-core refuses a manifest without "id" (or with another one than the registration id)', () => {
-    const manifest = JSON.parse(readFileSync(join(rootDir, 'dist-bundle/app-module/manifest.json'), 'utf-8')) as { id?: string };
+    const manifest = JSON.parse(readFileSync(testBundleFile('app-module/manifest.json'), 'utf-8')) as { id?: string };
     expect(manifest.id).toBe('queue');
   });
 });
@@ -140,7 +129,7 @@ describe('queue cli update (integration)', () => {
   });
 
   it('the updater bundle itself refuses a dev build (exit 1 when forced, exit 0 in the background) and logs why', () => {
-    const updaterPath = join(rootDir, 'dist-bundle/queue-updater.cjs');
+    const updaterPath = testBundleFile('queue-updater.cjs');
     const forced = spawnSync(process.execPath, [updaterPath], { encoding: 'utf-8', timeout: 300_000, env: { ...isolatedEnv(), UPDATER_FORCE: '1' } });
     expect(forced.status).toBe(1);
     expect(forced.stderr).toMatch(/refusing to update the global install of queue/);

@@ -2,14 +2,27 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { createDaemonClient, type DaemonClient } from '@wadeck-app/singleton-daemon-kit';
 import { waitFor } from './testing/waitFor.js';
-import { RELAY_DAEMON_PORT, startRelayDaemon, handleConnectionCrash, type RelayCommands } from './RelayDaemon.js';
+import { startRelayDaemon, handleConnectionCrash, type RelayCommands } from './RelayDaemon.js';
 
 // stop() arms a forced process.exit 3 s later (real timer): on a slow machine the worker is still running tests by then and vitest
 // fails on "process.exit unexpectedly called". Tests that do not look at that safety net replace it with this no-op.
 const noForcedExit = { setTimeout: () => ({ unref: () => undefined }), exit: () => undefined, log: () => undefined };
+
+// A port nothing listens on right now (bound to port 0, read, closed)
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as { port: number };
+      server.close(() => resolve(port));
+    });
+  });
+}
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `queue-relay-daemon-test-${crypto.randomUUID()}`);
@@ -27,6 +40,7 @@ describe('startRelayDaemon', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     // Stop the daemon if it was started
     if (daemonHandle) {
       await daemonHandle.stop('command');
@@ -46,12 +60,40 @@ describe('startRelayDaemon', () => {
     expect(existsSync(relayStateDir)).toBe(false);
 
     // Start the daemon
-    daemonHandle = await startRelayDaemon(configDir, noForcedExit);
+    daemonHandle = await startRelayDaemon(configDir, noForcedExit, { port: 0 });
 
     // Verify the directory was created
     expect(existsSync(relayStateDir)).toBe(true);
   });
 
+  it('asks for QUEUE_RELAY_PORT when no port option is given, and the option wins over it', async () => {
+    configDir = makeTmpDir();
+    const wanted = await freePort();
+    vi.stubEnv('QUEUE_RELAY_PORT', String(wanted));
+
+    daemonHandle = await startRelayDaemon(configDir, noForcedExit);
+    expect(daemonHandle.port).toBe(wanted);
+    await daemonHandle.stop('command');
+    daemonHandle = null;
+
+    const other = makeTmpDir();
+    try {
+      daemonHandle = await startRelayDaemon(other, noForcedExit, { port: 0 });
+      expect(daemonHandle.port).not.toBe(wanted);
+    } finally {
+      await daemonHandle?.stop('command');
+      daemonHandle = null;
+      rmSync(other, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it('refuses an invalid QUEUE_RELAY_PORT before starting anything, naming the variable and the value', async () => {
+    configDir = makeTmpDir();
+    vi.stubEnv('QUEUE_RELAY_PORT', '80');
+
+    await expect(startRelayDaemon(configDir, noForcedExit)).rejects.toThrow('QUEUE_RELAY_PORT="80" is not a valid port');
+    expect(existsSync(join(configDir, 'relay-daemon'))).toBe(false);
+  });
 });
 
 describe('RelayStatus with diagnostics', () => {
@@ -80,7 +122,7 @@ describe('RelayStatus with diagnostics', () => {
     const relayYml = join(tmpConfigDir, 'relay.yml');
     writeFileSync(relayYml, 'invalid: yaml: content:');
 
-    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit);
+    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit, { port: 0 });
     client = createDaemonClient<RelayCommands>({
       configDir: join(tmpConfigDir, 'relay-daemon'),
       commands: {
@@ -123,7 +165,7 @@ plugins:
 `
     );
 
-    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit);
+    tmpDaemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit, { port: 0 });
     client = createDaemonClient<RelayCommands>({
       configDir: join(tmpConfigDir, 'relay-daemon'),
       commands: {
@@ -343,6 +385,7 @@ plugins:
   it('stop("command") closes the relay connection and prevents reconnect', async () => {
     let connectionLoopEnded = false;
     daemonHandle = await startRelayDaemon(tmpConfigDir, noForcedExit, {
+      port: 0,
       connection: {
         onLoopEnd: () => {
           connectionLoopEnded = true;
@@ -421,7 +464,7 @@ plugins:
 `
       );
 
-      daemonHandle = await startRelayDaemon(tmpConfigDir);
+      daemonHandle = await startRelayDaemon(tmpConfigDir, undefined, { port: 0 });
 
       // Wait for connection
       await waitFor(() => authMessagesReceived > 0, 'the daemon to connect and send its auth message');

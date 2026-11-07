@@ -1,44 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as net from 'node:net';
-import { spawnOwned, waitFor, withHangGuard } from '../testWaitFor.js';
+import { spawnOwned, waitFor, waitForPortFree, withHangGuard } from '../testWaitFor.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { testBundleFile } from '../testing/testBundle.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = join(__dirname, '../..');
-const bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
+const bundlePath = testBundleFile('queue.cjs');
 
 let tempConfigDir: string;
 let iso: IsolatedCliEnv | undefined;
-let portsBusy: boolean = false;
 
 // A removal that survives Windows holding a file for a moment after a child process exited (EPERM, EBUSY): Node retries it
 const removeDir = (path: string): void => rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-
-// Helper to check if a port is listening
-async function isPortListening(port: number, host: string = '127.0.0.1'): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.createConnection(port, host);
-    socket.on('connect', () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.on('error', () => {
-      resolve(false);
-    });
-  });
-}
-
-// Helper to wait for a port to become free
-async function waitForPortFree(port: number): Promise<void> {
-  await waitFor(async () => !(await isPortListening(port)), `port ${port} to become free`);
-}
 
 // Helper to check if process is still running (works on Windows and Unix)
 function isProcessRunning(pid: number): boolean {
@@ -51,22 +28,10 @@ function isProcessRunning(pid: number): boolean {
 }
 
 beforeAll(async () => {
-  // Build the bundle before running integration tests
-  execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
-    cwd: rootDir,
-    stdio: 'inherit',
-    env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-    windowsHide: true,
-  });
-
   // Throwaway config dir, home, npm prefix and unreachable registry: the spawned CLI must never touch the real machine state
   iso = createIsolatedCliEnv();
   tempConfigDir = iso.configDir;
 
-  // Check if critical ports are already in use (MUST be done in beforeAll)
-  const daemonInUse = await isPortListening(47910);
-  const relayInUse = await isPortListening(47911);
-  portsBusy = daemonInUse || relayInUse;
 });
 
 afterAll(() => {
@@ -75,6 +40,14 @@ afterAll(() => {
   }
   iso?.cleanup();
 });
+
+// The ports createIsolatedCliEnv allocated for this file's daemons (QUEUE_DAEMON_PORT / QUEUE_RELAY_PORT in the env of every CLI run)
+function isolatedPorts(): { daemonPort: number; relayPort: number } {
+  if (!iso) {
+    throw new Error('isolated CLI environment not initialised: beforeAll did not run');
+  }
+  return { daemonPort: iso.daemonPort, relayPort: iso.relayPort };
+}
 
 function isolatedEnv(): NodeJS.ProcessEnv {
   if (!iso) {
@@ -121,12 +94,7 @@ function readHistory(): HistoryPage {
 describe('relay end-to-end (integration)', () => {
   it(
     'relay start connects to ws server, filters events via plugin subscription, and records logs',
-    async (ctx) => {
-      // Skip if ports are already in use (proper skip report, not silent pass)
-      if (portsBusy) {
-        ctx.skip();
-      }
-
+    async () => {
       // Step 1: Create mock WebSocket server on a random port
       const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
       let wsPort: number = 0;
@@ -196,8 +164,8 @@ describe('relay end-to-end (integration)', () => {
         runCli(['relay', 'stop']);
         runCli(['stop']);
         // Wait until both daemons really released their ports
-        await waitForPortFree(47910);
-        await waitForPortFree(47911);
+        await waitForPortFree(isolatedPorts().daemonPort);
+        await waitForPortFree(isolatedPorts().relayPort);
 
         // Step 2: Write relay.yml with mock WebSocket URL
         const relayYmlPath = join(tempConfigDir, 'relay.yml');
@@ -281,8 +249,11 @@ plugins:
           connected: boolean;
           lastError: unknown;
           pid?: number;
+          port?: number;
         };
         expect(status.relayRunning).toBe(true);
+        // The relay daemon bound the port QUEUE_RELAY_PORT asked for (the allocated one), not the default 47911
+        expect(status.port).toBe(isolatedPorts().relayPort);
         expect(status.connected).toBe(true);
         expect(status.lastError).toBeNull();
         if (status.pid) {
@@ -301,8 +272,8 @@ plugins:
           server.close();
 
           // Wait for the ports to become free (a hang is reported by the waiter, naming the port)
-          await waitForPortFree(47910);
-          await waitForPortFree(47911);
+          await waitForPortFree(isolatedPorts().daemonPort);
+          await waitForPortFree(isolatedPorts().relayPort);
 
           // Step 9: Verify relay process actually exited
           if (relayDaemonPid !== null) {
@@ -328,13 +299,8 @@ plugins:
 });
 
 describe('relay daemon bundle smoke test (integration)', () => {
-  it('the bundled relay daemon runs alone from an empty directory, loads the built-in github plugin and subscribes', async (ctx) => {
-    if (await isPortListening(47911)) {
-      ctx.skip();
-      return;
-    }
-
-    const relayBundle = join(rootDir, 'dist-bundle/queue-relay-daemon.cjs');
+  it('the bundled relay daemon runs alone from an empty directory, loads the built-in github plugin and subscribes', async () => {
+    const relayBundle = testBundleFile('queue-relay-daemon.cjs');
     expect(existsSync(relayBundle), `Bundle not found: ${relayBundle}`).toBe(true);
 
     // The copy lives in a fresh directory with no node_modules above it: it must be self-contained

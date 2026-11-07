@@ -24,7 +24,7 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, findTemplateProblem, doubleStarProblem, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES, replayReservedProblem } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, SubscribersYmlSchema, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, findTemplateProblem, doubleStarProblem, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES, replayReservedProblem, InvalidPortEnvError, QUEUE_DAEMON_PORT_ENV, QUEUE_RELAY_PORT_ENV, assertPortEnvValid, readPortEnv } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -33,7 +33,7 @@ import { actionEntryProblems, checkActionLoops, undeclaredEventWarning } from '.
 import { createBuiltinActionRegistry } from '../actions/builtinActions.js';
 import { parseProjectFlag, parseDirectionFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
 import { subscribersFileFor } from './subscribersFile.js';
-import { readDaemonVersion, versionMismatchWarning } from './daemonVersion.js';
+import { readDaemonPort, readDaemonVersion, versionMismatchWarning } from './daemonVersion.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import type { SubscriberConfig, HistoryFilter, HistoryEntry } from '@wadeck-app/queue-core';
 import type { RelayStartDeps } from './relayStart.js';
@@ -192,6 +192,8 @@ Exit codes:
 
 Environment variables:
   QUEUE_CONFIG_DIR  Override config directory (default: ~/.config/queue)
+  QUEUE_DAEMON_PORT Port the queue daemon asks for when it starts (1024-65535, default: 47910)
+  QUEUE_RELAY_PORT  Port the relay daemon asks for when it starts (1024-65535, default: 47911)
 `);
 }
 
@@ -530,7 +532,24 @@ function getQueueDaemonScriptPath(): string {
   return getDaemonScriptPath({ existsSync, bundlePath: bundleDaemon, tscPath: tscDaemon });
 }
 
+/**
+ * The daemons read their port from the environment at start and the CLI spawns them detached with no output: a bad value would only show up
+ * as "failed to start within 5s". Check it here and say what is wrong. Exits 1.
+ */
+function exitOnInvalidPortEnv(variables: readonly string[]): void {
+  try {
+    assertPortEnvValid(variables);
+  } catch (err: unknown) {
+    if (err instanceof InvalidPortEnvError) {
+      process.stderr.write(`[fail] ${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
 function spawnQueueDaemon(configDir: string): void {
+  exitOnInvalidPortEnv([QUEUE_DAEMON_PORT_ENV]);
   // Bundle layout: queue-daemon.cjs sits next to queue.cjs
   // TSC dev layout: ../daemon/daemon-entry.js relative to dist/cli/QueueIndex.js
   const bundleDaemon = fileURLToPath(new URL('./queue-daemon.cjs', import.meta.url));
@@ -592,6 +611,8 @@ async function waitForRelayDaemon(configDir: string, timeoutMs = 5000): Promise<
 
 /** `queue relay start`; also what a `queue wait` runs when it needs the relay and finds it down. Returns relayStart's exit code. */
 async function startRelayFromCli(configDir: string): Promise<number> {
+  // The relay wakes the queue daemon too, which reads QUEUE_DAEMON_PORT
+  exitOnInvalidPortEnv([QUEUE_RELAY_PORT_ENV, QUEUE_DAEMON_PORT_ENV]);
   // Import loadRelayConfig from the relay package's compiled dist
   const { loadRelayConfig } = await import('@wadeck-app/queue-relay-client/dist/config.js');
 
@@ -682,13 +703,15 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
       return;
     }
     const response = await client.send('status', undefined);
+    const relayPort = readDaemonPort(relayStateDir(configDir));
     if (process.stdout.isTTY && !jsonFlag) {
       process.stdout.write('[ok]  relay client: running\n');
+      process.stdout.write(`      port:         ${relayPort ?? '?'}\n`);
       process.stdout.write(`      connected:    ${response.connected ? 'yes' : 'no'}\n`);
       process.stdout.write(`      uptime:       ${formatUptime(response.uptimeSec)}\n`);
       process.stdout.write(`      pid:          ${response.pid}\n`);
     } else {
-      process.stdout.write(JSON.stringify({ relayRunning: true, ...response }) + '\n');
+      process.stdout.write(JSON.stringify({ relayRunning: true, ...response, ...(relayPort !== undefined && { port: relayPort }) }) + '\n');
     }
     return;
   }
@@ -1096,7 +1119,8 @@ async function main(): Promise<void> {
     }
     const daemonVersion = await readDaemonVersion(configDir);
     const mismatch = versionMismatchWarning(daemonVersion, getVersion());
-    const data = { ...response, ...(projectId !== undefined && { projectId }), orchAvailable, ...(daemonVersion !== undefined && { daemonVersion }), cliVersion: getVersion() };
+    const daemonPort = readDaemonPort(configDir);
+    const data = { ...response, ...(projectId !== undefined && { projectId }), orchAvailable, ...(daemonVersion !== undefined && { daemonVersion }), ...(daemonPort !== undefined && { port: daemonPort }), cliVersion: getVersion() };
     if (mismatch !== undefined) {
       process.stderr.write(`[warn] ${mismatch}
 `);
@@ -1110,6 +1134,7 @@ async function main(): Promise<void> {
       process.stdout.write(`      dlq:     ${response.dlqCount}\n`);
       process.stdout.write(`      uptime:  ${formatUptime(response.uptimeSec ?? 0)}\n`);
       process.stdout.write(`      pid:     ${response.pid ?? '?'}\n`);
+      process.stdout.write(`      port:    ${daemonPort ?? '?'}\n`);
       process.stdout.write(`      orch:    ${orchAvailable ? 'available' : 'not found'}\n`);
       process.stdout.write(`      version: ${daemonVersion ?? '?'}${daemonVersion === getVersion() ? '' : ` (this CLI: ${getVersion()})`}\n`);
     } else {
@@ -1206,6 +1231,13 @@ async function main(): Promise<void> {
     const running = await client.isRunning().catch(() => false);
     if (running) {
       process.stderr.write('[ok] daemon already running\n');
+      // The requested port only counts for a daemon that starts: say so instead of letting a different value pass unnoticed
+      exitOnInvalidPortEnv([QUEUE_DAEMON_PORT_ENV]);
+      const requested = readPortEnv(QUEUE_DAEMON_PORT_ENV);
+      const actual = readDaemonPort(configDir);
+      if (requested !== undefined && actual !== undefined && requested !== actual) {
+        process.stderr.write(`[warn] ${QUEUE_DAEMON_PORT_ENV}=${requested} was ignored: the running daemon listens on port ${actual}. Fix: queue stop, then queue start\n`);
+      }
       return;
     }
     spawnQueueDaemon(configDir);

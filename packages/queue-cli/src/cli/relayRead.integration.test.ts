@@ -12,15 +12,13 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createServer, Server, IncomingMessage, ServerResponse } from 'node:http';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { testBundleFile } from '../testing/testBundle.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = join(__dirname, '../..');
 
 interface FakeRelayRequest {
   method: string;
@@ -41,15 +39,7 @@ describe('relayRead integration', () => {
 
   beforeAll(async () => {
     iso = createIsolatedCliEnv();
-    // Build the CLI bundle exactly like the other integration tests (no shell, no hard-coded absolute path)
-    execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
-      cwd: rootDir,
-      stdio: 'inherit',
-      env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-      windowsHide: true,
-    });
-
-    bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
+    bundlePath = testBundleFile('queue.cjs');
     if (!existsSync(bundlePath)) {
       throw new Error(`Bundle not found at ${bundlePath}`);
     }

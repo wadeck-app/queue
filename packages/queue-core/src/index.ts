@@ -12,6 +12,7 @@ export type { EventDeclaration, SourceDeclaration, CatalogProblem, Validation, S
 export { listEvents, listEventDetails, getEventDetail, nearestEventNames, OBSERVED_WINDOW_DAYS } from './catalog/EventListing.js';
 export type { CatalogEntry, SourceSummary, EventListing, ListEventsOptions, FilterableField, EventDetail } from './catalog/EventListing.js';
 export type { QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse, DlqNotifyRequest, DlqNotifyResponse } from './daemon/QueueCommands.js';
+export { DEFAULT_QUEUE_DAEMON_PORT, DEFAULT_RELAY_DAEMON_PORT, QUEUE_DAEMON_PORT_ENV, QUEUE_RELAY_PORT_ENV, InvalidPortEnvError, readPortEnv, resolveQueueDaemonPort, resolveRelayDaemonPort, assertPortEnvValid } from './daemon/daemonPorts.js';
 export { createQueueService } from './daemon/QueueService.js';
 export type { QueueService, QueueServiceOptions } from './daemon/QueueService.js';
 export { spawnDetachedProcess } from './daemon/spawnDetachedProcess.js';

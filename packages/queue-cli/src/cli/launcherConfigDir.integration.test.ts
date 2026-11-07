@@ -7,7 +7,8 @@
  *
  * This test builds the real launcher (needs `go` and `bash` in PATH, throws with instructions when missing, no
  * silent skip), copies it next to a stub queue.cjs and runs it with throwaway HOME / XDG / QUEUE_CONFIG_DIR.
- * The real config dir is only read (launcher files snapshot before/after), never written.
+ * The real config dir is only read, never written: other sessions use the real `queue` concurrently, so its files change on their own and
+ * the test only looks for a trace of THIS test's throwaway directory in the real launcher logs.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -47,13 +48,24 @@ function launcherFiles(configDir: string): string[] {
   return out;
 }
 
+/** True when a launcher log of the developer's real dir names the needle (a path of this test's throwaway tree): the launcher wrote there what belongs elsewhere. */
+function realLauncherLogsMention(realConfigDir: string, needle: string): boolean {
+  const logs = join(realConfigDir, 'logs');
+  if (!existsSync(logs)) {
+    return false;
+  }
+  return readdirSync(logs)
+    .filter(n => n.endsWith('-launcher.log'))
+    .some(n => readFileSync(join(logs, n), 'utf8').includes(needle));
+}
+
 describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
-  // Read-only snapshot of the developer's real dir (the tests below never point anything at it).
+  // Read-only: the tests below never point anything at the real dir.
   const realConfigDir = join(homedir(), '.config', 'queue');
-  const realBefore = launcherFiles(realConfigDir);
   let iso: IsolatedCliEnv;
   let launcherExe: string;
   let stubArgsFile: string;
+  let stubEnvFile: string;
 
   beforeAll(() => {
     iso = createIsolatedCliEnv();
@@ -81,8 +93,12 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
     launcherExe = join(appDir, launcherBinaryName());
     copyFileSync(built, launcherExe);
     stubArgsFile = join(iso.root, 'stub-args.json');
+    stubEnvFile = join(iso.root, 'stub-env.json');
+    // Records the arguments and the port variables node would receive
     writeFileSync(join(appDir, 'queue.cjs'),
-      `require('node:fs').writeFileSync(process.env.STUB_ARGS_FILE, JSON.stringify(process.argv.slice(2)));\n`);
+      `const fs = require('node:fs');\n` +
+      `fs.writeFileSync(process.env.STUB_ARGS_FILE, JSON.stringify(process.argv.slice(2)));\n` +
+      `fs.writeFileSync(process.env.STUB_ENV_FILE, JSON.stringify({ daemon: process.env.QUEUE_DAEMON_PORT, relay: process.env.QUEUE_RELAY_PORT }));\n`);
   }, 300_000);
 
   afterAll(() => {
@@ -90,7 +106,7 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
   });
 
   function runLauncher(args: string[], extraEnv: NodeJS.ProcessEnv) {
-    const env: NodeJS.ProcessEnv = { ...iso.env, STUB_ARGS_FILE: stubArgsFile, ...extraEnv };
+    const env: NodeJS.ProcessEnv = { ...iso.env, STUB_ARGS_FILE: stubArgsFile, STUB_ENV_FILE: stubEnvFile, ...extraEnv };
     if (extraEnv['QUEUE_CONFIG_DIR'] === undefined) {
       delete env['QUEUE_CONFIG_DIR'];
     }
@@ -116,7 +132,7 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
     // The flag the launcher feeds itself must not reach node.
     expect(JSON.parse(readFileSync(stubArgsFile, 'utf8'))).toEqual(['start']);
     // The developer's real dir was not touched.
-    expect(launcherFiles(realConfigDir)).toEqual(realBefore);
+    expect(realLauncherLogsMention(realConfigDir, iso.root)).toBe(false);
   });
 
   it('--config beats QUEUE_CONFIG_DIR', () => {
@@ -135,6 +151,13 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
 
     expect(res.status, `launcher exited ${res.status}: ${res.stderr}`).toBe(0);
     expect(launcherFiles(iso.configDir).length).toBeGreaterThan(0);
-    expect(launcherFiles(realConfigDir)).toEqual(realBefore);
+    expect(realLauncherLogsMention(realConfigDir, iso.root)).toBe(false);
+  });
+
+  it('QUEUE_DAEMON_PORT / QUEUE_RELAY_PORT reach the node process the launcher starts (the launcher itself hard-codes no port)', () => {
+    const res = runLauncher(['start'], { QUEUE_DAEMON_PORT: '51234', QUEUE_RELAY_PORT: '51300' });
+
+    expect(res.status, `launcher exited ${res.status}: ${res.stderr}`).toBe(0);
+    expect(JSON.parse(readFileSync(stubEnvFile, 'utf8'))).toEqual({ daemon: '51234', relay: '51300' });
   });
 });

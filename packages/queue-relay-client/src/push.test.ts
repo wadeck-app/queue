@@ -391,7 +391,7 @@ describe('resolveDaemonScriptFromEnv', () => {
     // Save original env value
     originalEnv = process.env.QUEUE_DAEMON_SCRIPT;
     // Create a temp file for testing
-    tempFile = path.join(os.tmpdir(), `test-daemon-${Date.now()}.js`);
+    tempFile = path.join(os.tmpdir(), `test-daemon-${crypto.randomUUID()}.js`);
     fs.writeFileSync(tempFile, '// test daemon');
   });
 

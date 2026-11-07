@@ -61,6 +61,10 @@ Passing route and YAML tests does not show a wrapped label or a clipped tile. Pa
 
 A test that fails on a loaded or slow machine is a bug in the test. Timeouts (`testTimeout`, `hookTimeout`, spawn and watchdog timers) are hang guards of several minutes, set once in the package's `vitest.config.ts`, never a performance limit and never overridden per test. Wait for the condition you need (a file, a port, a log line, an exit, a deferred promise) instead of sleeping and hoping; a sleep is allowed only when the delay is an input of the scenario. Never assert elapsed time or "A is faster than B". Build expensive fixtures (git repositories, bundles) once and copy them. Remove temporary directories with `maxRetries` (Windows keeps files open for a moment).
 
+## Tests never use fixed ports, fixed temp names or the real config
+
+The daemons ask for `QUEUE_DAEMON_PORT` / `QUEUE_RELAY_PORT` (defaults 47910/47911); `createIsolatedCliEnv()` allocates free ports per environment (`iso.daemonPort`, `iso.relayPort`), in-process daemons in tests pass `port: 0`. A test never skips or waits because another daemon holds a port (the user's real daemon, another session's run). The bundle is built once per run into `QUEUE_TEST_BUNDLE_DIR` by `packages/queue-cli/vitest.globalSetup.ts` (use `testBundleFile()`, never `dist-bundle/`), so queue-cli test files run in parallel. Temp files and dirs come from `mkdtemp` / `randomUUID`, never a fixed or timestamp-only name.
+
 ## From lessons learned
 
 - Never validate behavior with `node dist-bundle/queue.cjs` directly — the correct workflow is `git commit && git push` → CI passes → `npm install -g @wadeck-app/queue-cli` → test with `queue <cmd>`; the Go launcher, file resolution paths, and published package content all diverge from the local bundle.

@@ -2,13 +2,14 @@ import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import type { DaemonHandle, ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { getErrorMessage } from '@wadeck-app/queue-core';
+import { DEFAULT_RELAY_DAEMON_PORT, getErrorMessage, resolveRelayDaemonPort } from '@wadeck-app/queue-core';
 import { RelayConnection, type RelayConnectionOptions } from './RelayConnection.js';
 import { createRelayLogger } from './RelayLogger.js';
 import { relayStateDir } from './relayClient.js';
 import { startIdleWatchdog, pinRelay, type IdleWatchdogOptions } from './onDemand.js';
 
-export const RELAY_DAEMON_PORT = 47911;
+/** The port the relay daemon asks for when neither `options.port` nor QUEUE_RELAY_PORT is set. */
+export const RELAY_DAEMON_PORT = DEFAULT_RELAY_DAEMON_PORT;
 
 export interface RelayStatus {
   connected: boolean;
@@ -90,9 +91,13 @@ export interface RelayDaemonOptions {
   idleWatchdog?: Pick<IdleWatchdogOptions, 'graceMs' | 'intervalMs' | 'onTick'>;
   // Exists for timing-free test assertions (see RelayConnectionOptions): hooks of the connection loop. Production never sets it.
   connection?: Pick<RelayConnectionOptions, 'sleep' | 'onLoopEnd'>;
+  /** Port to ask for (0 = any free one). Default: QUEUE_RELAY_PORT, then 47911. */
+  port?: number;
 }
 
 export async function startRelayDaemon(configDir: string, shutdownDeps?: ShutdownDeps, options: RelayDaemonOptions = {}): Promise<DaemonHandle> {
+  // explicit option (tests: 0 = any free one) > QUEUE_RELAY_PORT > 47911; an invalid QUEUE_RELAY_PORT throws before anything starts, never falls back
+  const port = resolveRelayDaemonPort(options.port);
   const stateDir = relayStateDir(configDir);
   // Ensure relay-daemon subdirectory exists before createDaemon tries to create config.lock
   mkdirSync(stateDir, { recursive: true });
@@ -123,7 +128,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
   let watchdog: { cancel: () => void } | null = null;
   const daemonHandle = await createDaemon<RelayCommands>({
     configDir: stateDir,
-    port: RELAY_DAEMON_PORT,
+    port,
     idleTimeout: null,
     commands: {
       status: (): RelayStatus => {

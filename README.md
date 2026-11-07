@@ -52,4 +52,7 @@ Use [`@wadeck-app/queue-sdk`](packages/queue-sdk/README.md): it finds and starts
 ## Configuration and updates
 
 Config dir: `QUEUE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/queue`, else `~/.config/queue/`. The Go launcher and the Node side resolve it the same way (the launcher also accepts `--config <dir>`, which wins over the variable); the launcher template is `packages/queue-cli/ci/launcher-main.go.tmpl`.
+
+Ports: the queue daemon asks for `QUEUE_DAEMON_PORT` (default 47910), the relay daemon for `QUEUE_RELAY_PORT` (default 47911); integer 1024-65535, anything else makes the daemon and `queue start` / `queue relay start` exit 1 naming the variable and the value. If the port is taken the daemon takes the next free one (up to +10). Commands never use these variables to locate a daemon: they read `config.port` of their own config dir, so an isolated `QUEUE_CONFIG_DIR` finds its own daemon. `queue status` and `queue relay status` show the port in use. `queue start` on a running daemon warns when `QUEUE_DAEMON_PORT` differs from the real port.
+
 Auto-updates in background on every invocation. Manual: `queue cli update`

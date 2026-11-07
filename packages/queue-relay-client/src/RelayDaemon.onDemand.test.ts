@@ -50,7 +50,7 @@ describe('on-demand relay (started by "queue wait") stops itself when nobody wai
     markOnDemand(relayDir);
     registerWaiter(relayDir, process.pid);
 
-    daemonHandle = await startRelayDaemon(configDir, shutdownDeps, { idleWatchdog: { graceMs: 150, intervalMs: 40 } });
+    daemonHandle = await startRelayDaemon(configDir, shutdownDeps, { port: 0, idleWatchdog: { graceMs: 150, intervalMs: 40 } });
     const client = relayClient();
 
     // Positive barrier instead of a sleep: every watchdog tick checks that the waiter's process is alive with process.kill(pid, 0),
@@ -77,6 +77,7 @@ describe('on-demand relay (started by "queue wait") stops itself when nobody wai
   it('a relay that was not started on demand ignores the waiters entirely', async () => {
     let ticks = 0;
     daemonHandle = await startRelayDaemon(configDir, shutdownDeps, {
+      port: 0,
       idleWatchdog: {
         graceMs: 100,
         intervalMs: 30,

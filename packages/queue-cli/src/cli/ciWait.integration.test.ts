@@ -6,14 +6,12 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { execFileSync, spawn } from 'node:child_process';
+import { testBundleFile } from '../testing/testBundle.js';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = join(__dirname, '../..');
 const SHA = '9d9c4f7a36576a2c268e42d0c7b372e64b30ea19';
 
 describe('queue wait ci (bundled CLI)', () => {
@@ -25,13 +23,7 @@ describe('queue wait ci (bundled CLI)', () => {
 
   beforeAll(() => {
     iso = createIsolatedCliEnv();
-    execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
-      cwd: rootDir,
-      stdio: 'inherit',
-      env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-      windowsHide: true,
-    });
-    bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
+    bundlePath = testBundleFile('queue.cjs');
     if (!existsSync(bundlePath)) {
       throw new Error(`Bundle not found at ${bundlePath}`);
     }

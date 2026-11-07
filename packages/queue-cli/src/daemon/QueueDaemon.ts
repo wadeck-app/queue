@@ -1,11 +1,10 @@
 import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import type { ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
-import { createQueueService, getErrorMessage, getQueueProtocolInfo } from '@wadeck-app/queue-core';
+import { createQueueService, getErrorMessage, getQueueProtocolInfo, resolveQueueDaemonPort } from '@wadeck-app/queue-core';
 import { registerWithAppCore } from './AppCoreRegistration.js';
 import { createBuiltinActionRegistry } from '../actions/builtinActions.js';
 
-export const DAEMON_PORT = 47910;
 export const IDLE_TIMEOUT_MS = 60_000;
 const IDLE_CHECK_INTERVAL_MS = 10_000;
 
@@ -16,6 +15,8 @@ export interface AppCoreModuleOptions { manifestPath: string; }
  * app-core registration; the queue logic itself is queue-core's createQueueService.
  */
 export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions; port?: number; version?: string }): Promise<void> {
+  // explicit option (tests: 0 = any free one) > QUEUE_DAEMON_PORT > 47910; an invalid QUEUE_DAEMON_PORT throws before anything starts, never falls back
+  const port = resolveQueueDaemonPort(options?.port);
   let idleCountdown: ReturnType<typeof setTimeout> | null = null;
   let daemonHandle: Awaited<ReturnType<typeof createDaemon>> | null = null;
 
@@ -47,8 +48,7 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
 
   daemonHandle = await createDaemon({
     configDir,
-    // only tests pass a port (0 = any free one): the real daemon always uses the fixed one
-    port: options?.port ?? DAEMON_PORT,
+    port,
     idleTimeout: null,
     // GET /version reports the queue release, not the daemon library's own default
     ...(options?.version !== undefined && { appVersion: options.version }),

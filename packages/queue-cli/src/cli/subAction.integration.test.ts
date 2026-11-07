@@ -1,26 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { testBundleFile } from '../testing/testBundle.js';
 
 // The bundled CLI against a throwaway config dir: `queue sub add|edit|list` with type action. No daemon is needed (the --scope flag reads the file).
 
-const rootDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
+const bundlePath = testBundleFile('queue.cjs');
 
 let iso: IsolatedCliEnv;
 let subscribersFile: string;
 
 beforeAll(() => {
-  execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
-    cwd: rootDir,
-    stdio: 'inherit',
-    env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-    windowsHide: true,
-  });
   iso = createIsolatedCliEnv();
   subscribersFile = join(iso.configDir, 'subscribers.yml');
 });

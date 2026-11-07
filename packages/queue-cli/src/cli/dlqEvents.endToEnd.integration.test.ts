@@ -1,20 +1,18 @@
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { describe, it, expect, afterEach } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { abandonInFlightEntryDetailed } from '@wadeck-app/queue-core';
 import { createQueueClient } from './QueueClient.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { isPortListening, waitFor, waitForPortFree } from '../testWaitFor.js';
+import { testBundleFile } from '../testing/testBundle.js';
+import { waitFor, waitForPortFree } from '../testWaitFor.js';
 
 // queue.dlq.added / queue.dlq.removed against a REAL daemon: the bundled CLI and daemon, a throwaway config dir, home and registry (createIsolatedCliEnv).
 // A failing cli subscriber gives up -> the daemon emits queue.dlq.added with a reference to the base event; a subscriber template follows the reference
 // byte-exact; replay, clear and the give-up of the dashboard (dlq-notify) are announced; with no subscriber on queue.dlq.* the history still records the events.
 
-const DAEMON_PORT = 47910;
-const rootDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const bundlePath = join(rootDir, 'dist-bundle/queue.cjs');
+const bundlePath = testBundleFile('queue.cjs');
 
 // A title with a quote, a space and a shell metacharacter: it must reach the script as ONE argument, unchanged
 const TITLE = 'a"b & c';
@@ -22,26 +20,11 @@ const TITLE = 'a"b & c';
 let iso: IsolatedCliEnv | undefined;
 let work = '';
 
-beforeAll(async () => {
-  // A daemon already on the port (the developer's own, or a leftover) would answer instead of the throwaway one: say so, never skip
-  // The daemon of a previous test file may still be on its way out: a daemon stops by itself 60 s after its last work, so wait longer than that
-  // (a guard against a hang, never a performance limit) before calling the port taken
-  const free = await waitFor(async () => !(await isPortListening(DAEMON_PORT)), `port ${DAEMON_PORT} to become free`, 150_000).catch(() => false);
-  if (!free) {
-    throw new Error(`port ${DAEMON_PORT} is already in use by another queue daemon: this test starts its own daemon and cannot share the port. Fix: stop it ("queue stop") and run the test again`);
-  }
-  execFileSync(process.execPath, ['--import', 'tsx/esm', 'ci/scripts/bundle.ts'], {
-    cwd: rootDir,
-    stdio: 'inherit',
-    env: { ...process.env, BUNDLE_VERSION: '0.0.0-test-integration' },
-    windowsHide: true,
-  });
-});
-
 afterEach(async () => {
   if (iso !== undefined) {
     runCli(['stop']);
-    await waitForPortFree(DAEMON_PORT);
+    // The daemon of this test runs on the port createIsolatedCliEnv allocated for it (QUEUE_DAEMON_PORT): no other daemon is involved
+    await waitForPortFree(iso.daemonPort);
     iso.cleanup();
     iso = undefined;
   }
@@ -60,7 +43,7 @@ function runCli(args: string[]): { stdout: string; stderr: string; exitCode: num
     // Hang guard only, never a performance limit
     timeout: 300_000,
     cwd: work === '' ? undefined : work,
-    env: { ...env().env, APP_CORE_PORT: '1', APP_CORE_CONFIG_DIR: join(env().root, 'app-core') },
+    env: { ...env().env },
   });
   return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.status ?? -1 };
 }

@@ -2,7 +2,7 @@ import { build } from 'esbuild';
 import { execSync } from 'node:child_process';
 import { readFileSync, statSync, mkdirSync, cpSync, rmSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '../..');
@@ -34,7 +34,10 @@ const sharedDefine = {
 };
 const sharedBanner = { js: "const __importMetaUrl = require('node:url').pathToFileURL(__filename).href;" };
 
-const updaterOutfile = join(rootDir, 'dist-bundle/queue-updater.cjs');
+// BUNDLE_OUT_DIR: the tests build into a directory of their own (vitest.globalSetup.ts), so two runs never overwrite each other's bundle;
+// the release build leaves it unset and writes dist-bundle/
+const bundleOutDir = process.env['BUNDLE_OUT_DIR'] ? resolve(process.env['BUNDLE_OUT_DIR']) : join(rootDir, 'dist-bundle');
+const updaterOutfile =join(bundleOutDir, 'queue-updater.cjs');
 
 await Promise.all([
   build({
@@ -43,7 +46,7 @@ await Promise.all([
     format: 'cjs',
     platform: 'node',
     target: 'node22',
-    outfile: join(rootDir, 'dist-bundle/queue.cjs'),
+    outfile: join(bundleOutDir, 'queue.cjs'),
     banner: sharedBanner,
     define: sharedDefine,
     external: [],
@@ -68,7 +71,7 @@ await Promise.all([
     format: 'cjs',
     platform: 'node',
     target: 'node22',
-    outfile: join(rootDir, 'dist-bundle/queue-daemon.cjs'),
+    outfile: join(bundleOutDir, 'queue-daemon.cjs'),
     banner: sharedBanner,
     define: sharedDefine,
     external: [],
@@ -82,7 +85,7 @@ await Promise.all([
     format: 'cjs',
     platform: 'node',
     target: 'node22',
-    outfile: join(rootDir, 'dist-bundle/queue-relay-daemon.cjs'),
+    outfile: join(bundleOutDir, 'queue-relay-daemon.cjs'),
     banner: sharedBanner,
     define: sharedDefine,
     external: [],
@@ -94,7 +97,7 @@ await Promise.all([
 // the loader-compatible export, JSON views, packaged manifest stamped with this build's version). queue-cli only
 // copies the resulting dist-module/ next to the daemon bundle; it no longer reads the module's sources.
 const appModuleDir = join(rootDir, '../app-module-queue');
-const appModuleOutDir = join(rootDir, 'dist-bundle/app-module');
+const appModuleOutDir = join(bundleOutDir, 'app-module');
 execSync('npm run bundle', {
   cwd: appModuleDir,
   env: { ...process.env, BUNDLE_VERSION: version },
