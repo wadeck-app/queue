@@ -2,6 +2,7 @@ import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
 import type { ActionTransport } from './ActionTransport.js';
 import type { RefResolver } from './refResolver.js';
+import type { DlqAddedInfo } from '../dlqEvents.js';
 import { runSubscriber, targetOf } from './runSubscriber.js';
 import { RetryScheduler } from './RetryScheduler.js';
 import { OutputCapture } from './OutputCapture.js';
@@ -17,7 +18,8 @@ export class AsyncDispatcher {
 
   constructor(
     private readonly walUpdater: (id: string, updates: Partial<WalEntry>) => void,
-    private readonly dlqMover: (entry: WalEntry, lastError: string) => void,
+    // `info` says why the entry is given up (and the exit code and target of the last attempt): the facts of the queue.dlq.added event
+    private readonly dlqMover: (entry: WalEntry, lastError: string, info: DlqAddedInfo) => void,
     // Required: the daemon has no usable stderr, an absent logger would make every failure invisible
     private readonly logger: QueueLogWriter,
     // Terse audit trail for `queue history`, written unconditionally unlike logger.logDispatch
@@ -76,7 +78,11 @@ export class AsyncDispatcher {
           } else {
             this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
             this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, ...projectRefsOf(envelope.meta) });
-            this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError);
+            this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError, {
+              reason: result.permanent === true ? 'permanent-failure' : 'retries-exhausted',
+              ...(result.exitCode !== undefined && { exitCode: result.exitCode }),
+              ...(target !== '' && { target }),
+            });
           }
         }
       })
@@ -100,6 +106,7 @@ export class AsyncDispatcher {
       attempts,
     });
     this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target: targetOf(sub), ...projectRefsOf(envelope.meta) });
-    this.dlqMover({ ...walEntry, attempts }, error);
+    const target = targetOf(sub);
+    this.dlqMover({ ...walEntry, attempts }, error, { reason: 'invalid-configuration', ...(target !== undefined && { target }) });
   }
 }

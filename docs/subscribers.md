@@ -165,6 +165,34 @@ Objects render as JSON; a NUL character refuses the delivery; each rendered fiel
 
 YAML pitfall: an unquoted `text: {{ payload.x }}` parses as a flow mapping. Always quote: `text: "{{ payload.x }}"`.
 
+### The `queue.dlq.added` and `queue.dlq.removed` events
+
+The daemon emits them itself, **always**: with or without a subscriber on them (the history records both), and only when a subscriber on `queue.dlq.added` or `>` exists do they run anything. Filed under the project and directory of the failed delivery, default direction. Subscribe to `queue.dlq.added` to be told when a delivery is given up, e.g. to label a task.
+
+| Field | `added` | `removed` | Meaning |
+|---|---|---|---|
+| `entryId` | yes | yes | Id of the DLQ entry (the `--id` of `queue dlq replay|clear`) |
+| `eventId` | yes | yes | First-push id of the base event; absent for an entry written before events were tracked by id |
+| `event`, `subscriberId` | yes | yes | Base event name and the subscriber that failed |
+| `projectId` | if any | if any | Project of the delivery |
+| `reason` | yes | yes | `added`: `retries-exhausted`, `permanent-failure`, `invalid-configuration`, `given-up`. `removed`: `replayed`, `cleared`, `evicted` |
+| `error` | yes | no | Last error, cut at 500 characters |
+| `attempts` | yes | no | Attempts made |
+| `exitCode`, `target` | if known | no | Exit code of a cli command that ran to its end; command, URL or `action:<name>` |
+| `original` | yes | yes | `{ "$eventRef": "<eventId>" }` (`null` without `eventId`), see below |
+
+Rules:
+
+- `removed` is emitted when an entry leaves the DLQ: `replayed` once the replay dispatch has started, `cleared` per entry of a clear (after it returned, 10 at a time), `evicted` when the 1000-entry cap drops the oldest.
+- A replay that fails again gives `removed` then `added`, both with the same `entryId`.
+- Emitted once per entry in the DLQ: a retry that finds the entry already there does not emit again. A process crash in the instant between the DLQ write and the emit loses that one event (the entry stays in the DLQ and is listed by `queue dlq list`).
+- No event about an entry whose base event is a `queue.` event: a subscriber failing on `queue.dlq.added` is visible in the DLQ and the history, and produces no further event.
+- Loop guard: the event carries `hops + 1` of the failed delivery and `causedBy` it. At the hop cap (5) it is not emitted and the daemon log says so, naming the entry.
+- A replay whose subscriber was renamed or whose configuration does not load emits `removed(replayed)` but dispatches nothing: the log says the WAL entry stays pending. With a configuration that does not load, the event itself cannot be recorded; the log says that too.
+- `given-up` (an in-flight event given up by hand from the dashboard) is part of the payload contract but is **not emitted yet**: that path writes the files without the daemon.
+
+Getting the base payload: `{{ payload.original.<field> }}` in a template, or `queue history --event-id <eventId> --json` by hand. A subscriber on `>` sees only the reference.
+
 ### Lazy references in `queue.dlq.*` events
 
 The events the daemon emits about the dead-letter queue (`queue.dlq.added`, `queue.dlq.removed`) carry no copy of the failed event's payload. They carry a reference to it, `"original": { "$eventRef": "<eventId>" }`, and a template placeholder that walks into `original` reads the payload of that base event, loaded from the history only when a placeholder needs it (once per delivery): `{{ payload.original.taskId }}` is the `taskId` of the base event.

@@ -113,8 +113,9 @@ describe('the queue. namespace is reserved on every external entry', () => {
     expect(entry!.subscriberId).toBe(`${id}/wake`);
     expect(entry!.lastError).toContain("'with.event'");
     expect(entry!.lastError).toContain("'queue.' namespace");
-    // and nothing was emitted
-    expect(history().read({ event: 'queue.dlq.added' })).toEqual([]);
+    // and the emit action emitted nothing: the only queue.dlq.added is the daemon's own report of this very failure
+    expect(history().read({ event: 'queue.dlq.added' }).map((e) => (e.payload as { entryId: string }).entryId)).toEqual([entry!.id]);
+    expect(history().read({ event: 'queue.dlq.removed' })).toEqual([]);
   });
 
   it('an action whose context pushes a queue. event gets a permanent failure naming the action (runtime check of emitFrom)', async () => {
@@ -134,7 +135,11 @@ describe('the queue. namespace is reserved on every external entry', () => {
     expect(outcome).toMatchObject({ success: false, permanent: true });
     expect(outcome!.error).toContain("'queue.' namespace");
     expect(outcome!.error).toContain('an action cannot produce it');
-    expect(history().read({ event: 'queue.dlq.added' })).toEqual([]);
+    // the action pushed nothing; the one event is the daemon's own report of the failed action (its payload carries no payload of the pushed one)
+    const reports = history().read({ event: 'queue.dlq.added' });
+    expect(reports).toHaveLength(1);
+    expect(reports[0]!.payload).toMatchObject({ event: 'onTicket', reason: 'permanent-failure' });
+    expect(reports[0]!.causedBy).toBeDefined();
   });
 
   describe('register-events', () => {

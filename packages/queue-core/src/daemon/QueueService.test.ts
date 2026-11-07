@@ -973,17 +973,19 @@ describe('events declared by an action plugin', () => {
     const service = createQueueService(configDir, { actions: createActionRegistry([plugin([{ name: 'declared.event', description: 'declared by the plugin' }])]) });
     service.onStart();
     const catalog = readCatalog(configDir);
-    expect(catalog.sources.map((source) => source.source)).toEqual(['action-declarer']);
+    // the daemon declares its own events under the source queue next to it
+    expect(catalog.sources.map((source) => source.source)).toEqual(['action-declarer', 'queue']);
     expect(catalog.sources[0]!.events).toEqual([expect.objectContaining({ name: 'declared.event', description: 'declared by the plugin' })]);
   });
 
   it('writes nothing for a plugin without events, and says a declaration it cannot store without aborting the start', () => {
     createQueueService(configDir, { actions: createActionRegistry() }).onStart();
-    expect(readCatalog(configDir).sources).toEqual([]);
+    // only the events of the daemon itself
+    expect(readCatalog(configDir).sources.map((source) => source.source)).toEqual(['queue']);
 
     const broken = createQueueService(configDir, { actions: createActionRegistry([plugin([{ name: 'not valid', description: 'x' }])]) });
     expect(() => broken.onStart()).not.toThrow();
-    expect(readCatalog(configDir).sources).toEqual([]);
+    expect(readCatalog(configDir).sources.map((source) => source.source)).toEqual(['queue']);
     const dir = join(configDir, 'logs');
     const logs = readdirSync(dir).map((f) => readFileSync(join(dir, f), 'utf8')).join('\n');
     expect(logs).toContain("could not declare the events of the action 'declarer'");

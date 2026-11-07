@@ -248,7 +248,8 @@ describe('agent-wake end to end through QueueService with a real subscribers.yml
     writeFileSync(join(configDir, 'subscribers.yml'), SUBSCRIBERS);
     createQueueService(configDir, { actions: createActionRegistry([agentWakeAction]) }).onStart();
     const catalog = readCatalog(configDir);
-    expect(catalog.sources.map((source) => source.source)).toEqual(['action-agent-wake']);
+    // and the events of the daemon itself, under the source queue
+    expect(catalog.sources.map((source) => source.source)).toEqual(['action-agent-wake', 'queue']);
     expect(catalog.sources[0]!.events[0]!.name).toBe('agent.message');
   });
 

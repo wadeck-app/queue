@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { Wal } from '../storage/Wal.js';
-import { DlqStore } from '../storage/DlqStore.js';
+import { DlqStore, type DlqEntry } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
 import { HistoryLog, projectRefsOf, type CausedBy } from '../storage/HistoryLog.js';
 import { HistoryReader } from '../storage/HistoryReader.js';
@@ -24,7 +24,11 @@ import { getErrorMessage } from '../errors.js';
 import { checkClientProtocol, checkPushDirection, isReservedEventName, RESERVED_EVENT_PREFIX } from '@wadeck-app/queue-sdk/protocol';
 import type { PushDirection } from '@wadeck-app/queue-sdk/protocol';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
-import { countQueue, subscribersFor, removeFromDlq } from '../operations.js';
+import { countQueue, subscribersFor, removeDlqEntries } from '../operations.js';
+import {
+  buildDlqAddedEvent, buildDlqRemovedEvent, isDlqEventExcluded, runBounded, DLQ_EVENT_BATCH_SIZE, DLQ_EVENT_DECLARATIONS,
+  type BuiltDlqEvent, type DlqRemovedReason,
+} from '../dlqEvents.js';
 import { validateSourceDeclaration, writeSourceDeclaration } from '../catalog/EventCatalog.js';
 import type {
   QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse,
@@ -122,8 +126,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   const startedAt = Date.now();
   const asyncDispatcher = new AsyncDispatcher(
     (id, updates) => wal.updateEntry(id, updates),
-    (walEntry, lastError) => {
-      dlq.append({
+    (walEntry, lastError, info) => {
+      const dlqEntry: DlqEntry = {
         id: walEntry.id,
         event: walEntry.event,
         payload: walEntry.payload,
@@ -132,7 +136,16 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         attempts: walEntry.attempts,
         lastError,
         movedAt: new Date().toISOString(),
-      });
+      };
+      const appended = dlq.append(dlqEntry);
+      // Order: append, then emit, then the WAL status. A crash in between leaves the WAL entry retryable: the event may be emitted twice, never lost;
+      // and the retry finds its row already there (inserted false), so it does not emit again
+      if (appended.evicted !== undefined) {
+        void emitDlqEvent(appended.evicted, (entry) => buildDlqRemovedEvent(entry, 'evicted'));
+      }
+      if (appended.inserted) {
+        void emitDlqEvent(dlqEntry, (entry) => buildDlqAddedEvent(entry, info));
+      }
       wal.updateEntry(walEntry.id, { status: 'dlq' });
     },
     eventLogger,
@@ -204,6 +217,60 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       case 'rejected':
         return { success: false, permanent: true, error: `the event '${request.event}' was rejected: ${response.reason ?? 'no reason given'}` };
     }
+  }
+
+  /**
+   * Emits a `queue.dlq.*` event about a dead-letter entry. Never throws and never rejects: a failure to emit is a diagnostic line, the dispatch path goes on.
+   * It is filed under the project and working directory of the entry (default direction), carries `hops + 1` of the failed dispatch and `causedBy` it.
+   * Not emitted for an entry whose base event is itself a `queue.` event (loop guard), and not at the hop cap (said in the log, naming the entry).
+   * Counted in `activeDispatches` until the push returns, so the daemon does not go idle in between.
+   */
+  async function emitDlqEvent(entry: DlqEntry, build: (entry: DlqEntry) => BuiltDlqEvent): Promise<void> {
+    const source = 'QueueDaemon.dlq-events';
+    activeDispatches++;
+    let label = `DLQ entry ${entry.id} (event ${entry.event}, subscriber ${entry.subscriberId})`;
+    try {
+      if (isDlqEventExcluded(entry)) {
+        return;
+      }
+      const built = build(entry);
+      label = `${built.event} for ${label}`;
+      const hops = entry.meta.hops ?? 0;
+      if (hops >= MAX_ACTION_HOPS) {
+        eventLogger.logDiagnostic({
+          source,
+          message: `loop guard: ${label} was not emitted: its base event was itself emitted by ${hops} actions or daemon events in a chain (cap ${MAX_ACTION_HOPS}). Fix: break the cycle between the subscribers of subscribers.yml (a subscriber of queue.dlq.* that emits an event which fails again).`,
+        });
+        return;
+      }
+      const response = await pushInternal(
+        {
+          event: built.event,
+          payload: built.payload,
+          ...(entry.meta.cwd !== undefined && { cwd: entry.meta.cwd }),
+          ...(entry.meta.projectId !== undefined && { project: entry.meta.projectId }),
+        },
+        { hops: hops + 1, causedBy: { eventId: entry.meta.eventId ?? entry.id, subscriberId: entry.subscriberId }, origin: 'queue' },
+      );
+      if (response.status === 'rejected' || response.status === 'aborted') {
+        eventLogger.logDiagnostic({ source, message: `${label} was not emitted (${response.status}): ${response.reason ?? 'no reason given'}` });
+      }
+    } catch (err) {
+      eventLogger.logDiagnostic({ source, message: `${label} was not emitted: ${getErrorMessage(err)}` });
+    } finally {
+      activeDispatches--;
+    }
+  }
+
+  /** `removed` events for entries that left the DLQ, at most `DLQ_EVENT_BATCH_SIZE` pushes at a time (a clear can remove a thousand entries). */
+  function emitDlqRemoved(entries: readonly DlqEntry[], reason: DlqRemovedReason): Promise<void> {
+    // Counted as one unit, so the daemon is not idle between two batches
+    activeDispatches++;
+    return runBounded(entries, DLQ_EVENT_BATCH_SIZE, (entry) => emitDlqEvent(entry, (e) => buildDlqRemovedEvent(e, reason)))
+      .catch((err: unknown) => {
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-events', message: `queue.dlq.removed (${reason}) batch failed: ${getErrorMessage(err)}` });
+      })
+      .finally(() => { activeDispatches--; });
   }
 
   /**
@@ -462,6 +529,22 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     }
   }
 
+  /**
+   * Files the two `queue.dlq.*` events in the event catalog under the source `queue`, replacing what the previous run wrote. The file is written directly: the
+   * source `queue` is closed to `register-events`. A declaration that cannot be stored is said in the log; the daemon starts anyway (the catalog is documentation).
+   */
+  function declareDaemonEvents(): void {
+    try {
+      const checked = validateSourceDeclaration({ source: 'queue', events: DLQ_EVENT_DECLARATIONS });
+      if (!checked.ok) {
+        throw new Error(checked.problems.map((problem) => `${problem.path || 'declaration'}: ${problem.message}`).join('; '));
+      }
+      writeSourceDeclaration(configDir, checked.declaration);
+    } catch (err) {
+      eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `could not declare the events of the queue daemon (queue.dlq.added, queue.dlq.removed) in the event catalog: ${getErrorMessage(err)}` });
+    }
+  }
+
   const commands: QueueCommands = {
     async push(payload?: unknown): Promise<PushResponse> {
       options.onActivity?.();
@@ -563,13 +646,19 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         attempts: 0,
       };
       wal.append(walEntry);
-      dlq.remove(entry.id);
+      // The entry as stored at the moment of the removal: what the removed event is about. Empty when someone else removed it since the read (that remover emits)
+      const removed = dlq.removeEntries(entry.id);
+      const emitReplayed = (): void => {
+        void emitDlqRemoved(removed, 'replayed');
+      };
 
       let subscribers: ResolvedSubscriber[];
       try {
         subscribers = loadSubscribers(entry.event, entry.meta.cwd, undefined, entry.meta.projectId);
       } catch (err) {
         eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `config error for event ${entry.event}: ${getErrorMessage(err)}` });
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `the replay of DLQ entry ${entry.id} did not start: it left the DLQ (queue.dlq.removed is emitted for it, a refusal is logged on its own line) but WAL entry ${walEntry.id} stays pending and is not dispatched. Fix: repair subscribers.yml; the entry is not in the DLQ any more, so it cannot be replayed from there` });
+        emitReplayed();
         return { status: 'ok' };
       }
       const sub = findSubscriber(subscribers, entry.subscriberId);
@@ -578,6 +667,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           source: 'QueueDaemon.dlq-replay',
           message: `subscriber ${entry.subscriberId} no longer exists in subscribers.yml for event ${entry.event}; WAL entry ${walEntry.id} stays pending`,
         });
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `the replay of DLQ entry ${entry.id} did not start: it left the DLQ (queue.dlq.removed is emitted for it, a refusal is logged on its own line) but WAL entry ${walEntry.id} stays pending and is not dispatched. Fix: restore the subscriber ${entry.subscriberId} in subscribers.yml; the entry is not in the DLQ any more` });
+        emitReplayed();
         return { status: 'ok' };
       }
 
@@ -592,6 +683,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       asyncDispatcher.dispatch([sub], envelope, walEntries).catch((err: unknown) => {
         eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `replay dispatch error for ${entry.subscriberId} (WAL ${walEntry.id}): ${getErrorMessage(err)}` });
       });
+      // The dispatch has started (the call above runs up to its first await): only now is the entry really replayed
+      emitReplayed();
 
       return { status: 'ok' };
     },
@@ -625,7 +718,10 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
     'dlq-clear'(payload?: unknown): DlqClearResponse {
       const req = payload as DlqClearRequest | undefined;
-      return { cleared: removeFromDlq(dlq, req?.id) };
+      const removed = removeDlqEntries(dlq, req?.id);
+      // After the clear returned: the events are pushed in the background, the answer does not wait for them
+      void emitDlqRemoved(removed, 'cleared');
+      return { cleared: removed.length };
     },
   };
 
@@ -635,6 +731,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     pushDaemonEvent: (request, options = {}) => pushInternal(request, { hops: options.hops ?? 0, ...(options.causedBy !== undefined && { causedBy: options.causedBy }), origin: 'queue' }),
     isIdle: () => wal.pendingCount() === 0 && activeDispatches === 0,
     onStart: () => {
+      declareDaemonEvents();
       declareActionEvents();
       reportActionCycles();
       // The programs of cli subscribers are looked up in the PATH this daemon inherited when it started: say which one, so that "program not found" is diagnosable

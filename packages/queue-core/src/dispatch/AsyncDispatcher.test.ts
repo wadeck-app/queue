@@ -116,6 +116,7 @@ describe('AsyncDispatcher', () => {
     expect(dlqMover).toHaveBeenCalledWith(
       expect.objectContaining({ id: w.id, attempts: 1 }),
       'exit code 1',
+      expect.objectContaining({ reason: 'retries-exhausted' }),
     );
   });
 
@@ -145,6 +146,7 @@ describe('AsyncDispatcher', () => {
     expect(dlqMover).toHaveBeenCalledWith(
       expect.objectContaining({ id: w.id, attempts: 3 }),
       'err',
+      expect.objectContaining({ reason: 'retries-exhausted' }),
     );
   });
 });
@@ -278,7 +280,7 @@ describe('AsyncDispatcher - diagnosability', () => {
 
     expect(spawned).not.toHaveBeenCalled();
     expect(walUpdater).toHaveBeenCalledWith(w.id, expect.objectContaining({ status: 'failed' }));
-    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), expect.stringContaining("virtual project 'v'"));
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), expect.stringContaining("virtual project 'v'"), expect.objectContaining({ reason: 'invalid-configuration' }));
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
       status: 'dlq',
       error: expect.stringContaining("virtual project 'v'") as unknown as string,
@@ -301,7 +303,7 @@ describe('AsyncDispatcher - diagnosability', () => {
 
     await dispatcher.dispatch([sub], makeEnvelope(), new Map([['sub-1', w]]));
 
-    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id }), expect.stringContaining("type 'http' but no 'url' field"));
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id }), expect.stringContaining("type 'http' but no 'url' field"), expect.objectContaining({ reason: 'invalid-configuration' }));
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({
       status: 'dlq',
       error: expect.stringContaining("type 'http' but no 'url' field") as unknown as string,
@@ -328,7 +330,7 @@ describe('AsyncDispatcher - permanent failure', () => {
     const w = makeWalEntry('sub-1');
     await dispatcher.dispatch([{ ...makeSub('sub-1'), retries: 5 }], makeEnvelope(), new Map([['sub-1', w]]));
 
-    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), 'refused value');
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), 'refused value', expect.objectContaining({ reason: 'permanent-failure' }));
   });
 });
 
@@ -372,7 +374,7 @@ describe('AsyncDispatcher - type action', () => {
 
     await dispatcher.dispatch([actionSub({ retries: 5 })], makeEnvelope(), new Map([['sub-1', w]]));
 
-    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), 'refused value');
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), 'refused value', expect.objectContaining({ reason: 'permanent-failure' }));
     expect(scheduler).not.toHaveBeenCalled();
     expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'dlq', target: 'action:probe' }));
   });
@@ -408,7 +410,7 @@ describe('AsyncDispatcher - type action', () => {
     await dispatcher.dispatch([actionSub({ action: 'nope', configProblem: 'unknown action "nope". Available actions: emit' })], makeEnvelope(), new Map([['sub-1', w]]));
 
     expect(run).not.toHaveBeenCalled();
-    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), expect.stringContaining('unknown action "nope"'));
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: w.id, attempts: 1 }), expect.stringContaining('unknown action "nope"'), expect.objectContaining({ reason: 'invalid-configuration', target: 'action:nope' }));
     expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'dlq', target: 'action:nope' }));
   });
 
@@ -428,7 +430,7 @@ describe('AsyncDispatcher - type action', () => {
 
     expect(run).not.toHaveBeenCalled();
     expect(dlqMover).toHaveBeenCalledTimes(1);
-    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: bad.id, attempts: 1 }), expect.stringContaining(problem));
+    expect(dlqMover).toHaveBeenCalledWith(expect.objectContaining({ id: bad.id, attempts: 1 }), expect.stringContaining(problem), expect.objectContaining({ reason: 'invalid-configuration' }));
     expect(cli).toHaveBeenCalledTimes(1);
     expect(walUpdater).toHaveBeenCalledWith(good.id, expect.objectContaining({ status: 'acked' }));
   });
@@ -441,6 +443,6 @@ describe('AsyncDispatcher - type action', () => {
 
     await dispatcher.dispatch([actionSub()], makeEnvelope(), new Map([['sub-1', w]]));
 
-    expect(dlqMover).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('runs no actions'));
+    expect(dlqMover).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('runs no actions'), expect.objectContaining({ reason: 'invalid-configuration' }));
   });
 });

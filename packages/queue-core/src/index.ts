@@ -56,3 +56,5 @@ export { MAX_ACTION_HOPS } from './actions/hopCap.js';
 export { reservedEventProblem, replayReservedProblem } from './reservedEvents.js';
 export { canResolveRef, RefResolver, EventRefError } from './dispatch/refResolver.js';
 export type { RefLookup, ResolvedEvent } from './dispatch/refResolver.js';
+export { DLQ_ADDED_EVENT, DLQ_REMOVED_EVENT, MAX_DLQ_EVENT_ERROR_CHARS, DLQ_EVENT_DECLARATIONS, buildDlqAddedEvent, buildDlqRemovedEvent, isDlqEventExcluded } from './dlqEvents.js';
+export type { DlqAddedReason, DlqRemovedReason, DlqAddedInfo, BuiltDlqEvent } from './dlqEvents.js';
