@@ -19,7 +19,8 @@ export class AsyncDispatcher {
   constructor(
     private readonly walUpdater: (id: string, updates: Partial<WalEntry>) => void,
     // `info` says why the entry is given up (and the exit code and target of the last attempt): the facts of the queue.dlq.added event
-    private readonly dlqMover: (entry: WalEntry, lastError: string, info: DlqAddedInfo) => void,
+    // Awaited: the mover emits queue.dlq.added BEFORE it writes the DLQ row (a crash in between gives a duplicate event, never a loss)
+    private readonly dlqMover: (entry: WalEntry, lastError: string, info: DlqAddedInfo) => void | Promise<void>,
     // Required: the daemon has no usable stderr, an absent logger would make every failure invisible
     private readonly logger: QueueLogWriter,
     // Terse audit trail for `queue history`, written unconditionally unlike logger.logDispatch
@@ -48,7 +49,7 @@ export class AsyncDispatcher {
 
         const outcome = await runSubscriber(sub, envelope, sub.timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport, refs: this.refs });
         if (outcome.kind === 'config') {
-          this.failConfig(envelope, walEntry, sub, outcome.error);
+          await this.failConfig(envelope, walEntry, sub, outcome.error);
           return;
         }
         const result = outcome.result;
@@ -78,7 +79,7 @@ export class AsyncDispatcher {
           } else {
             this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
             this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, ...projectRefsOf(envelope.meta) });
-            this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError, {
+            await this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError, {
               reason: result.permanent === true ? 'permanent-failure' : 'retries-exhausted',
               ...(result.exitCode !== undefined && { exitCode: result.exitCode }),
               ...(target !== '' && { target }),
@@ -93,7 +94,7 @@ export class AsyncDispatcher {
    * Misconfigured subscriber (no command, unknown action, no folder to run from...): the same configuration would fail the same way on every retry,
    * so the entry goes straight to the DLQ with the reason, instead of staying 'failed' in the WAL with nobody looking at it.
    */
-  private failConfig(envelope: EventEnvelope, walEntry: WalEntry, sub: ResolvedSubscriber, reason: string): void {
+  private async failConfig(envelope: EventEnvelope, walEntry: WalEntry, sub: ResolvedSubscriber, reason: string): Promise<void> {
     const attempts = walEntry.attempts + 1;
     const error = `${reason} (not retried: fix subscribers.yml, then replay the entry from the DLQ: queue dlq replay --id ${walEntry.id})`;
     this.walUpdater(walEntry.id, { status: 'failed', lastError: error, attempts });
@@ -107,6 +108,6 @@ export class AsyncDispatcher {
     });
     this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target: targetOf(sub), ...projectRefsOf(envelope.meta) });
     const target = targetOf(sub);
-    this.dlqMover({ ...walEntry, attempts }, error, { reason: 'invalid-configuration', ...(target !== undefined && { target }) });
+    await this.dlqMover({ ...walEntry, attempts }, error, { reason: 'invalid-configuration', ...(target !== undefined && { target }) });
   }
 }

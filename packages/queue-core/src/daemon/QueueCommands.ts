@@ -24,6 +24,12 @@ export interface DlqReplayRequest { id: string; }
 export interface DlqReplayResponse { status: 'ok' | 'not-found'; }
 export interface DlqClearRequest { id?: string; }
 export interface DlqClearResponse { cleared: number; }
+// `dlq-notify`: a process that changed the DLQ files without the daemon (the dashboard: give-up, clear) asks the daemon to announce it. NOT a push: the daemon builds the
+// `queue.dlq.*` event itself, from the entry. `reason` is `given-up` for kind `added`, `cleared` or `evicted` for kind `removed`; `entry` is the DLQ entry as stored.
+// For `added` the daemon builds the event from the row it finds in the DLQ under `entry.id` (and refuses a request whose row is missing or differs), so it states what the store holds.
+export interface DlqNotifyRequest { kind: 'added' | 'removed'; entries: Array<{ entry: DlqEntry; reason: string }>; }
+// `rejected`: nothing was emitted, `reason` says why and what to fix. `ok`: `accepted` events are being emitted (in the background, like the ones of `dlq-clear`)
+export interface DlqNotifyResponse { status: 'ok' | 'rejected'; accepted?: number; reason?: string; }
 
 export type QueueCommands = {
   push: (payload?: unknown) => Promise<PushResponse>;
@@ -34,4 +40,5 @@ export type QueueCommands = {
   'dlq-list': (payload?: unknown) => DlqListResponse;
   'dlq-replay': (payload?: unknown) => Promise<DlqReplayResponse>;
   'dlq-clear': (payload?: unknown) => DlqClearResponse;
+  'dlq-notify': (payload?: unknown) => DlqNotifyResponse;
 };

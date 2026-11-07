@@ -1,6 +1,7 @@
-import { listInFlightEntries, abandonInFlightEntry, abandonStuckEntries, countStuckEntries, STUCK_AFTER_MS } from '@wadeck-app/queue-core';
+import { listInFlightEntries, abandonInFlightEntryDetailed, abandonStuckEntriesDetailed, countStuckEntries, STUCK_AFTER_MS } from '@wadeck-app/queue-core';
 import { NotInFlightError, PendingNotFoundError } from './errors.js';
 import { shortId } from './ids.js';
+import { announceDlqChanges } from './dlqAnnounce.js';
 
 export interface PendingRow {
   id: string;
@@ -51,20 +52,24 @@ export function listPending(configDir: string): PendingList {
 
 /**
  * Gives up an event nobody will retry any more (a retry is an orchestrator job; when scheduling it failed or was lost, the entry waits
- * forever): it moves to the dead-letter queue, where it can be replayed or cleared. Nothing is deleted; no daemon is needed.
+ * forever): it moves to the dead-letter queue, where it can be replayed or cleared. Nothing is deleted; no daemon is needed for the move.
+ * Once the files are written the daemon is told (queue.dlq.added, reason given-up); when that cannot be done the move stands and `message` says so.
  */
-export function giveUpPending(configDir: string, id: string): { status: 'moved' } {
-  const result = abandonInFlightEntry(configDir, id);
+export async function giveUpPending(configDir: string, id: string): Promise<{ status: 'moved'; message?: string }> {
+  const result = abandonInFlightEntryDetailed(configDir, id);
   if (result.status === 'not-found') {
     throw new PendingNotFoundError(`No pending event with id ${id} (only events still in the WAL can be given up)`);
   }
   if (result.status === 'not-in-flight') {
     throw new NotInFlightError(`Event ${id} is no longer in flight: it was delivered, or it is already in the dead-letter queue`);
   }
-  return { status: 'moved' };
+  const problem = await announceDlqChanges(configDir, { added: result.changes.added, evicted: result.changes.evicted });
+  return { status: 'moved', ...(problem !== undefined && { message: `Moved to the dead-letter queue. ${problem}` }) };
 }
 
 /** Gives up every stuck event at once (see {@link giveUpPending}); answers how many moved to the dead-letter queue. */
-export function giveUpStuck(configDir: string): { moved: number } {
-  return abandonStuckEntries(configDir);
+export async function giveUpStuck(configDir: string): Promise<{ moved: number; message?: string }> {
+  const { moved, changes } = abandonStuckEntriesDetailed(configDir);
+  const problem = await announceDlqChanges(configDir, { added: changes.added, evicted: changes.evicted });
+  return { moved, ...(problem !== undefined && { message: `${moved} stuck ${moved === 1 ? 'event' : 'events'} moved to the dead-letter queue. ${problem}` }) };
 }

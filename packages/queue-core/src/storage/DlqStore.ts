@@ -75,6 +75,14 @@ export class DlqStore {
     });
   }
 
+  /**
+   * Whether a row with this id is in the file now. A plain read (the file is replaced atomically, so it is never half-written): another writer may insert
+   * the row right after, which `append` then reports as `inserted: false`.
+   */
+  has(id: string): boolean {
+    return this.readAll().some((entry) => entry.id === id);
+  }
+
   readAll(): DlqEntry[] {
     if (!existsSync(this.filePath)) {
       return [];

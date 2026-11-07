@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
@@ -1019,6 +1019,39 @@ describe('backend', () => {
     await handler(fakeReq({ params: { name: 'job.started' }, body: { payload: '{}' } }), asReply(refused));
     expect(refused.code).toHaveBeenCalledWith(400);
     expect(refused.send).toHaveBeenCalledWith({ error: 'The payload was not pushed: payload.jobId: must be string' });
+  });
+
+  it('POST /events/:name/push-test answers 400 with the reason for an event of the reserved queue. namespace (never 500, never 503)', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockPushTestEvent.mockRejectedValueOnce(new ReservedEventError('queue.dlq.added is emitted by the queue daemon itself, so it cannot be pushed as a test'));
+    const reply = fakeReply();
+    await routes.get('POST /events/:name/push-test')!(fakeReq({ params: { name: 'queue.dlq.added' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(400);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'queue.dlq.added is emitted by the queue daemon itself, so it cannot be pushed as a test' });
+  });
+
+  it('POST /dlq/:id/clear, /pending/:id/give-up and /pending/give-up-stuck pass the `message` through when the daemon could not be told, and the operation is a 200', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const note = 'The queue.dlq.removed (1 entry) event could not be sent because the daemon is not running';
+    mockClearDlqEntry.mockResolvedValueOnce({ cleared: 1, message: `Entry removed. ${note}` });
+    const cleared = fakeReply();
+    await routes.get('POST /dlq/:id/clear')!(fakeReq({ params: { id: 'd1' } }), asReply(cleared));
+    expect(cleared.code).toHaveBeenCalledWith(200);
+    expect(cleared.send).toHaveBeenCalledWith({ cleared: 1, message: `Entry removed. ${note}` });
+
+    mockGiveUpPending.mockResolvedValueOnce({ status: 'moved', message: 'Moved to the dead-letter queue. daemon is not running' });
+    const moved = fakeReply();
+    await routes.get('POST /pending/:id/give-up')!(fakeReq({ params: { id: 'f1' } }), asReply(moved));
+    expect(moved.code).toHaveBeenCalledWith(200);
+    expect(moved.send).toHaveBeenCalledWith({ status: 'moved', message: 'Moved to the dead-letter queue. daemon is not running' });
+
+    mockGiveUpStuck.mockResolvedValueOnce({ moved: 2, message: '2 stuck events moved to the dead-letter queue. daemon is not running' });
+    const stuck = fakeReply();
+    await routes.get('POST /pending/give-up-stuck')!(fakeReq(), asReply(stuck));
+    expect(stuck.code).toHaveBeenCalledWith(200);
+    expect(stuck.send).toHaveBeenCalledWith({ moved: 2, message: '2 stuck events moved to the dead-letter queue. daemon is not running' });
   });
 
   it('POST /events/:name/validate-payload answers the verdict for the text of the body, 404 for an event nobody declares, 400 without text', async () => {

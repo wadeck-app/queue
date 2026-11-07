@@ -11,7 +11,7 @@ export { validateSourceDeclaration, writeSourceDeclaration, readCatalog, MAX_EVE
 export type { EventDeclaration, SourceDeclaration, CatalogProblem, Validation, StoredSource, Catalog, EventOutcome } from './catalog/EventCatalog.js';
 export { listEvents, listEventDetails, getEventDetail, nearestEventNames, OBSERVED_WINDOW_DAYS } from './catalog/EventListing.js';
 export type { CatalogEntry, SourceSummary, EventListing, ListEventsOptions, FilterableField, EventDetail } from './catalog/EventListing.js';
-export type { QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse } from './daemon/QueueCommands.js';
+export type { QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse, ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse, DlqClearRequest, DlqClearResponse, DlqNotifyRequest, DlqNotifyResponse } from './daemon/QueueCommands.js';
 export { createQueueService } from './daemon/QueueService.js';
 export type { QueueService, QueueServiceOptions } from './daemon/QueueService.js';
 export { spawnDetachedProcess } from './daemon/spawnDetachedProcess.js';
@@ -33,8 +33,8 @@ export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage
 export { DEFAULT_HISTORY_LIMIT } from './storage/HistoryReader.js';
 export type { DlqEntry, DlqAppendResult } from './storage/DlqStore.js';
 export type { ResolvedSubscriber } from './types.js';
-export { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, clearDlqEntriesReturning, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries, STUCK_AFTER_MS } from './operations.js';
-export type { AbandonResult } from './operations.js';
+export { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, clearDlqEntriesReturning, listQueueSubscribers, abandonInFlightEntry, abandonInFlightEntryDetailed, abandonStuckEntries, abandonStuckEntriesDetailed, countStuckEntries, STUCK_AFTER_MS } from './operations.js';
+export type { AbandonResult, AbandonDetailed, DlqChanges } from './operations.js';
 export type { QueueCounts } from './operations.js';
 export type { WalEntry } from './storage/Wal.js';
 export { LogFormatter } from './storage/LogFormatter.js';
@@ -56,5 +56,5 @@ export { MAX_ACTION_HOPS } from './actions/hopCap.js';
 export { reservedEventProblem, replayReservedProblem } from './reservedEvents.js';
 export { canResolveRef, RefResolver, EventRefError } from './dispatch/refResolver.js';
 export type { RefLookup, ResolvedEvent } from './dispatch/refResolver.js';
-export { DLQ_ADDED_EVENT, DLQ_REMOVED_EVENT, MAX_DLQ_EVENT_ERROR_CHARS, DLQ_EVENT_DECLARATIONS, buildDlqAddedEvent, buildDlqRemovedEvent, isDlqEventExcluded } from './dlqEvents.js';
-export type { DlqAddedReason, DlqRemovedReason, DlqAddedInfo, BuiltDlqEvent } from './dlqEvents.js';
+export { DLQ_ADDED_EVENT, DLQ_REMOVED_EVENT, MAX_DLQ_EVENT_ERROR_CHARS, DLQ_EVENT_DECLARATIONS, buildDlqAddedEvent, buildDlqRemovedEvent, isDlqEventExcluded, parseDlqNotify, DLQ_NOTIFY_REASONS } from './dlqEvents.js';
+export type { DlqAddedReason, DlqRemovedReason, DlqAddedInfo, BuiltDlqEvent, DlqNotifyItem, ParsedDlqNotify } from './dlqEvents.js';

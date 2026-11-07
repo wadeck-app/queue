@@ -21,6 +21,8 @@ beforeEach(() => {
   configDir = mkdtempSync(join(tmpdir(), 'app-module-dlq-'));
   mockSend.mockReset();
   mockIsRunning.mockReset();
+  // no daemon unless a test starts one
+  mockIsRunning.mockResolvedValue(false);
 });
 
 afterEach(() => {
@@ -34,16 +36,61 @@ describe('dlq reads and clearing work on the queue files directly', () => {
     expect(mockIsRunning).not.toHaveBeenCalled();
   });
 
-  it('clearDlqEntry with an id removes just that entry and reports how many', () => {
+  it('clearDlqEntry with an id removes just that entry and reports how many; the daemon is told (dlq-notify, kind removed, reason cleared)', async () => {
     writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
-    expect(clearDlqEntry(configDir, 'd1')).toEqual({ cleared: 1 });
+    mockIsRunning.mockResolvedValue(true);
+    mockSend.mockResolvedValue({ status: 'ok', accepted: 1 });
+    expect(await clearDlqEntry(configDir, 'd1')).toEqual({ cleared: 1 });
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const [command, request] = mockSend.mock.calls[0] as [string, { kind: string; entries: Array<{ entry: { id: string; payload: unknown }; reason: string }> }];
+    expect(command).toBe('dlq-notify');
+    expect(request.kind).toBe('removed');
+    expect(request.entries.map((item) => [item.entry.id, item.reason, item.entry.payload])).toEqual([['d1', 'cleared', null]]);
     expect(listDlq(configDir).map(e => e.id)).toEqual(['d2']);
   });
 
-  it('clearDlqEntry without an id clears all entries', () => {
+  it('clearDlqEntry without an id clears all entries and announces each of them', async () => {
     writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
-    expect(clearDlqEntry(configDir)).toEqual({ cleared: 2 });
+    mockIsRunning.mockResolvedValue(true);
+    mockSend.mockResolvedValue({ status: 'ok', accepted: 2 });
+    expect(await clearDlqEntry(configDir)).toEqual({ cleared: 2 });
     expect(listDlq(configDir)).toEqual([]);
+    expect((mockSend.mock.calls[0]![1] as { entries: unknown[] }).entries).toHaveLength(2);
+  });
+
+  it('a clear of more than one chunk sends several requests', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), Array.from({ length: 450 }, (_, i) => dlqLine('d' + i)).join('\n') + '\n');
+    mockIsRunning.mockResolvedValue(true);
+    mockSend.mockResolvedValue({ status: 'ok' });
+    expect(await clearDlqEntry(configDir)).toEqual({ cleared: 450 });
+    expect(mockSend.mock.calls.map((call) => (call[1] as { entries: unknown[] }).entries.length)).toEqual([200, 200, 50]);
+  });
+
+  it('the clear stands and the message says the event could not be sent when the daemon is not running; nothing is sent', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
+    const result = await clearDlqEntry(configDir);
+    expect(result.cleared).toBe(2);
+    expect(result.message).toContain('2 entries removed.');
+    expect(result.message).toContain('queue.dlq.removed (2 entries) event could not be sent because the daemon is not running');
+    expect(result.message).toContain('queue start');
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(listDlq(configDir)).toEqual([]);
+  });
+
+  it('says the daemon refused, or could not be reached, in the message; the clear stands', async () => {
+    writeFileSync(join(configDir, 'dlq.ndjson'), [dlqLine('d1'), dlqLine('d2')].join('\n') + '\n');
+    mockIsRunning.mockResolvedValue(true);
+    mockSend.mockResolvedValueOnce({ status: 'rejected', reason: 'because' });
+    expect((await clearDlqEntry(configDir, 'd1')).message).toContain('the daemon refused it (because)');
+    mockSend.mockRejectedValueOnce(new Error('socket closed'));
+    const failed = await clearDlqEntry(configDir, 'd2');
+    expect(failed.cleared).toBe(1);
+    expect(failed.message).toContain('Entry removed.');
+    expect(failed.message).toContain('socket closed');
+  });
+
+  it('an unknown id clears 0 and contacts nobody', async () => {
+    expect(await clearDlqEntry(configDir, 'nope')).toEqual({ cleared: 0 });
     expect(mockIsRunning).not.toHaveBeenCalled();
   });
 });

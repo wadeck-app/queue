@@ -185,11 +185,12 @@ Rules:
 
 - `removed` is emitted when an entry leaves the DLQ: `replayed` once the replay dispatch has started, `cleared` per entry of a clear (after it returned, 10 at a time), `evicted` when the 1000-entry cap drops the oldest.
 - A replay that fails again gives `removed` then `added`, both with the same `entryId`.
-- Emitted once per entry in the DLQ: a retry that finds the entry already there does not emit again. A process crash in the instant between the DLQ write and the emit loses that one event (the entry stays in the DLQ and is listed by `queue dlq list`).
+- Emitted once per entry in the DLQ, at-least-once: the daemon checks the row is not there yet, emits `added`, then writes the row. A crash between the emit and the write leaves the WAL entry `failed` (the startup rescan only reschedules `pending` ones), so running it again (`queue retry --event <walId>`) emits a second `added` for the same `entryId`: a duplicate, never a loss. A row that already exists emits nothing. The one exception is `removed(evicted)`, which follows the write that evicts (a crash in between loses it).
 - No event about an entry whose base event is a `queue.` event: a subscriber failing on `queue.dlq.added` is visible in the DLQ and the history, and produces no further event.
 - Loop guard: the event carries `hops + 1` of the failed delivery and `causedBy` it. At the hop cap (5) it is not emitted and the daemon log says so, naming the entry.
 - A replay whose subscriber was renamed or whose configuration does not load emits `removed(replayed)` but dispatches nothing: the log says the WAL entry stays pending. With a configuration that does not load, the event itself cannot be recorded; the log says that too.
-- `given-up` (an in-flight event given up by hand from the dashboard) is part of the payload contract but is **not emitted yet**: that path writes the files without the daemon.
+- Dashboard paths (clear, give-up of one or all stuck events) write the files without the daemon, then ask it to announce the change through the `dlq-notify` RPC: `added` with `reason: given-up`, `removed` with `cleared` (or `evicted` when a give-up pushed the oldest row out at the cap). The daemon builds the event itself, so every rule above applies. If it is not running (it is not started for this) or refuses, the operation still stands and the dashboard message says the `queue.dlq.*` event could not be sent and why; no subscriber was told. `queue dlq clear|replay` run inside the daemon and emit once.
+- The events page shows `queue.dlq.*` with their example but no test-push button: the `queue.` namespace cannot be pushed.
 
 Getting the base payload: `{{ payload.original.<field> }}` in a template, or `queue history --event-id <eventId> --json` by hand. A subscriber on `>` sees only the reference.
 

@@ -228,6 +228,23 @@ describe('the packaged module through a real app-core server', () => {
     expect(body['cleared']).toBe(0);
   });
 
+  it('POST /dlq/:id/clear removes the row and says in its message that queue.dlq.removed could not be sent because the daemon is not running (the clear stands)', async () => {
+    const row = { id: 'row-to-clear', event: 'onFoo', payload: {}, meta: { cwd: packageDir, eventId: 'evt-row' }, subscriberId: 's', attempts: 1, lastError: 'x', movedAt: '2026-01-01T00:00:00.000Z' };
+    writeFileSync(join(configDir, 'dlq.ndjson'), JSON.stringify(row) + '\n');
+    const { status, body } = await call('POST', '/dlq/row-to-clear/clear');
+    expect(status).toBe(200);
+    expect(body['cleared']).toBe(1);
+    expect(String(body['message'])).toContain('Entry removed.');
+    expect(String(body['message'])).toContain('queue.dlq.removed (1 entry) event could not be sent because the daemon is not running');
+    expect(readFileSync(join(configDir, 'dlq.ndjson'), 'utf8')).toBe('');
+  });
+
+  it('POST /events/:name/push-test refuses an event of the reserved queue. namespace with 400 and the reason (not the 503 of the missing daemon)', async () => {
+    const { status, body } = await call('POST', '/events/queue.dlq.added/push-test');
+    expect(status).toBe(400);
+    expect(String(body['error'])).toContain('queue.dlq.added is emitted by the queue daemon itself');
+  });
+
   it('GET /related/project/:projectId answers 200 with the card of a registered project', async () => {
     const { status, body } = await call('GET', `/related/project/${appProjectId}`);
     expect(status).toBe(200);

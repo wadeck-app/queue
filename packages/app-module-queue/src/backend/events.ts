@@ -1,6 +1,6 @@
 import { Ajv } from 'ajv';
-import { getErrorMessage, getEventDetail, listEvents, listEventDetails, nearestEventNames, type CatalogEntry, type EventDetail, type EventListing, type PushResponse } from '@wadeck-app/queue-core';
-import { InvalidPayloadError, InvalidQueryError, TestPayloadNotFoundError } from './errors.js';
+import { getErrorMessage, getEventDetail, reservedEventProblem, listEvents, listEventDetails, nearestEventNames, type CatalogEntry, type EventDetail, type EventListing, type PushResponse } from '@wadeck-app/queue-core';
+import { InvalidPayloadError, InvalidQueryError, ReservedEventError, TestPayloadNotFoundError } from './errors.js';
 import { pushEvent } from './push.js';
 import { validateSingleString, type QueryParams } from './historyQuery.js';
 
@@ -130,7 +130,7 @@ export function getEvents(configDir: string, query: QueryParams, nowMs: number =
       status: rowStatus,
       descriptionExcerpt: excerptOf(entry.description),
       lastSeenText: lastSeenTextOf(entry.lastSeenAt),
-      canPushTest: entry.declared && detail?.example !== undefined,
+      canPushTest: entry.declared && detail?.example !== undefined && reservedPushProblem(entry.name) === undefined,
       detailsText: detailsTextOf(entry, detail),
     });
   }
@@ -143,6 +143,17 @@ export function getEvents(configDir: string, query: QueryParams, nowMs: number =
     problems: listing.problems,
     problemsText: listing.problems.map((problem) => `${problem.file}: ${problem.message}`).join(' | '),
   };
+}
+
+/**
+ * Why an event cannot be pushed as a test from the dashboard, undefined when it can: the `queue.` namespace is the daemon's own (a push of it is refused), so the
+ * page shows no push button for those events and says why. The decision is the shared one (reservedEventProblem); only the wording is the dashboard's.
+ */
+export function reservedPushProblem(name: string): string | undefined {
+  if (reservedEventProblem(name, 'a test push') === undefined) {
+    return undefined;
+  }
+  return `${name} is emitted by the queue daemon itself, so it cannot be pushed as a test: the 'queue.' namespace is reserved and a push of it is refused. To see one, let a delivery fail or clear the dead-letter queue, then open its history; to try a subscriber on it, push an event of your own name that carries the same fields.`;
 }
 
 export interface PayloadValidation {
@@ -202,6 +213,11 @@ export function validateEventPayload(configDir: string, name: string, payloadTex
  * the page is not trusted): it runs the real subscribers of that event.
  */
 export async function pushTestEvent(configDir: string, name: string, payloadText?: string): Promise<PushResponse> {
+  // Before anything else: the daemon would refuse it anyway, this says why in the dashboard's own words and never reaches the daemon
+  const reserved = reservedPushProblem(name);
+  if (reserved !== undefined) {
+    throw new ReservedEventError(reserved);
+  }
   if (payloadText !== undefined) {
     const verdict = validateEventPayload(configDir, name, payloadText);
     if (!verdict.valid) {
@@ -289,6 +305,18 @@ function terminalTextOf(entry: CatalogEntry): string {
   return entry.terminal === false ? 'not terminal' : '';
 }
 
+function exampleHintOf(entry: CatalogEntry, hasExample: boolean, reservedHint: string | undefined): string {
+  if (reservedHint !== undefined) {
+    return reservedHint;
+  }
+  if (hasExample) {
+    return '';
+  }
+  return entry.declared
+    ? 'This event declares no example payload: add an "example" to its declaration (queue.registerEvents in @wadeck-app/queue-sdk, or the file given to `queue events register`) to push a test from here.'
+    : 'Nobody declared this event, so it has no example: the program that pushes it declares its events with queue.registerEvents (@wadeck-app/queue-sdk) or `queue events register`.';
+}
+
 /** Everything the page of one event shows, split by part (description, flags, schema, example, filterable paths, wait command). */
 export function getEventPage(configDir: string, name: string, nowMs: number = Date.now()): EventPageResponse {
   if (name === '') {
@@ -306,6 +334,7 @@ export function getEventPage(configDir: string, name: string, nowMs: number = Da
   }
   const { entry } = detail;
   const hasExample = detail.example !== undefined;
+  const reservedHint = reservedPushProblem(entry.name);
   return {
     found: true,
     message: '',
@@ -327,12 +356,8 @@ export function getEventPage(configDir: string, name: string, nowMs: number = Da
     schemaText: detail.schema === undefined ? '' : JSON.stringify(detail.schema, null, 2),
     hasExample,
     exampleText: hasExample ? JSON.stringify(detail.example, null, 2) : '',
-    exampleHint: hasExample
-      ? ''
-      : entry.declared
-        ? 'This event declares no example payload: add an "example" to its declaration (queue.registerEvents in @wadeck-app/queue-sdk, or the file given to `queue events register`) to push a test from here.'
-        : 'Nobody declared this event, so it has no example: the program that pushes it declares its events with queue.registerEvents (@wadeck-app/queue-sdk) or `queue events register`.',
-    canPushTest: entry.declared && hasExample,
+    exampleHint: exampleHintOf(entry, hasExample, reservedHint),
+    canPushTest: entry.declared && hasExample && reservedPushProblem(entry.name) === undefined,
     filterable: detail.filterable.map((field) => ({ path: field.path, type: field.type, requiredText: field.required ? 'required' : 'optional' })),
     waitExample: detail.waitExample,
     waitText: `\`\`\`\n${detail.waitExample}\n\`\`\``,

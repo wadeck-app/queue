@@ -8,7 +8,7 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
@@ -255,7 +255,7 @@ export default function (ctx: ModuleContext): void {
       if (err instanceof TestPayloadNotFoundError) {
         return reply.code(404).send({ error: getErrorMessage(err) });
       }
-      if (err instanceof InvalidPayloadError) {
+      if (err instanceof InvalidPayloadError || err instanceof ReservedEventError) {
         return reply.code(400).send({ error: getErrorMessage(err) });
       }
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
@@ -278,20 +278,21 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  // Moves every event that waited so long that nobody retries it any more to the dead-letter queue (nothing is deleted; no daemon needed)
-  ctx.registerRoute('POST', '/pending/give-up-stuck', (_req, reply) => {
+  // Moves every event that waited so long that nobody retries it any more to the dead-letter queue (nothing is deleted; no daemon needed for the move).
+  // The daemon is told afterwards (queue.dlq.added); when it cannot be, the move stands and the response `message` says so
+  ctx.registerRoute('POST', '/pending/give-up-stuck', async (_req, reply) => {
     try {
-      return reply.code(200).send(giveUpStuck(configDir));
+      return reply.code(200).send(await giveUpStuck(configDir));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }
   });
 
-  // Moves an event nobody retries any more to the dead-letter queue (nothing is deleted; no daemon needed)
-  ctx.registerRoute('POST', '/pending/:id/give-up', (req, reply) => {
+  // Moves an event nobody retries any more to the dead-letter queue (nothing is deleted; no daemon needed for the move); the daemon is told afterwards, see above
+  ctx.registerRoute('POST', '/pending/:id/give-up', async (req, reply) => {
     const { id } = req.params;
     try {
-      return reply.code(200).send(giveUpPending(configDir, id));
+      return reply.code(200).send(await giveUpPending(configDir, id));
     } catch (err) {
       const status = err instanceof PendingNotFoundError ? 404 : err instanceof NotInFlightError ? 409 : 500;
       return reply.code(status).send({ error: getErrorMessage(err) });
@@ -358,10 +359,11 @@ export default function (ctx: ModuleContext): void {
     }
   });
 
-  ctx.registerRoute('POST', '/dlq/:id/clear', (req, reply) => {
+  // Edits the DLQ file (no daemon needed), then tells the daemon (queue.dlq.removed); when it cannot be told the clear stands and the response `message` says so
+  ctx.registerRoute('POST', '/dlq/:id/clear', async (req, reply) => {
     const { id } = req.params;
     try {
-      return reply.code(200).send(clearDlqEntry(configDir, id));
+      return reply.code(200).send(await clearDlqEntry(configDir, id));
     } catch (err) {
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

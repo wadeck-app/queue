@@ -60,11 +60,29 @@ export function listInFlightEntries(configDir: string): WalEntry[] {
 export type AbandonResult = { status: 'moved' } | { status: 'not-found' } | { status: 'not-in-flight' };
 
 /**
+ * What an out-of-daemon change of the DLQ did, for the caller that announces it (the `dlq-notify` RPC): the entries that ENTERED the queue (a row that
+ * already existed is not new, so it is not listed) and the entries the 1000-entry cap pushed out.
+ */
+export interface DlqChanges {
+  added: DlqEntry[];
+  evicted: DlqEntry[];
+}
+
+export type AbandonDetailed = { status: 'moved'; changes: DlqChanges } | { status: 'not-found' } | { status: 'not-in-flight' };
+
+/**
  * Gives up an event that is still in flight (pending or failed) by moving it to the DLQ, where it can be replayed or cleared. For the
  * entries nobody will retry any more: a retry is an orchestrator job, and when scheduling it failed or was lost the entry waits forever.
  * Nothing is deleted. Needs no daemon; the locks of the WAL and the DLQ make it safe next to a running one.
+ * Writes the files only: nothing is announced. A caller that wants the `queue.dlq.*` events uses {@link abandonInFlightEntryDetailed} and sends the changes to the daemon.
  */
 export function abandonInFlightEntry(configDir: string, id: string, now: Date = new Date()): AbandonResult {
+  const result = abandonInFlightEntryDetailed(configDir, id, now);
+  return result.status === 'moved' ? { status: 'moved' } : result;
+}
+
+/** Same move as {@link abandonInFlightEntry}, also returning what entered the DLQ and what the cap pushed out of it. */
+export function abandonInFlightEntryDetailed(configDir: string, id: string, now: Date = new Date()): AbandonDetailed {
   const wal = new Wal(join(configDir, 'wal.ndjson'));
   const entry = wal.readAll().find((candidate) => candidate.id === id);
   if (entry === undefined) {
@@ -73,7 +91,7 @@ export function abandonInFlightEntry(configDir: string, id: string, now: Date = 
   if (entry.status !== 'pending' && entry.status !== 'failed') {
     return { status: 'not-in-flight' };
   }
-  new DlqStore(join(configDir, 'dlq.ndjson')).append({
+  const row: DlqEntry = {
     id: entry.id,
     event: entry.event,
     payload: entry.payload,
@@ -82,9 +100,10 @@ export function abandonInFlightEntry(configDir: string, id: string, now: Date = 
     attempts: entry.attempts,
     lastError: entry.lastError !== undefined ? `${entry.lastError} (given up by hand)` : 'given up by hand before any attempt',
     movedAt: now.toISOString(),
-  });
+  };
+  const appended = new DlqStore(join(configDir, 'dlq.ndjson')).append(row);
   wal.updateEntry(entry.id, { status: 'dlq' });
-  return { status: 'moved' };
+  return { status: 'moved', changes: { added: appended.inserted ? [row] : [], evicted: appended.evicted !== undefined ? [appended.evicted] : [] } };
 }
 
 /**
@@ -103,15 +122,24 @@ export function countStuckEntries(configDir: string, options: { now?: Date; olde
   return stuckEntries(configDir, options).length;
 }
 
-/** Moves every in-flight event older than the limit to the DLQ (see {@link abandonInFlightEntry}); returns how many. */
+/** Moves every in-flight event older than the limit to the DLQ (see {@link abandonInFlightEntry}); returns how many. Announces nothing. */
 export function abandonStuckEntries(configDir: string, options: { now?: Date; olderThanMs?: number } = {}): { moved: number } {
+  return { moved: abandonStuckEntriesDetailed(configDir, options).moved };
+}
+
+/** Same as {@link abandonStuckEntries}, also returning what entered the DLQ and what the cap pushed out of it. */
+export function abandonStuckEntriesDetailed(configDir: string, options: { now?: Date; olderThanMs?: number } = {}): { moved: number; changes: DlqChanges } {
+  const changes: DlqChanges = { added: [], evicted: [] };
   let moved = 0;
   for (const entry of stuckEntries(configDir, options)) {
-    if (abandonInFlightEntry(configDir, entry.id, options.now).status === 'moved') {
+    const result = abandonInFlightEntryDetailed(configDir, entry.id, options.now);
+    if (result.status === 'moved') {
       moved++;
+      changes.added.push(...result.changes.added);
+      changes.evicted.push(...result.changes.evicted);
     }
   }
-  return { moved };
+  return { moved, changes };
 }
 
 export function listDlqEntries(configDir: string): DlqEntry[] {

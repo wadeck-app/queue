@@ -129,6 +129,20 @@ export const DLQ_EVENT_DECLARATIONS: EventDeclaration[] = [
       + '{{ payload.original.<field> }} in a template reads the base payload. Not emitted for a base event named queue.*.',
     outcome: 'failure',
     correlationKey: ['payload.entryId'],
+    // Documentation of the shape: the daemon alone emits this event, nothing can push the example
+    example: {
+      entryId: '3f2a9c1e-0000-4000-8000-000000000001',
+      eventId: '7d41b0aa-0000-4000-8000-000000000002',
+      event: 'onTaskDone',
+      subscriberId: 'my-project/notify',
+      projectId: 'my-project',
+      reason: 'retries-exhausted',
+      error: 'exit code 3',
+      attempts: 5,
+      exitCode: 3,
+      target: 'node notify.js',
+      original: { $eventRef: '7d41b0aa-0000-4000-8000-000000000002' },
+    },
     schema: {
       type: 'object',
       properties: {
@@ -149,6 +163,16 @@ export const DLQ_EVENT_DECLARATIONS: EventDeclaration[] = [
       + 'A replay that fails again gives removed then added with the same entryId. Not emitted for a base event named queue.*.',
     outcome: 'info',
     correlationKey: ['payload.entryId'],
+    // Documentation of the shape: the daemon alone emits this event, nothing can push the example
+    example: {
+      entryId: '3f2a9c1e-0000-4000-8000-000000000001',
+      eventId: '7d41b0aa-0000-4000-8000-000000000002',
+      event: 'onTaskDone',
+      subscriberId: 'my-project/notify',
+      projectId: 'my-project',
+      reason: 'cleared',
+      original: { $eventRef: '7d41b0aa-0000-4000-8000-000000000002' },
+    },
     schema: {
       type: 'object',
       properties: {
@@ -160,3 +184,97 @@ export const DLQ_EVENT_DECLARATIONS: EventDeclaration[] = [
     },
   },
 ];
+
+/**
+ * What the daemon accepts to announce on behalf of a process that wrote the queue files without it (the dashboard): the paths that exist outside the daemon
+ * and nothing else. A narrow list is what keeps `dlq-notify` from being a way to state any fact: `retries-exhausted` and the like are known to the daemon alone.
+ */
+export const DLQ_NOTIFY_REASONS = {
+  added: ['given-up'],
+  removed: ['cleared', 'evicted'],
+} as const satisfies Record<'added' | 'removed', readonly string[]>;
+
+export interface DlqNotifyItem {
+  entry: DlqEntry;
+  reason: string;
+}
+
+export type ParsedDlqNotify =
+  | { ok: true; kind: 'added'; items: Array<{ entry: DlqEntry; reason: 'given-up' }> }
+  | { ok: true; kind: 'removed'; items: Array<{ entry: DlqEntry; reason: 'cleared' | 'evicted' }> }
+  | { ok: false; reason: string };
+
+function fail(problem: string): { ok: false; reason: string } {
+  return { ok: false, reason: `dlq-notify refused: ${problem}. Nothing was emitted` };
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string' && value !== '';
+}
+
+/** The fields of a stored entry that an event is built from, checked one by one (an actionable message names the entry and the field). */
+function entryProblem(raw: unknown, index: number): string | undefined {
+  const where = `entries[${index}].entry`;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return `${where} must be a DLQ entry as stored (an object)`;
+  }
+  const entry = raw as Record<string, unknown>;
+  for (const key of ['id', 'event', 'subscriberId'] as const) {
+    if (!isString(entry[key])) {
+      return `${where}.${key} must be a non-empty string`;
+    }
+  }
+  if (typeof entry['attempts'] !== 'number' || !Number.isInteger(entry['attempts']) || entry['attempts'] < 0) {
+    return `${where}.attempts must be a non-negative integer`;
+  }
+  if (typeof entry['lastError'] !== 'string') {
+    return `${where}.lastError must be a string`;
+  }
+  const meta = entry['meta'];
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
+    return `${where}.meta must be an object`;
+  }
+  const fields = meta as Record<string, unknown>;
+  for (const key of ['eventId', 'projectId', 'cwd'] as const) {
+    if (fields[key] !== undefined && !isString(fields[key])) {
+      return `${where}.meta.${key} must be a non-empty string when present`;
+    }
+  }
+  if (fields['hops'] !== undefined && (typeof fields['hops'] !== 'number' || !Number.isInteger(fields['hops']) || fields['hops'] < 0)) {
+    return `${where}.meta.hops must be a non-negative integer when present`;
+  }
+  return undefined;
+}
+
+/** Validates the payload of the `dlq-notify` RPC; nothing is trusted: the kind, every reason and every entry are checked before anything is emitted. */
+export function parseDlqNotify(payload: unknown): ParsedDlqNotify {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return fail('the request must be an object { kind: "added" | "removed", entries: [{ entry, reason }] }');
+  }
+  const request = payload as Record<string, unknown>;
+  const kind = request['kind'];
+  if (kind !== 'added' && kind !== 'removed') {
+    return fail(`kind must be "added" or "removed", got ${JSON.stringify(kind)}`);
+  }
+  const entries = request['entries'];
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return fail('entries must be a non-empty array of { entry, reason }');
+  }
+  const allowed: readonly string[] = DLQ_NOTIFY_REASONS[kind];
+  const items: DlqNotifyItem[] = [];
+  for (const [index, raw] of entries.entries()) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      return fail(`entries[${index}] must be an object { entry, reason }`);
+    }
+    const item = raw as Record<string, unknown>;
+    if (typeof item['reason'] !== 'string' || !allowed.includes(item['reason'])) {
+      return fail(`entries[${index}].reason must be one of ${allowed.map((r) => `"${r}"`).join(', ')} for kind "${kind}" (the other reasons are known to the daemon alone), got ${JSON.stringify(item['reason'])}`);
+    }
+    const problem = entryProblem(item['entry'], index);
+    if (problem !== undefined) {
+      return fail(problem);
+    }
+    items.push({ entry: item['entry'] as DlqEntry, reason: item['reason'] });
+  }
+  return { ok: true, kind, items } as ParsedDlqNotify;
+}
