@@ -973,6 +973,32 @@ describe('publishing on behalf of a project (push protocol 1.2.0)', () => {
     expect(JSON.parse(h.fake!.pushes()[0]!.body)).not.toHaveProperty('project');
   });
 
+  it('refuses an event in the reserved queue. namespace before contacting the daemon, with a reason that says what to use instead', async () => {
+    const h = await setup({});
+    for (const name of ['queue.dlq.added', 'queue.anything']) {
+      const result = await h.publisher.publishAndWait(name, {});
+      expect(result.status).toBe('dropped');
+    }
+    expect(h.failures.map((failure) => failure.kind)).toEqual(['invalid-argument', 'invalid-argument']);
+    expect(h.failures[0]?.message).toContain('reserved "queue."');
+    expect(h.failures[0]?.message).toContain('myapp.thing_done');
+    expect(h.fake!.pushes()).toEqual([]);
+    // Only the exact prefix: a name that merely starts with the letters is a normal event
+    await expect(h.publisher.publishAndWait('queueing.done', {})).resolves.toMatchObject({ status: 'queued' });
+  });
+
+  it('refuses to declare the source queue or an event under queue. (the daemon declares its own), sending nothing', async () => {
+    const h = await setup({});
+    const underQueue = await h.publisher.registerEvents('demo', [{ name: 'queue.dlq.added', description: 'forged' }]);
+    const asQueue = await h.publisher.registerEvents('queue', [{ name: 'queue.thing', description: 'x' }]);
+    expect(underQueue.status).toBe('dropped');
+    expect(asQueue.status).toBe('dropped');
+    expect(h.failures.map((failure) => failure.kind)).toEqual(['invalid-argument', 'invalid-argument']);
+    expect(h.failures[0]?.message).toContain('"queue.dlq.added"');
+    expect(h.failures[1]?.message).toContain('the source "queue"');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
   it('refuses a project that is not the 8-hex id (a name must be resolved with the project CLI first), sending nothing', async () => {
     const h = await setup({ publisher: { project: 'my-app' } });
     const result = await h.publisher.publishAndWait('app.thing', {});

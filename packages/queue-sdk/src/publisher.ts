@@ -4,7 +4,7 @@ import { createDaemonResolver, isPidAlive, type DaemonInfo, type Resolution } fr
 import { loopbackRequest, type HttpOutcome, type LoopbackRequest } from './http.js';
 import { resolveConfigDir } from './configDir.js';
 import type { PushDirection } from './protocol.js';
-import { daemonSupportsEventCatalog, daemonSupportsPushProject, daemonSupportsPushDirection, daemonSupportsPushWithoutCwd, checkPushDirection, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION, PUSH_DIRECTION_MIN_VERSION, PUSH_PROJECT_MIN_VERSION, PUSH_WITHOUT_CWD_MIN_VERSION } from './protocol.js';
+import { daemonSupportsEventCatalog, daemonSupportsPushProject, daemonSupportsPushDirection, daemonSupportsPushWithoutCwd, checkPushDirection, isReservedEventName, RESERVED_EVENT_PREFIX, EVENT_CATALOG_MIN_VERSION, PROTOCOL_VERSION, PUSH_DIRECTION_MIN_VERSION, PUSH_PROJECT_MIN_VERSION, PUSH_WITHOUT_CWD_MIN_VERSION } from './protocol.js';
 import { createReporter, describeHttpError, type FailureKind, type QueueFailure, type Reporter } from './report.js';
 import { defaultStartDeps, startDaemon, type RunOutcome, type StartDeps, type StartResult } from './start.js';
 import {
@@ -344,6 +344,10 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
     if (typeof event !== 'string' || event.trim() === '') {
       return fail('invalid-argument', `the event name must be a non-empty string such as "myapp.thing_done", got ${JSON.stringify(event) ?? String(event)}`);
     }
+    // The daemon refuses these too (protocol >= 1.5.0), but an older daemon would accept and record them: refuse before sending anything
+    if (isReservedEventName(event)) {
+      return fail('invalid-argument', `the event name "${event}" is in the reserved "${RESERVED_EVENT_PREFIX}" namespace: only the queue daemon emits ${RESERVED_EVENT_PREFIX}* events (such as queue.dlq.added). Use your own prefix, such as "myapp.thing_done"`);
+    }
     if (call.timeoutMs !== undefined && !isPositiveNumber(call.timeoutMs)) {
       return fail('invalid-argument', `timeoutMs must be a positive number of milliseconds, got ${String(call.timeoutMs)}`);
     }
@@ -433,6 +437,11 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
     };
     if (typeof source !== 'string' || source.trim() === '') {
       return fail('invalid-argument', `the source must be a non-empty string naming the program that declares the events, such as "orchestrator", got ${JSON.stringify(source) ?? String(source)}`);
+    }
+    // The source "queue" and any event name under "queue." belong to the daemon, which declares its own events at start
+    if (source === 'queue' || (Array.isArray(events) && events.some((declared) => typeof declared?.name === 'string' && isReservedEventName(declared.name)))) {
+      const offending = source === 'queue' ? 'the source "queue"' : `the event name "${events.find((declared) => typeof declared?.name === 'string' && isReservedEventName(declared.name))?.name}"`;
+      return fail('invalid-argument', `${offending} is reserved for the queue daemon, which declares its own ${RESERVED_EVENT_PREFIX}* events at start. Declare your events under your own source and prefix, such as source "myapp" and "myapp.thing_done"`);
     }
     const unsupported = (daemonProtocolVersion: string, prefix: string): RegisterResult => {
       const message = `${prefix}update queue-cli (the queue daemon speaks push protocol ${daemonProtocolVersion}, the event catalog needs ${EVENT_CATALOG_MIN_VERSION}); publishing events is not affected`;
