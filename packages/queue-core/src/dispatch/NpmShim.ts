@@ -113,8 +113,8 @@ export function resolveNpmShim(shimPath: string, env: NodeJS.ProcessEnv): NpmShi
   if (isFile(localNode)) {
     return { nodeExe: localNode, script };
   }
-  // The working directory is not searched: a node.exe dropped in the event's cwd must not be picked up
-  const onPath = findWindowsProgram('node', undefined, env, false);
+  // A bare name is looked up on PATH only: a node.exe dropped in the event's cwd must not be picked up
+  const onPath = findWindowsProgram('node', undefined, env);
   const extension = onPath === undefined ? '' : extname(onPath).toLowerCase();
   if (onPath === undefined || (extension !== '.exe' && extension !== '.com')) {
     throw new CommandTemplateError(

@@ -283,6 +283,10 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    * allows a name in the reserved `queue.` namespace, and it is required there.
    */
   async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy; origin?: 'queue' }): Promise<PushResponse> {
+    // The wire does not check types: a number, an object or an empty name would fail deep inside (HTTP 500) after the history trigger was written
+    if (typeof req.event !== 'string' || req.event === '') {
+      return { status: 'rejected', reason: `the push has no usable 'event': expected a non-empty string, got ${req.event === '' ? 'an empty string' : JSON.stringify(req.event) ?? typeof req.event}. Fix: send the event name as a string (e.g. 'onTaskDone'); the event was not recorded` };
+    }
     // before anything is recorded or counted: a client that speaks a protocol this daemon does not accept gets a loud refusal
     const protocol = checkClientProtocol(req.protocol);
     if (!protocol.ok) {

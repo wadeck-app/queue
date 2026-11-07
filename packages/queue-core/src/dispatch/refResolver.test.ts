@@ -427,7 +427,7 @@ describe('CliTransport: a real child process receives the base event field as it
     mkdirSync(shimDir);
     writeFileSync(join(shimDir, 'shim.cmd'), `@echo off\r\n"${NODE}" "${printer}" %*\r\n`);
     const { resolver } = history();
-    const result = await transport.dispatch('shim {{ payload.original.title }}', dlqEnvelope({ original: REF }), 30_000, shimDir, undefined, 'notify', resolver.forEnvelope(dlqEnvelope({ original: REF })));
+    const result = await transport.dispatch('./shim {{ payload.original.title }}', dlqEnvelope({ original: REF }), 30_000, shimDir, undefined, 'notify', resolver.forEnvelope(dlqEnvelope({ original: REF })));
     expect(argvOf(result)).toEqual(['Fix it']);
   });
 });

@@ -107,6 +107,17 @@ describe('push protocol version (SemVer, see @wadeck-app/queue-sdk/protocol)', (
     expect(response).toMatchObject({ status: 'rejected', supported: '^1.0.0' });
     expect(response.reason).toMatch(/protocol/i);
   });
+
+  it.each([[5], [{ name: 'onX' }], [''], [null], [['onX']]])('rejects the event %j that is not a non-empty string, with an actionable reason, and records nothing', async (event) => {
+    const service = createQueueService(configDir);
+    const response = await service.commands.push({ event, payload: {}, cwd: projectDir } as never);
+    expect(response.status).toBe('rejected');
+    expect(response.reason).toContain("'event'");
+    expect(response.reason).toContain('Fix:');
+    expect(response.eventId).toBeUndefined();
+    expect(historyFiles()).toEqual([]);
+    expect(service.isIdle()).toBe(true);
+  });
 });
 
 describe('register-events (the event catalog, protocol 1.1.0)', () => {

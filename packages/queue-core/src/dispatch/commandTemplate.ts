@@ -243,7 +243,10 @@ export function findTemplateProblem(command: string): string | undefined {
 type CodeScope = 'self' | 'next' | 'rest';
 
 interface CodeFlag {
-  /** Matched against the literal text of an argument (a placeholder counts as empty text). */
+  /**
+   * Matched against the START of the literal text of an argument (a placeholder counts as empty text): the code can be attached to the flag
+   * (`-cprint(1)`, `-eputs 1`) and flags can be bundled (`-lne`, `-ec`), so an anchored-at-the-end pattern would let both through.
+   */
   pattern: RegExp;
   scope: CodeScope;
 }
@@ -251,18 +254,26 @@ interface CodeFlag {
 interface InterpreterRule {
   /** Arguments that make the program read the next text as code. */
   codeFlags: ReadonlyArray<CodeFlag>;
-  /**
-   * When set, the program treats its arguments as code unless one of them matches this pattern (PowerShell runs the first plain argument as a command
-   * unless `-File` is given): then any placeholder is refused.
-   */
-  codeUnless?: RegExp;
+  /** Options that take their value as the NEXT argument (that value is not the script). Options written `--name=value` need no entry. */
+  valueOptions?: ReadonlySet<string>;
+  /** Words that, as the first non-option argument, are a subcommand and not the script (`deno run script.ts`): the script is the next one. */
+  subcommands?: ReadonlySet<string>;
+  /** The rule applies only when the first non-option argument is one of `subcommands` (`npm exec`, but not `npm install`). */
+  subcommandRequired?: boolean;
+  /** The program takes no script argument (cmd.exe): only the code flags are checked. */
+  noScriptPosition?: boolean;
+  /** A script file name of this program, for the example of the error. */
+  scriptName?: string;
+  /** PowerShell: a placeholder is accepted only after `-File <literal script>` (see findPowerShellProblem). */
+  powershell?: boolean;
   /** The safe form shown in the error. */
   safeForm: string;
 }
 
 const POSIX_SHELL_RULE: InterpreterRule = {
-  // -c, -lc, -ec, ... (a lowercase c in an option cluster); fish also accepts --command
-  codeFlags: [{ pattern: /^(?:-[A-Za-z]*c[A-Za-z]*|--command)$/, scope: 'next' }],
+  // -c, -lc, -ec, ... (a lowercase c in an option cluster, text may follow it); fish also accepts --command
+  codeFlags: [{ pattern: /^(?:-[A-Za-z]*c|--command)/, scope: 'next' }],
+  valueOptions: new Set(['-o', '-O', '--rcfile', '--init-file']),
   safeForm: `pass the value as a separate argument after the script and read it as a positional parameter, e.g. bash -c 'echo "$1"' _ {{ x }}`,
 };
 
@@ -282,77 +293,108 @@ const INTERPRETER_RULES: Readonly<Record<string, InterpreterRule>> = {
   tcsh: POSIX_SHELL_RULE,
   cmd: {
     codeFlags: [{ pattern: /^[/-][ckr]/i, scope: 'rest' }],
+    noScriptPosition: true,
     safeForm: 'cmd.exe has no safe way to receive a value; start a real program or a script file instead (e.g. node script.js {{ x }}), or read the event envelope on stdin',
   },
   powershell: {
     codeFlags: [],
-    codeUnless: /^[/-]f(?:i(?:l(?:e)?)?)?$/i,
-    safeForm: 'run a script file with -File and pass the value after it, e.g. powershell -NoProfile -File script.ps1 {{ x }}, or read the event envelope on stdin',
+    powershell: true,
+    safeForm: 'start the command with -File and a literal script path, and put the placeholder after it, e.g. powershell -NoProfile -File script.ps1 {{ x }}, or read the event envelope on stdin',
   },
   node: {
     codeFlags: [
-      { pattern: /^(?:-e|-p|-pe|-ep|--eval|--print)$/, scope: 'next' },
       { pattern: /^--(?:eval|print)=/, scope: 'self' },
+      { pattern: /^(?:-e|-p|--eval|--print)/, scope: 'next' },
     ],
+    valueOptions: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title']),
+    scriptName: 'script.js',
     safeForm: GENERIC_EVAL_SAFE_FORM('node -e "console.log(process.argv[1])" {{ x }}'),
   },
   bun: {
     codeFlags: [
-      { pattern: /^(?:-e|-p|--eval|--print)$/, scope: 'next' },
       { pattern: /^--(?:eval|print)=/, scope: 'self' },
+      { pattern: /^(?:-e|-p|--eval|--print)/, scope: 'next' },
     ],
+    valueOptions: new Set(['-r', '--preload', '--import', '--cwd', '--config', '-c']),
+    subcommands: new Set(['run', 'x', 'exec']),
+    scriptName: 'script.ts',
     safeForm: GENERIC_EVAL_SAFE_FORM('bun -e "console.log(process.argv[2])" {{ x }}'),
   },
   deno: {
     codeFlags: [{ pattern: /^eval$/, scope: 'next' }],
+    subcommands: new Set(['run', 'test', 'bench', 'task', 'serve', 'repl']),
+    scriptName: 'script.ts',
     safeForm: 'run a script file and pass the value after it (deno run script.ts {{ x }}), or read the event envelope on stdin',
   },
   python: {
-    codeFlags: [{ pattern: /^-[A-Za-z]*c$/, scope: 'next' }],
+    // -c with text attached or bundled (-Bc), and -m (the module after it is code to import and run)
+    codeFlags: [{ pattern: /^-[A-Za-z]*[cm]/, scope: 'next' }],
+    valueOptions: new Set(['-W', '-X', '--check-hash-based-pycs']),
+    scriptName: 'script.py',
     safeForm: GENERIC_EVAL_SAFE_FORM('python -c "import sys; print(sys.argv[1])" {{ x }}'),
   },
   perl: {
-    codeFlags: [{ pattern: /^-[A-Za-z]*[eE]$/, scope: 'next' }],
+    codeFlags: [{ pattern: /^-[A-Za-z0-9]*[eE]/, scope: 'next' }],
+    valueOptions: new Set(['-I', '-M', '-m']),
     safeForm: GENERIC_EVAL_SAFE_FORM('perl -e \'print $ARGV[0]\' {{ x }}'),
   },
   ruby: {
-    codeFlags: [{ pattern: /^-[A-Za-z]*e$/, scope: 'next' }],
+    codeFlags: [{ pattern: /^-[A-Za-z0-9]*e/, scope: 'next' }],
+    valueOptions: new Set(['-I', '-r', '-C']),
     safeForm: GENERIC_EVAL_SAFE_FORM('ruby -e \'puts ARGV[0]\' {{ x }}'),
   },
   php: {
-    codeFlags: [{ pattern: /^-r$/, scope: 'next' }],
+    codeFlags: [{ pattern: /^-[A-Za-z]*r/, scope: 'next' }],
+    valueOptions: new Set(['-c', '-d']),
     safeForm: GENERIC_EVAL_SAFE_FORM('php -r \'echo $argv[1];\' -- {{ x }}'),
   },
   lua: {
-    codeFlags: [{ pattern: /^-e$/, scope: 'next' }],
+    codeFlags: [{ pattern: /^-e/, scope: 'next' }],
+    valueOptions: new Set(['-l']),
     safeForm: GENERIC_EVAL_SAFE_FORM('lua -e "print(arg[1])" {{ x }}'),
   },
   rscript: {
-    codeFlags: [{ pattern: /^-e$/, scope: 'next' }],
+    codeFlags: [{ pattern: /^-e/, scope: 'next' }],
     safeForm: GENERIC_EVAL_SAFE_FORM('Rscript -e "commandArgs(TRUE)" {{ x }}'),
   },
   osascript: {
-    codeFlags: [{ pattern: /^-e$/, scope: 'next' }],
+    codeFlags: [{ pattern: /^-e/, scope: 'next' }],
+    valueOptions: new Set(['-l']),
     safeForm: 'run a script file and pass the value after it (osascript script.scpt {{ x }}), or read the event envelope on stdin',
+  },
+  // npx and `npm exec` download and run a package: the first argument chooses what runs, -c runs a command line
+  npx: {
+    codeFlags: [{ pattern: /^(?:-c|--call)/, scope: 'next' }],
+    valueOptions: new Set(['-p', '--package']),
+    safeForm: 'name the package literally and pass the value after it (npx some-tool {{ x }}), or read the event envelope on stdin',
+  },
+  npm: {
+    codeFlags: [{ pattern: /^(?:-c|--call)/, scope: 'next' }],
+    valueOptions: new Set(['-p', '--package']),
+    subcommands: new Set(['exec', 'x']),
+    subcommandRequired: true,
+    safeForm: 'name the package literally and pass the value after it (npm exec some-tool -- {{ x }}), or read the event envelope on stdin',
   },
 };
 
-/** Other names of a rule, by pattern on the normalised program name (versioned or suffixed binaries). */
+/** Other names of a rule, by pattern on the normalised (lowercase) program name (versioned or suffixed binaries). */
 const INTERPRETER_ALIASES: ReadonlyArray<{ pattern: RegExp; rule: string }> = [
   { pattern: /^(?:python|pypy)[\d.]*w?$/, rule: 'python' },
   { pattern: /^py$/, rule: 'python' },
   { pattern: /^pwsh(?:-preview)?$/, rule: 'powershell' },
   { pattern: /^powershell_ise$/, rule: 'powershell' },
-  // The real binary is "Rscript"; names keep their case outside Windows, so the lowercase rule key would never match it there
-  { pattern: /^Rscript$/, rule: 'rscript' },
+  { pattern: /^nodejs$/, rule: 'node' },
+  { pattern: /^(?:bunx|pnpx)$/, rule: 'npx' },
 ];
 
 const PROGRAM_EXTENSION = /\.(?:exe|cmd|bat)$/i;
 
-/** Program name as matched against the rules: last path segment, without .exe/.cmd/.bat, lowercase on Windows. */
+/**
+ * Program name as matched against the rules: last path segment, without .exe/.cmd/.bat, lowercase on EVERY platform (Windows and macOS file systems
+ * are case-insensitive, so `BASH` runs bash there; a platform-dependent match would let the same subscribers.yml pass on one machine and not on another).
+ */
 function normalizeProgramName(program: string): string {
-  const base = program.slice(Math.max(program.lastIndexOf('/'), program.lastIndexOf('\\')) + 1).replace(PROGRAM_EXTENSION, '');
-  return process.platform === 'win32' ? base.toLowerCase() : base;
+  return program.slice(Math.max(program.lastIndexOf('/'), program.lastIndexOf('\\')) + 1).replace(PROGRAM_EXTENSION, '').toLowerCase();
 }
 
 function findInterpreterRule(program: string): { name: string; rule: InterpreterRule } | undefined {
@@ -373,10 +415,72 @@ function hasField(token: TemplateToken | undefined): boolean {
   return token !== undefined && token.some((part) => part.kind === 'field');
 }
 
+/** Switches PowerShell accepts that change nothing about what runs. `min` is the shortest prefix PowerShell resolves to it (it accepts any unique prefix). */
+const POWERSHELL_HARMLESS: ReadonlyArray<{ name: string; min: number; takesValue: boolean }> = [
+  { name: 'noprofile', min: 3, takesValue: false },
+  { name: 'nologo', min: 3, takesValue: false },
+  { name: 'noexit', min: 3, takesValue: false },
+  { name: 'noninteractive', min: 4, takesValue: false },
+  { name: 'executionpolicy', min: 2, takesValue: true },
+  { name: 'windowstyle', min: 1, takesValue: true },
+];
+
+function findHarmlessPowerShellSwitch(text: string): { takesValue: boolean } | undefined {
+  if (!text.startsWith('-')) {
+    return undefined;
+  }
+  const name = text.slice(1).toLowerCase();
+  // -ep is the documented short form of -ExecutionPolicy
+  if (name === 'ep') {
+    return { takesValue: true };
+  }
+  return POWERSHELL_HARMLESS.find((entry) => name.length >= entry.min && entry.name.startsWith(name));
+}
+
+/** `-f`, `-fi`, `-fil`, `-file`, whatever the case. */
+function isPowerShellFileSwitch(text: string): boolean {
+  return /^-f(?:i(?:l(?:e)?)?)?$/i.test(text);
+}
+
 /**
- * Problem when the program is a known shell or interpreter and a placeholder lands in the text it runs as code (the value would be interpreted,
- * which the no-shell mode exists to prevent). A placeholder in a separate argument after the code stays allowed. Best-effort denylist: wrappers
- * (env, sudo, xargs, ssh, docker, ...) and programs missing from INTERPRETER_RULES are not detected (docs/subscribers.md).
+ * PowerShell runs its first argument that is not a switch as command text, wherever a `-File` shows up later. A placeholder is therefore accepted only in
+ * the form `[harmless switches] -File <literal script> ... {{ x }}`: nothing but the allowlisted switches before -File, a script path without placeholder,
+ * the placeholders after it. Returns the problem, or undefined.
+ */
+function findPowerShellProblem(program: string, args: TemplateToken[], fix: string): string | undefined {
+  if (!args.some((token) => hasField(token))) {
+    return undefined;
+  }
+  let i = 0;
+  while (i < args.length && !hasField(args[i])) {
+    const harmless = findHarmlessPowerShellSwitch(literalText(args[i]!));
+    if (harmless === undefined) {
+      break;
+    }
+    if (harmless.takesValue && hasField(args[i + 1])) {
+      break;
+    }
+    i += harmless.takesValue ? 2 : 1;
+  }
+  const fileSwitch = args[i];
+  const script = args[i + 1];
+  const safe = fileSwitch !== undefined && !hasField(fileSwitch) && isPowerShellFileSwitch(literalText(fileSwitch))
+    && script !== undefined && !hasField(script) && literalText(script) !== '';
+  if (safe) {
+    return undefined;
+  }
+  return (
+    `'${program}' runs the first argument that is not a known switch as PowerShell code, so a {{ }} placeholder would be run as code unless the command ` +
+    `starts with -File and a literal script path (only -NoProfile, -NoLogo, -NonInteractive, -NoExit, -ExecutionPolicy <value> and -WindowStyle <value> may come before) ` +
+    `and the placeholder comes after that script path. ${fix}`
+  );
+}
+
+/**
+ * Problem when the program is a known shell or interpreter and a placeholder lands where the program would read it as code, as an option, or as the
+ * script to run (the value would be interpreted, which the no-shell mode exists to prevent). A placeholder in a separate argument after a literal script
+ * (or after the code of a code flag) stays allowed. Best-effort denylist: wrappers (env, sudo, xargs, ssh, docker, ...) and programs missing from
+ * INTERPRETER_RULES are not detected (docs/subscribers.md).
  */
 function findInterpreterProblem(tokens: TemplateToken[]): string | undefined {
   const programToken = tokens[0];
@@ -392,35 +496,71 @@ function findInterpreterProblem(tokens: TemplateToken[]): string | undefined {
   const args = tokens.slice(1);
   const fix = `Fix: ${rule.safeForm}. This check is a best-effort list of known shells and interpreters (docs/subscribers.md).`;
 
-  if (rule.codeUnless !== undefined) {
-    const safe = args.some((token) => rule.codeUnless!.test(literalText(token)));
-    if (!safe && args.some((token) => hasField(token))) {
-      return `'${program}' runs its arguments as PowerShell code unless a script is given with -File, so a {{ }} placeholder would be run as code. ${fix}`;
-    }
+  if (rule.powershell === true) {
+    return findPowerShellProblem(program, args, fix);
   }
 
+  let subcommandSeen = false;
   for (let i = 0; i < args.length; i++) {
-    const text = literalText(args[i]!);
+    const token = args[i]!;
+    const text = literalText(token);
     const flag = rule.codeFlags.find((candidate) => candidate.pattern.test(text));
-    if (flag === undefined) {
-      continue;
-    }
-    const last = flag.scope === 'rest' ? args.length - 1 : flag.scope === 'next' ? i + 1 : i;
-    for (let j = i; j <= last && j < args.length; j++) {
-      if (hasField(args[j])) {
-        return (
-          `'${program}' runs the argument after '${text}' as code (${found.name === 'cmd' ? 'a command line' : 'a script'}), so a {{ }} placeholder there would be interpreted ` +
-          `instead of staying data. ${fix}`
-        );
+    if (flag !== undefined) {
+      const last = flag.scope === 'rest' ? args.length - 1 : flag.scope === 'next' ? i + 1 : i;
+      for (let j = i; j <= last && j < args.length; j++) {
+        if (hasField(args[j])) {
+          return (
+            `'${program}' reads '${text}' and ${flag.scope === 'rest' ? 'every argument after it' : 'the argument after it'} as code (${found.name === 'cmd' ? 'a command line' : 'a script'}), so a {{ }} placeholder there would be interpreted ` +
+            `instead of staying data. ${fix}`
+          );
+        }
       }
-    }
-    // The code is found; what follows is data for it (positional parameters)
-    if (flag.scope !== 'rest') {
+      // The code is found and holds no placeholder; what follows is data for it (positional parameters)
       return undefined;
     }
+    if (rule.noScriptPosition === true) {
+      continue;
+    }
+
+    if (text.startsWith('-')) {
+      if (hasField(token)) {
+        return positionProblem(program, rule, `in the option '${text}'`, fix);
+      }
+      if (rule.valueOptions?.has(text) === true && i + 1 < args.length) {
+        if (hasField(args[i + 1])) {
+          return positionProblem(program, rule, `as the value of '${text}'`, fix);
+        }
+        i++;
+      }
+      continue;
+    }
+
+    // First argument that is not an option: the script (or a subcommand in front of it)
+    if (hasField(token)) {
+      return positionProblem(program, rule, 'where the script is expected', fix);
+    }
+    if (rule.subcommands?.has(text) === true && !subcommandSeen) {
+      subcommandSeen = true;
+      continue;
+    }
+    if (rule.subcommandRequired === true && !subcommandSeen) {
+      return undefined;
+    }
+    // A literal script: everything after it is data for the script
+    return undefined;
   }
   return undefined;
 }
+
+function positionProblem(program: string, rule: InterpreterRule, where: string, fix: string): string {
+  const script = rule.scriptName ?? 'script';
+  const example = rule.subcommands !== undefined && rule.subcommandRequired !== true ? `${program} ${[...rule.subcommands][0]!} ${script} {{ x }}` : `${program} ${script} {{ x }}`;
+  return (
+    `a {{ }} placeholder sits ${where} of '${program}', before the script. The program would read the value as an option, or run it as the script, module or package, ` +
+    `instead of taking it as data. The placeholder must come after a literal script (e.g. ${example}). ${fix}`
+  );
+}
+
 
 /** Characters of the `{{ }}` values that cmd.exe would interpret, with the name of their class (used for .cmd and .bat targets). */
 const CMD_METACHARACTERS: ReadonlyArray<{ char: string; name: string }> = [

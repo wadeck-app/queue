@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CliTransport } from './CliTransport.js';
@@ -60,7 +60,8 @@ const HOSTILE_VALUES: ReadonlyArray<[string, string]> = [
   ['quotes', `it's "quoted" and 'single'`],
   ['trailing backslash', 'C:\\dir\\'],
   ['spaces', 'two words   and more'],
-  ['option-like', '--help'],
+  ['negative number', '-5'],
+  ['a lone dash', '-'],
   ['empty', ''],
   ['unicode', 'ünï–cödé 😀 日本語'],
   ['very long', 'x'.repeat(20_000)],
@@ -72,6 +73,47 @@ describe('CliTransport - command with {{ }}: values reach the program as single,
     expect(received(result).argv).toEqual(['first', value, 'last']);
     expect(existsSync(join(workDir, 'injected-semicolon'))).toBe(false);
     expect(existsSync(join(workDir, 'injected-redirect.txt'))).toBe(false);
+  });
+
+  describe('option injection: a value that is the whole argument and starts like an option', () => {
+    it.each([
+      ['--help', '--help'],
+      ['-rf', '-rf'],
+      ['-x', '-x'],
+      ['--', '--'],
+      ['--output=/etc/passwd', '--output=/etc/passwd'],
+      ['@ (curl / many tools read the file that follows)', '@/etc/passwd'],
+    ])('refuses %s as a permanent failure that names the field, the program-reads-it-as-an-option reason and the fix', async (_label, value) => {
+      const result = await run(`"${NODE}" "${printer}" first {{ payload.name }}`, { name: value });
+      expect(result.success).toBe(false);
+      expect(result.permanent).toBe(true);
+      expect(result.error).toContain("subscriber 'notify'");
+      expect(result.error).toContain("'name'");
+      expect(result.error).toMatch(/read as an option/);
+      expect(result.error).toContain('--name={{ name }}');
+      expect(result.error).toContain('Fix:');
+      // Nothing ran: the printer would have printed its argv
+      expect(result.stdout).toBeUndefined();
+    });
+
+    it('also refuses it inside double quotes (still the whole argument)', async () => {
+      const result = await run(`"${NODE}" "${printer}" "{{ v }}"`, { v: '-rf' });
+      expect(result.permanent).toBe(true);
+      expect(result.error).toMatch(/read as an option/);
+    });
+
+    it('refuses a whole argument made of several placeholders when the result starts like an option', async () => {
+      const result = await run(`"${NODE}" "${printer}" {{ a }}{{ b }}`, { a: '-', b: 'rf' });
+      expect(result.permanent).toBe(true);
+    });
+
+    it.each([['-5'], ['-.5'], ['-'], ['- spaced'], ['a-b'], [' -x']])('lets %j through: not an option', async (value) => {
+      expect(received(await run(`"${NODE}" "${printer}" {{ v }}`, { v: value })).argv).toEqual([value]);
+    });
+
+    it('lets the same value through when it is written after `--name=` (the value cannot start the argument)', async () => {
+      expect(received(await run(`"${NODE}" "${printer}" --title={{ v }} "--t2={{ v }}"`, { v: '--help' })).argv).toEqual(['--title=--help', '--t2=--help']);
+    });
   });
 
   it('keeps a value with spaces as ONE argument and a template with quotes as written', async () => {
@@ -113,9 +155,44 @@ describe('CliTransport - command with {{ }}: values reach the program as single,
     expect(result.error).toContain("subscriber 'notify'");
     expect(result.error).toContain("program 'queue-test-no-such-builtin' was not found");
     expect(result.error).toContain('Fix: install it, put it on PATH, or give its full path in the command');
-    // A daemon keeps the PATH it was started with: the message shows what it searched and how to refresh it
-    expect(result.error).toMatch(/PATH entries: |PATH is empty or not set/);
+    // A daemon keeps the PATH it was started with: the message says how many entries it searched and how to refresh it
+    expect(result.error).toMatch(/\d+ PATH entries|PATH is empty or not set/);
     expect(result.error).toContain('restart the daemon from that shell ("queue stop"');
+    expect(result.error).toContain('queue logs');
+  });
+
+  it.skipIf(!IS_WINDOWS)('Windows only: the not-found error does not list the PATH directories (it flows into the DLQ and the events subscribers see): only their count', async () => {
+    const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === 'path') ?? 'Path';
+    const secretA = join(workDir, 'secret-user-name-a');
+    const secretB = join(workDir, 'secret-user-name-b');
+    const result = await transport.dispatch('queue-test-no-such-builtin {{ v }}', envelope({ v: 'x' }), 30_000, workDir, { [pathKey]: `${secretA};${secretB}` }, 'notify');
+    expect(result.error).toContain("program 'queue-test-no-such-builtin' was not found");
+    expect(result.error).not.toContain('secret-user-name');
+    expect(result.error).not.toContain(workDir);
+    expect(result.error).toContain('2 PATH entries');
+    expect(result.error).toContain('queue logs');
+  });
+
+  it.skipIf(!IS_WINDOWS)('Windows only: a .cmd planted in the working directory does NOT run in place of the tool of the PATH', async () => {
+    const planted = join(workDir, 'planted-cwd');
+    mkdirSync(planted);
+    const marker = join(planted, 'planted-ran.txt');
+    writeFileSync(join(planted, 'whoami.cmd'), `@echo off\r\necho PLANTED> "${marker}"\r\n`);
+    const result = await run('whoami {{ v }}', { v: 'x' }, planted);
+    // The real whoami.exe of System32 ran (it rejects the unknown argument or prints a user): either way the planted file did not
+    expect(existsSync(marker)).toBe(false);
+    expect(result.stdout ?? '').not.toContain('PLANTED');
+  });
+
+  it.skipIf(!IS_WINDOWS)('Windows only: a program written with a directory is resolved relative to the working directory', async () => {
+    const dir = join(workDir, 'rel-dir');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'local.cmd'), `@echo off\r\n"${NODE}" "${printer}" %*\r\n`);
+    expect(received(await run('./local {{ v }}', { v: 'rel' }, dir)).argv).toEqual(['rel']);
+    const missing = await run('local {{ v }}', { v: 'bare' }, dir);
+    expect(missing.success).toBe(false);
+    expect(missing.error).toContain("program 'local' was not found");
+    expect(missing.error).toContain('./local');
   });
 
   it.skipIf(IS_WINDOWS)('POSIX only: a missing program fails with ENOENT, the subscriber and a Fix (not flagged permanent: spawn reports it)', async () => {
@@ -197,6 +274,50 @@ describe('CliTransport - exit code and output reach the result', () => {
     expect(result.stderr).toBe('to-err');
   });
 
+  describe('a timeout stops the whole process tree, and a grandchild holding the pipes cannot block the dispatch', () => {
+    let treeDir: string;
+    beforeAll(() => {
+      treeDir = join(workDir, 'tree');
+      mkdirSync(treeDir);
+      // The grandchild inherits the stdio pipes of the child and would write the marker after 4 s unless it is killed
+      writeFileSync(join(treeDir, 'grandchild.js'), `setTimeout(() => require('node:fs').writeFileSync(process.argv[2], 'alive'), 4000);`);
+      writeFileSync(join(treeDir, 'parent.js'), `
+        const { spawn } = require('node:child_process');
+        spawn(process.execPath, [require('node:path').join(__dirname, 'grandchild.js'), process.argv[2]], { stdio: 'inherit' });
+        setTimeout(() => {}, 9000);
+      `);
+      // Exits at once and leaves a grandchild that keeps the pipes open for 7 s
+      writeFileSync(join(treeDir, 'daemonizer.js'), `
+        const { spawn } = require('node:child_process');
+        // unref: the parent must be able to exit while the grandchild still holds the pipes
+        spawn(process.execPath, ['-e', 'setTimeout(() => {}, 7000)'], { stdio: 'inherit' }).unref();
+        process.stdout.write('parent-done');
+      `);
+    });
+
+    it.each([
+      ['with placeholders (no shell)', (marker: string) => `"${NODE}" "${join(treeDir, 'parent.js')}" "${marker}" {{ v }}`],
+      ['without placeholders (shell)', (marker: string) => `"${NODE}" "${join(treeDir, 'parent.js')}" "${marker}"`],
+    ])('%s: resolves about at the timeout and the grandchild is gone', async (label, build) => {
+      const marker = join(treeDir, `marker-${label.startsWith('with ') ? 'a' : 'b'}.txt`);
+      const result = await transport.dispatch(build(marker), envelope({ v: 'x' }), 1000, workDir, undefined, 'notify');
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/timeout after 1s/);
+      expect(result.durationMs).toBeLessThan(4000);
+      // The grandchild would have written the marker at 4 s
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      expect(existsSync(marker)).toBe(false);
+    }, 20_000);
+
+    it('a program that exits while a grandchild keeps the pipes open resolves shortly after the exit, with what it printed and its exit code', async () => {
+      const result = await transport.dispatch(`"${NODE}" "${join(treeDir, 'daemonizer.js')}" {{ v }}`, envelope({ v: 'x' }), 30_000, workDir, undefined, 'notify');
+      expect(result.success).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('parent-done');
+      expect(result.durationMs).toBeLessThan(6000);
+    }, 20_000);
+  });
+
   it('a timeout carries no exitCode', async () => {
     const sleeper = join(workDir, 'sleeper2.js');
     writeFileSync(sleeper, 'setTimeout(() => {}, 20000);');
@@ -240,18 +361,68 @@ describe.skipIf(!IS_WINDOWS)('CliTransport - Windows .cmd/.bat targets (cmd.exe 
     ['unicode', 'ünï 日本'],
     ['assignment and glob', 'a=b *.txt'],
     ['shell characters cmd ignores', "$(x) ; ' ( ) { } ~ #"],
-    ['trailing backslash', 'C:\\dir\\'],
+    // 'trailing backslash' is not here: cmd.exe cannot pass it faithfully to both %~1 and a %* forwarded to a C-runtime program, so it is refused (see below)
     ['empty', ''],
   ];
 
   it.each(ACCEPTED)('accepted value reaches the program intact through a .cmd found in the working directory: %s', async (_label, value) => {
-    const result = await run('shim first {{ v }} last', { v: value }, shimDir);
+    const result = await run('./shim first {{ v }} last', { v: value }, shimDir);
     expect(received(result).argv).toEqual(['first', value, 'last']);
+  });
+
+  // set /p prints without a line break; the brackets show a lost or added character at either end. It sets errorlevel 1 on the empty input: exit /b 0 clears it
+  function writeEchoBat(): string {
+    const out = join(shimDir, 'echo-arg.txt');
+    rmSync(out, { force: true });
+    writeFileSync(join(shimDir, 'echo-arg.bat'), `@echo off\r\n<nul set /p="[%~1]"> "%~dp0echo-arg.txt"\r\nexit /b 0\r\n`);
+    return out;
+  }
+
+  it.each([
+    ['no trailing backslash', 'C:\\dir'],
+    ['inner backslashes', 'C:\\a\\b'],
+    ['a backslash followed by a space', 'C:\\a b\\ c'],
+  ])('a batch file receives the value exactly in %%~1, %s', async (_label, value) => {
+    const out = writeEchoBat();
+    const result = await run('./echo-arg.bat {{ v }}', { v: value }, shimDir);
+    expect(result.success, result.error).toBe(true);
+    expect(readFileSync(out, 'utf8')).toBe(`[${value}]`);
+  });
+
+  // cmd.exe cannot pass a final backslash faithfully: %~1 wants it raw, a program parsing %* like the C runtime wants it doubled. Refused instead of corrupted
+  it.each([
+    ['one trailing backslash', 'C:\\dir\\'],
+    ['two trailing backslashes', 'C:\\a b\\\\'],
+    ['a UNC path', '\\\\server\\share\\'],
+    ['a lone backslash', '\\'],
+  ])('refuses %s for a batch file: permanent failure naming the field, the backslash and the fix, and the batch file is not started', async (_label, value) => {
+    const out = writeEchoBat();
+    const result = await run('./echo-arg.bat {{ payload.dir }}', { dir: value }, shimDir);
+    expect(result.success).toBe(false);
+    expect(result.permanent).toBe(true);
+    expect(result.error).toContain("subscriber 'notify'");
+    expect(result.error).toContain("'dir'");
+    expect(result.error).toContain('backslash');
+    expect(result.error).toContain('Fix:');
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('a recognised npm shim runs through node directly: a trailing backslash arrives intact', async () => {
+    const npmDir = join(workDir, 'npm-shim');
+    mkdirSync(npmDir);
+    writeFileSync(join(npmDir, 'tool.js'), PRINTER_SOURCE);
+    writeFileSync(join(npmDir, 'tool.cmd'), [
+      '@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b', ':start', 'SETLOCAL', 'CALL :find_dp0', '',
+      'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ') ELSE (', '  SET "_prog=node"', '  SET PATHEXT=%PATHEXT:;.JS;=;%', ')', '',
+      'endLocal & goto #_undefined_# 2>nul || title %COMSPEC% & "%_prog%"  "%dp0%\\tool.js" %*', '',
+    ].join('\r\n'));
+    const result = await run('./tool {{ v }} {{ w }}', { v: 'C:\\dir\\', w: 'a & b' }, npmDir);
+    expect(received(result).argv).toEqual(['C:\\dir\\', 'a & b']);
   });
 
   it('runs the .cmd by absolute path, and a .bat', async () => {
     expect(received(await run(`"${shim}" {{ v }}`, { v: 'abs path' })).argv).toEqual(['abs path']);
-    expect(received(await run('legacy.bat {{ v }}', { v: 'bat' }, shimDir)).argv).toEqual(['bat']);
+    expect(received(await run('./legacy.bat {{ v }}', { v: 'bat' }, shimDir)).argv).toEqual(['bat']);
   });
 
   it('finds a .cmd on PATH through PATHEXT', async () => {
@@ -273,7 +444,7 @@ describe.skipIf(!IS_WINDOWS)('CliTransport - Windows .cmd/.bat targets (cmd.exe 
     ['CR', 'a\rb'],
     ['LF', 'a\nb & echo INJECTED> marker.txt'],
   ])('refuses a value holding %s as a permanent failure naming the subscriber, the field and the character class, and runs nothing', async (_label, value) => {
-    const result = await run('shim {{ payload.title }}', { title: value }, shimDir);
+    const result = await run('./shim {{ payload.title }}', { title: value }, shimDir);
     expect(result.success).toBe(false);
     expect(result.permanent).toBe(true);
     expect(result.error).toContain("subscriber 'notify'");
@@ -286,12 +457,12 @@ describe.skipIf(!IS_WINDOWS)('CliTransport - Windows .cmd/.bat targets (cmd.exe 
   });
 
   it('names the character class in the refusal', async () => {
-    const result = await run('shim {{ v }}', { v: 'a & b' }, shimDir);
+    const result = await run('./shim {{ v }}', { v: 'a & b' }, shimDir);
     expect(result.error).toContain("'&' (command separator)");
   });
 
   it('does not check the literal part of the template, only the substituted values', async () => {
-    const result = await run('shim --flag=100%% {{ v }}', { v: 'ok' }, shimDir);
+    const result = await run('./shim --flag=100%% {{ v }}', { v: 'ok' }, shimDir);
     expect(result.permanent).toBeUndefined();
   });
 

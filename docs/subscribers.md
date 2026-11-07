@@ -7,9 +7,11 @@ A `cli` subscriber runs `command` when an event matches. The event envelope is a
 | Command | Run | Payload values |
 |---|---|---|
 | No `{{ }}` | By the shell (`sh`, `cmd.exe`), exactly as written. `subscribers.yml` is trusted configuration. | Not available. |
-| Holds `{{ }}` | **Without a shell**: split into arguments first, then each `{{ }}` is replaced inside its argument. | Always data: a value never splits into several arguments and never becomes code. |
+| Holds `{{ }}` | **Without a shell**: split into arguments first, then each `{{ }}` is replaced inside its argument. | One argument per placeholder, never split, never shell code. What the started program does with it is not guaranteed: see "A shell or interpreter" and "Option injection". |
 
 Why: payloads come from outside (relay webhooks, `queue push`). Pasting them into a shell line is command injection.
+
+Guaranteed: no shell, and a value cannot split into several arguments. Best-effort: the load-time refusal of programs that run an argument as code or read it as an option (a denylist of known names, below). A value can still become code through a program the denylist does not know.
 
 ## Placeholders
 
@@ -48,31 +50,61 @@ Fix: read the envelope on stdin and put the shell logic in a script, or remove t
 
 ### A shell or interpreter that runs a placeholder as code
 
-Re-introducing a shell (`bash -c 'echo {{ x }}'`) puts the value back into code text, so it is refused at load time too. Refused: a placeholder inside the code argument of a known shell or interpreter.
+Re-introducing a shell (`bash -c 'echo {{ x }}'`) puts the value back into code text, so a placeholder is refused at load time where a known program would read it as code, as an option or as the script to run. Programs are matched by name only (directory, `.exe`, `.cmd`, `.bat` ignored; case-insensitive on every platform, because Windows and macOS file systems are).
 
-| Program | Code argument |
+| Program | Refused |
 |---|---|
-| `sh bash zsh dash ksh mksh ash fish csh tcsh` | the argument after `-c` (also `-lc`, `-ec`, ... and `--command`) |
+| `sh bash zsh dash ksh mksh ash fish csh tcsh` | the flag token and the argument after `-c` (also bundled `-lc`, `-ec`, attached `-cecho`, and `--command`) |
 | `cmd` | `/c`, `/k`, `/r` and everything after (cmd joins them into one command line) |
-| `powershell`, `pwsh` | every argument, unless `-File` is given |
-| `node`, `bun` | after `-e`, `-p`, `--eval`, `--print` (or inside `--eval=...`) |
-| `deno` | after `eval` |
-| `python`, `perl`, `ruby`, `php`, `lua`, `Rscript`, `osascript` | after `-c` / `-e` / `-r` |
+| `powershell`, `pwsh` | any placeholder unless the command is `[switches] -File <literal script> ...` (see below) |
+| `node`, `nodejs`, `bun` | `-e`, `-p`, `--eval`, `--print` (or inside `--eval=...`) |
+| `deno` | `eval` |
+| `python`, `perl`, `ruby`, `php`, `lua`, `Rscript`, `osascript` | `-c` (python, also `-m`), `-e`/`-E` (perl, ruby, lua, Rscript, osascript), `-r` (php); attached or bundled forms count (`-cprint(1)`, `-eputs`, `-lne`, `-Bc`): the flag token and the argument after it |
+| all of the above, `npx`, `bunx`, `pnpx`, `npm exec`, `npm x`, `bun run`, `deno run` | a placeholder **before the first literal script**: inside an option (`--require={{ x }}`), as the value of an option (`node -r {{ x }}`, `npx -p {{ x }} tool`), or as the script, module or package itself (`bash {{ x }}`, `python -m {{ x }}`, `deno run {{ x }}`, `npx {{ x }}`) |
 
-Programs are matched by name only (path, `.exe`, `.cmd`, `.bat` ignored; case-insensitive on Windows). A placeholder in a **separate argument after** the code stays allowed:
+PowerShell runs its first argument that is not a switch as command text, wherever `-File` shows up later. A placeholder is therefore accepted only when everything before `-File` is `-NoProfile`, `-NoLogo`, `-NonInteractive`, `-NoExit`, `-ExecutionPolicy <value>` or `-WindowStyle <value>` (case-insensitive, unique prefixes accepted), `-File` (or `-f`, `-fi`, `-fil`) is followed by a literal script path, and the placeholder comes after that path. `-Command`, `-EncodedCommand`, a command word, an unknown switch or a placeholder in the script path are refused.
+
+A placeholder in a **separate argument after** a literal script, or after the code of a code flag, is accepted:
 
 ```yaml
 # refused: the value is part of the shell script
 - { name: n, type: cli, command: "bash -c 'echo {{ x }}'" }
+# refused: attached code is still code
+- { name: n, type: cli, command: "python \"-cprint('{{ x }}')\"" }
+# refused: first positional argument is the PowerShell command text
+- { name: n, type: cli, command: "powershell {{ x }} -File script.ps1" }
+# refused: the value would choose the script
+- { name: n, type: cli, command: "node {{ x }}" }
 # accepted: the value is the positional parameter $1
 - { name: n, type: cli, command: "bash -c 'echo \"$1\"' _ {{ x }}" }
 - { name: n, type: cli, command: "node -e \"console.log(process.argv[1])\" {{ x }}" }
+- { name: n, type: cli, command: "node script.js --id {{ x }}" }
 - { name: n, type: cli, command: "pwsh -NoProfile -File script.ps1 {{ x }}" }
 ```
 
 `cmd.exe` has no safe form: use a real program or a script that reads the envelope on stdin.
 
-Best-effort denylist, not a proof. Not detected: wrappers (`env`, `sudo`, `xargs`, `ssh`, `docker exec`, `wsl`, `find -exec`), other code-taking programs (`awk`, `sed`, `jq`, ...), a shell started on a script path taken from a placeholder (`bash {{ x }}`), and an interpreter renamed or wrapped in a script. `subscribers.yml` stays trusted configuration; the list is in `commandTemplate.ts` (`INTERPRETER_RULES`).
+Best-effort denylist, not a proof. **Not detected**:
+
+- wrappers that start another program with the value: `env`, `sudo`, `xargs`, `ssh`, `docker exec`, `wsl`, `find -exec`, `nohup`, `time`, `timeout`, `pnpm dlx`, `yarn dlx`;
+- programs whose argument is itself a program: `awk`, `sed`, `jq`, `make`, `git -c`, `curl --config`, `psql -c`, ...;
+- `deno run` on a URL or a script found through the value, and any interpreter renamed, copied or wrapped in a script;
+- an option of an interpreter that takes a value and is missing from the list in `commandTemplate.ts` (`INTERPRETER_RULES`): its value is taken for the script, so a later placeholder is judged as if after the script.
+
+`subscribers.yml` stays trusted configuration.
+
+## Option injection
+
+A placeholder that is the **whole argument** (`{{ x }}`, `"{{ x }}"`, `{{ a }}{{ b }}`) lets the value start the argument. When the rendered value starts with `-` followed by a letter or another `-` (`-rf`, `--help`, `--`), or with `@` (many tools read the file that follows), the delivery fails **permanently** (DLQ, no retries) with the field, the reason (the program would read it as an option) and the fix. A negative number (`-5`) and a lone `-` are data. Fix: write the option name in front, so the value cannot start the argument, or validate the field at the source:
+
+```yaml
+# refused when title is "--help"
+- { name: n, type: cli, command: "tool {{ payload.title }}" }
+# accepted: the value stays attached to the option
+- { name: n, type: cli, command: "tool --title={{ payload.title }}" }
+```
+
+A placeholder inside a larger argument (`--title={{ x }}`) is not affected. The check cannot know whether the program reads `--` as the end of its options, so it applies whatever the program.
 
 ## No shell: built-ins and aliases are unavailable
 
@@ -81,8 +113,12 @@ With `{{ }}`, the program is started directly. `cmd.exe` built-ins (`echo`, `dir
 On Windows a missing program is a **permanent** failure (DLQ on the first attempt, no retries):
 
 ```
-subscriber 'NAME': program 'echo' was not found (searched the working directory and PATH with the extensions of PATHEXT). Fix: install it, put it on PATH, or give its full path in the command.
+subscriber 'NAME': program 'echo' was not found on the PATH of the queue daemon (57 PATH entries, tried with the extensions of PATHEXT; the working directory is not searched, ...). The daemon keeps the PATH it was started with; the list is in "queue logs" ... Fix: install it, put it on PATH, or give its full path in the command ...
 ```
+
+The error carries only the number of PATH entries, not the directories (it reaches the DLQ and the `queue.dlq.added` event that other subscribers see). The full list is logged once when the daemon starts: `queue logs`.
+
+A bare program name is looked up on `PATH` only, never in the working directory: the working directory of a subscriber is often a cloned project, and a `tool.cmd` planted there must not run in place of the real tool (`cmd.exe` would). A program written with a directory (`./tool.cmd`, `sub\tool`, `C:\x\tool.exe`) is resolved as written, relative to the working directory.
 
 On Linux/macOS the spawn error is reported instead (`spawn NAME ENOENT (subscriber 'NAME': the program was not found. Fix: install it, put it on PATH, or check the working directory '...')`) and the delivery is retried.
 
@@ -90,7 +126,7 @@ Alternatives: call the real executable (`"C:\Program Files\Git\usr\bin\echo.exe"
 
 ## Windows `.cmd` and `.bat` targets
 
-Node cannot start a batch file without `cmd.exe`, and `queue`, `npm`, `flow`, `task` and most global tools are npm-generated `.cmd` shims. The program is looked up like `cmd.exe` does (working directory, then `PATH`, with `PATHEXT`).
+Node cannot start a batch file without `cmd.exe`, and `queue`, `npm`, `flow`, `task` and most global tools are npm-generated `.cmd` shims. A bare program name is looked up on `PATH` with `PATHEXT` (not in the working directory, unlike `cmd.exe`); a name written with a directory is resolved relative to the working directory.
 
 | Found file | Started as | Values |
 |---|---|---|
@@ -99,7 +135,7 @@ Node cannot start a batch file without `cmd.exe`, and `queue`, `npm`, `flow`, `t
 
 A shim is recognised only when every line is one of the standard npm/cmd-shim lines and the script is an existing `.js`/`.cjs`/`.mjs` file under the shim's own directory. Anything else (extra commands, extra arguments, environment changes, a path with `..`, a drive letter or `%`, a shim over 8 KB) is not a shim. Node is `node.exe` next to the shim, else the first `node.exe` on `PATH` (not the working directory); if neither exists the delivery fails permanently with how to fix it.
 
-For any other batch file, a value holding any of `& | < > ^ % ! "`, a backtick or a line break makes that delivery fail **permanently** (straight to the DLQ, no retries; the log and the DLQ entry say which field and character class, and that the file is not a recognised npm shim). The literal parts of the template are not checked. Fix: point the command at a real program (`.exe`, or `node script.js`) or at the tool's npm shim.
+For any other batch file, a value holding any of `& | < > ^ % ! "`, a backtick or a line break makes that delivery fail **permanently** (straight to the DLQ, no retries; the log and the DLQ entry say which field and character class, and that the file is not a recognised npm shim). A value **ending with a backslash** (`C:\dir\`) fails the same way: cmd.exe cannot pass it faithfully (a batch file reading `%~1` wants it raw, a program parsing `%*` like the C runtime wants it doubled, so it is refused rather than corrupted one way or the other). `C:\dir` and inner backslashes arrive exactly; an npm shim (run through node directly) is not affected. The literal parts of the template are not checked. Fix: point the command at a real program (`.exe`, or `node script.js`) or at the tool's npm shim.
 
 Other extensions found on `PATHEXT` (`.ps1`, `.js`, ...) cannot be started without a shell: use their interpreter.
 
@@ -116,7 +152,9 @@ A filter such as `$.payload[?(@.projectId=='x')]` filters the children of `paylo
 
 ## Caveats
 
-- A value that starts with `-` is still an option for the program (`--help`). Write `--title={{ title }}` or use the program's `--` separator.
+- A value that is the whole argument and starts like an option is refused (see "Option injection").
+- A batch file receives each accepted value exactly in `%~1`. A value ending with a backslash is refused for it (see "Windows `.cmd` and `.bat` targets").
+- A timeout stops the whole process tree (`taskkill /T /F` on Windows, the process group elsewhere), and a program that exited is no longer waited on for more than 3 s because a child it left behind keeps its output pipes open.
 - A batch file that re-expands its own arguments unquoted in `if (...)` blocks is the batch author's responsibility.
 - Threat model: [.claude/threat-model.md](../.claude/threat-model.md).
 

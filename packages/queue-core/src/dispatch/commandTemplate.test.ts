@@ -284,10 +284,6 @@ describe('findTemplateProblem - shells and interpreters (value would land in cod
     expect(findTemplateProblem('C:\\Windows\\System32\\cmd.EXE /c echo {{ x }}')).toBeDefined();
   });
 
-  it.skipIf(process.platform === 'win32')('POSIX only: program names are case-sensitive', () => {
-    expect(findTemplateProblem('BASH -c "{{ x }}"')).toBeUndefined();
-  });
-
   it('matches cmd and PowerShell flags case-insensitively on every platform', () => {
     expect(findTemplateProblem('cmd /C echo {{ x }}')).toBeDefined();
     expect(findTemplateProblem('pwsh -COMMAND "{{ x }}"')).toBeDefined();
@@ -304,15 +300,160 @@ describe('findCmdMetacharacter', () => {
   });
 });
 
-describe('findTemplateProblem - program names keep their case outside Windows', () => {
+describe('findTemplateProblem - program names are matched case-insensitively on every platform', () => {
   const realPlatform = process.platform;
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: realPlatform });
   });
 
-  // Rscript is the real (mixed-case) name of the binary: the rule must match it on POSIX, where names are not lowercased
-  it.each(['linux', 'darwin', 'win32'])('rejects Rscript -e on %s', (platform) => {
+  // macOS (APFS) and Windows are case-insensitive: BASH runs bash there, so the guard cannot depend on the platform of the daemon
+  it.each(['linux', 'darwin', 'win32'])("refuses BASH -c '{{ x }}', Python3, PWSH, Rscript and RSCRIPT on %s", (platform) => {
     Object.defineProperty(process, 'platform', { value: platform });
+    expect(findTemplateProblem("BASH -c '{{ x }}'")).toContain('Fix:');
+    expect(findTemplateProblem("Python3 -c '{{ x }}'")).toContain('Fix:');
+    expect(findTemplateProblem('PWSH Write-Host {{ x }}')).toContain('Fix:');
     expect(findTemplateProblem(`Rscript -e 'cat("{{ x }}")'`)).toContain('Fix:');
+    expect(findTemplateProblem(`RSCRIPT -e 'cat("{{ x }}")'`)).toContain('Fix:');
+  });
+});
+
+describe('findTemplateProblem - PowerShell: a placeholder only after -File <literal script>', () => {
+  it.each([
+    ['placeholder first, -File later (the first positional argument is the command text)', 'powershell {{ x }} -File s.ps1'],
+    ['a command word, -f later', 'powershell Get-Foo -f {{ x }}'],
+    ['-Command', 'powershell -Command {{ x }}'],
+    ['-c', 'pwsh -c {{ x }}'],
+    ['-EncodedCommand', 'pwsh -EncodedCommand {{ x }}'],
+    ['-NoProfile then a command word', 'pwsh -NoProfile Write-Host {{ x }}'],
+    ['placeholder in the script path', 'pwsh -File {{ x }}.ps1'],
+    ['-File {{ x }}', 'pwsh -File {{ x }}'],
+    ['-File with a placeholder as script', 'pwsh -NoProfile -File {{ x }} s.ps1'],
+    ['a placeholder as the value of a harmless switch', 'pwsh -ExecutionPolicy {{ x }} -File s.ps1'],
+    ['an unknown switch before -File', 'pwsh -Mystery -File s.ps1 {{ x }}'],
+    ['an ambiguous -n prefix', 'pwsh -n -File s.ps1 {{ x }}'],
+    ['an ambiguous -no prefix', 'pwsh -no -File s.ps1 {{ x }}'],
+    ['a command word before -File', 'pwsh Get-Foo -File s.ps1 {{ x }}'],
+    ['a placeholder before -File after a switch', 'pwsh -NoProfile {{ x }} -File s.ps1'],
+  ])('refuses %s', (_label, command) => {
+    const problem = findTemplateProblem(command);
+    expect(problem, command).toBeDefined();
+    expect(problem).toContain('-File');
+    expect(problem).toContain('Fix:');
+  });
+
+  it.each([
+    ['pwsh -NoProfile -File s.ps1 {{ x }}'],
+    ['powershell -f s.ps1 --arg={{ x }}'],
+    ['powershell -fi s.ps1 {{ x }}'],
+    ['powershell -FILE s.ps1 {{ x }}'],
+    ['pwsh -nop -NoLogo -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File s.ps1 {{ x }}'],
+    ['pwsh -ep Bypass -w hidden -File "C:\\Scripts\\a b.ps1" {{ x }} {{ y }}'],
+  ])('accepts %s', (command) => {
+    expect(findTemplateProblem(command)).toBeUndefined();
+  });
+});
+
+describe('findTemplateProblem - code attached to the flag, bundled flags', () => {
+  it.each([
+    ['python attached -c', `python "-cprint('{{ x }}')"`],
+    ['python bundled -Bc', `python -Bc 'print("{{ x }}")'`],
+    ['ruby attached -e', `ruby "-eputs '{{ x }}'"`],
+    ['perl attached -e', `perl "-eprint '{{ x }}'"`],
+    ['perl -lane', `perl -lane 'print "{{ x }}"'`],
+    ['lua attached -e', `lua "-eprint('{{ x }}')"`],
+    ['php attached -r', `php "-recho '{{ x }}';"`],
+    ['sh -ec', `sh -ec 'echo {{ x }}'`],
+    ['bash attached -c', 'bash -cecho{{ x }}'],
+    ['node attached --print', 'node --print={{ x }}'],
+    ['placeholder in the argument after a flag with attached text', `python -cimport_sys 'print({{ x }})'`],
+  ])('refuses %s', (_label, command) => {
+    const problem = findTemplateProblem(command);
+    expect(problem, command).toBeDefined();
+    expect(problem).toContain('Fix:');
+  });
+});
+
+describe('findTemplateProblem - a placeholder before the script of an interpreter', () => {
+  it.each([
+    ['node -r {{ x }}', 'node -r {{ x }} script.js'],
+    ['node --require={{ x }}', 'node --require={{ x }} script.js'],
+    ['node --require {{ x }}', 'node --require {{ x }} script.js'],
+    ['node --import {{ x }}', 'node --import {{ x }} script.js'],
+    ['node --import={{ x }}', 'node --import={{ x }} script.js'],
+    ['node {{ x }} (the script itself)', 'node {{ x }}'],
+    ['node a flag value before a literal script', 'node --max-old-space-size={{ x }} script.js'],
+    ['node --require ./hook.js {{ x }} (the value of --require is not the script)', 'node --require ./hook.js {{ x }}'],
+    ['python -m {{ x }}', 'python -m {{ x }}'],
+    ['python the script itself', 'python {{ x }}'],
+    ['python3 -X {{ x }} script.py', 'python3 -X {{ x }} script.py'],
+    ['deno run {{ x }}', 'deno run {{ x }}'],
+    ['deno run --allow-read={{ x }} script.ts', 'deno run --allow-read={{ x }} script.ts'],
+    ['bun run {{ x }}', 'bun run {{ x }}'],
+    ['bun {{ x }}', 'bun {{ x }}'],
+    ['bash {{ x }}', 'bash {{ x }}'],
+    ['bash -x {{ x }}', 'bash -x {{ x }}'],
+    ['bash --rcfile {{ x }} script.sh', 'bash --rcfile {{ x }} script.sh'],
+    ['perl {{ x }}', 'perl {{ x }}'],
+    ['ruby -r{{ x }}', 'ruby -r{{ x }} script.rb'],
+    ['ruby {{ x }}', 'ruby {{ x }}'],
+    ['php {{ x }}', 'php {{ x }}'],
+    ['lua {{ x }}', 'lua {{ x }}'],
+    ['Rscript {{ x }}', 'Rscript {{ x }}'],
+    ['osascript {{ x }}', 'osascript {{ x }}'],
+    ['npx {{ x }}', 'npx {{ x }}'],
+    ['npx -y {{ x }}', 'npx -y {{ x }}'],
+    ['npx --package={{ x }} tool', 'npx --package={{ x }} tool'],
+    ['npx -p {{ x }} tool', 'npx -p {{ x }} tool'],
+    ['npx -c with a placeholder', "npx -c 'tool {{ x }}'"],
+    ['npm exec {{ x }}', 'npm exec {{ x }}'],
+    ['npm x {{ x }}', 'npm x {{ x }}'],
+    ['bunx {{ x }}', 'bunx {{ x }}'],
+  ])('refuses %s', (_label, command) => {
+    const problem = findTemplateProblem(command);
+    expect(problem, command).toBeDefined();
+    expect(problem).toContain('Fix:');
+    expect(problem).toContain('best-effort');
+  });
+
+  it('says the placeholder must come after a literal script and shows the form', () => {
+    const problem = findTemplateProblem('node -r {{ x }} script.js');
+    expect(problem).toContain('before the script');
+    expect(problem).toContain('node script.js {{ x }}');
+  });
+
+  it.each([
+    ['node script.js {{ x }}'],
+    ['node ./a/b.js --id {{ x }}'],
+    ['node -r ./hook.js script.js {{ x }}'],
+    ['node --require=./hook.js script.js --id={{ x }}'],
+    ['node --max-old-space-size=512 script.js {{ x }}'],
+    ['python script.py {{ x }}'],
+    ['python -m pytest {{ x }}'],
+    ['python -X dev script.py {{ x }}'],
+    ['deno run script.ts {{ x }}'],
+    ['deno run -A script.ts {{ x }}'],
+    ['bun run script.ts {{ x }}'],
+    ['bun script.ts {{ x }}'],
+    ['bash script.sh {{ x }}'],
+    ['bash -x script.sh {{ x }}'],
+    ['bash -o pipefail script.sh {{ x }}'],
+    [`bash -c 'script "$1"' _ {{ x }}`],
+    ['perl script.pl {{ x }}'],
+    ['ruby script.rb {{ x }}'],
+    ['php script.php {{ x }}'],
+    ['lua script.lua {{ x }}'],
+    ['Rscript script.R {{ x }}'],
+    ['osascript script.scpt {{ x }}'],
+    ['npx some-tool {{ x }}'],
+    ['npx -y some-tool --id {{ x }}'],
+    ['npx -p pkg tool {{ x }}'],
+    ['npm exec some-tool -- {{ x }}'],
+    ['npm install {{ x }}'],
+    ['npm run build -- {{ x }}'],
+    // not an interpreter: placeholders anywhere
+    ['git commit -m {{ x }}'],
+    ['tool --flag={{ x }} {{ y }}'],
+  ])('accepts %s', (command) => {
+    expect(findTemplateProblem(command)).toBeUndefined();
   });
 });
