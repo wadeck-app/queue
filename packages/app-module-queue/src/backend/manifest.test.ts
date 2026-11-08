@@ -54,8 +54,8 @@ describe('manifest.json figures next to menu entries (count)', () => {
   type Count = { route: string; field: string; refreshSeconds?: number };
   const pages = (manifest.extensionPoints as unknown as { slot?: string; path?: string; count?: Count }[]).filter((point) => point.slot === 'nav');
 
-  it('Pending shows the number of pending events and DLQ the number of dead-letter entries, both read from /status', () => {
-    expect(pages.find((page) => page.path === '/pending')?.count).toEqual({ route: '/status', field: 'pendingCount' });
+  it('Pending shows the number of events in flight (what its page lists: pending and failed) and DLQ the number of dead-letter entries, both read from /status', () => {
+    expect(pages.find((page) => page.path === '/pending')?.count).toEqual({ route: '/status', field: 'inFlightCount' });
     expect(pages.find((page) => page.path === '/dlq')?.count).toEqual({ route: '/status', field: 'dlqCount' });
   });
 

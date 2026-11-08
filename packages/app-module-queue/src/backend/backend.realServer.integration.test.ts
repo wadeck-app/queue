@@ -336,7 +336,7 @@ describe('the packaged module through a real app-core server', () => {
   it('the read routes work without any daemon', async () => {
     const status = await call('GET', '/status');
     expect(status.status).toBe(200);
-    expect(status.body).toEqual({ pendingCount: 0, dlqCount: 0 });
+    expect(status.body).toEqual({ pendingCount: 0, dlqCount: 0, inFlightCount: 0 });
 
     const dlq = await call('GET', '/dlq');
     expect(dlq.status).toBe(200);

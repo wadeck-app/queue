@@ -20,16 +20,21 @@ const dlqLine = (id: string) => JSON.stringify({ id, event: 'onFoo', payload: {}
 
 describe('getStatus', () => {
   it('reports zero counts for a queue that never ran', () => {
-    expect(getStatus(configDir)).toEqual({ pendingCount: 0, dlqCount: 0 });
+    expect(getStatus(configDir)).toEqual({ pendingCount: 0, dlqCount: 0, inFlightCount: 0 });
   });
 
   it('reads the pending and DLQ counts from the queue files, with no daemon involved', () => {
     writeFileSync(join(configDir, 'wal.ndjson'), [walLine('a', 'pending'), walLine('b', 'pending'), walLine('c', 'acked')].join('\n') + '\n');
     writeFileSync(join(configDir, 'dlq.ndjson'), dlqLine('x') + '\n');
-    expect(getStatus(configDir)).toEqual({ pendingCount: 2, dlqCount: 1 });
+    expect(getStatus(configDir)).toEqual({ pendingCount: 2, dlqCount: 1, inFlightCount: 2 });
+  });
+
+  it('counts as in flight what the Pending page lists: the pending ones AND the failed ones waiting for a retry, never the acked ones', () => {
+    writeFileSync(join(configDir, 'wal.ndjson'), [walLine('a', 'pending'), walLine('b', 'failed'), walLine('c', 'failed'), walLine('d', 'acked')].join('\n') + '\n');
+    expect(getStatus(configDir)).toEqual({ pendingCount: 1, dlqCount: 0, inFlightCount: 3 });
   });
 
   it('does not claim anything about the daemon (the process answering is app-core, not the daemon)', () => {
-    expect(Object.keys(getStatus(configDir)).sort()).toEqual(['dlqCount', 'pendingCount']);
+    expect(Object.keys(getStatus(configDir)).sort()).toEqual(['dlqCount', 'inFlightCount', 'pendingCount']);
   });
 });

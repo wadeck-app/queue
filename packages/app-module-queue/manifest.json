@@ -102,7 +102,7 @@
       "slot": "nav",
       "label": "Queue Pending",
       "path": "/pending",
-      "count": { "route": "/status", "field": "pendingCount" },
+      "count": { "route": "/status", "field": "inFlightCount" },
       "view": {
         "type": "path",
         "value": "./src/dsl-views/pending-page.yaml"
