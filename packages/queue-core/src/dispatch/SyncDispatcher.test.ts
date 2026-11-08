@@ -246,3 +246,55 @@ describe('SyncDispatcher - type action', () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+// `timeout` of a before* push is the time of the WHOLE event: the subscribers share it, they do not each get the full value
+describe('SyncDispatcher: the timeout is one budget for the whole before* phase', () => {
+  const clock = { now: 0 };
+  let logger: QueueLogWriter;
+  let historyLog: HistoryWriter;
+  let dispatcher: SyncDispatcher;
+
+  beforeEach(() => {
+    clock.now = 0;
+    logger = makeLogger();
+    historyLog = makeHistoryLog();
+    dispatcher = new SyncDispatcher(logger, historyLog, undefined, undefined, () => clock.now);
+  });
+
+  const each = (ms: number) => vi.spyOn(CliTransport.prototype, 'dispatch').mockImplementation(() => {
+    clock.now += ms;
+    return Promise.resolve({ success: true, stdout: '', durationMs: ms });
+  });
+
+  it('each subscriber gets what is left of the budget, the first one all of it', async () => {
+    const spy = each(4000);
+    const result = await dispatcher.dispatch([makeSub('s1'), makeSub('s2'), makeSub('s3')], makeEnvelope(), 10_000);
+    expect(result.action).toBe('continue');
+    expect(spy.mock.calls.map((call) => call[2])).toEqual([10_000, 6_000, 2_000]);
+  });
+
+  it('aborts, naming the subscriber that did not run and the budget, once the budget is spent; the next subscribers do not run', async () => {
+    const spy = each(4000);
+    const result = await dispatcher.dispatch([makeSub('s1'), makeSub('s2'), makeSub('s3'), makeSub('s4')], makeEnvelope(), 10_000);
+    expect(result.action).toBe('aborted');
+    expect(result.reason).toContain('s4');
+    expect(result.reason).toContain('10s');
+    expect(result.reason).toContain('whole');
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ subscriberId: 's4', status: 'failed', error: result.reason }));
+    expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ subscriberId: 's4', status: 'failed' }));
+  });
+
+  it('a budget with exactly nothing left does not start the subscriber', async () => {
+    const spy = each(5000);
+    const result = await dispatcher.dispatch([makeSub('s1'), makeSub('s2')], makeEnvelope(), 5_000);
+    expect(result.action).toBe('aborted');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a single subscriber keeps the message it always had when it times out', async () => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'timeout after 5s', durationMs: 5000 });
+    const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), 5_000);
+    expect(result.reason).toBe('subscriber timeout after 5s');
+  });
+});

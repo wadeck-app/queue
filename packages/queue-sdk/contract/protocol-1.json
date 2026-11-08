@@ -70,6 +70,11 @@
     "response": { "status": "rejected", "eventId": "absent" }
   },
   {
+    "name": "1.6.0: a null payload is a payload (the daemon refuses a push with none, never one that carries null)",
+    "request": { "event": "on.contract.null-payload", "payload": null, "protocol": "1.6.0" },
+    "response": { "status": "queued", "eventId": "present" }
+  },
+  {
     "name": "1.5.0: a name that only contains queue is not reserved",
     "request": { "event": "myapp.queue.done", "payload": {}, "protocol": "1.5.0" },
     "response": { "status": "queued", "eventId": "present" }

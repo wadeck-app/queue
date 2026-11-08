@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, openSync, closeSync, chmodSync, readFileSync, writeFileSync } from 'node:fs';
-import { renameReplacing } from './AtomicRename.js';
+import { existsSync, mkdirSync, openSync, closeSync, chmodSync } from 'node:fs';
+import { renameReplacing, writeFileDurably } from './AtomicRename.js';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
 import { FileLock } from './FileLock.js';
-import { quarantineCorruptLines, removeStaleTempFiles, stderrDiagnosticSink, type StorageDiagnosticSink } from './StorageDiagnostics.js';
+import { isPlainObject, parseQueueFile, quarantineCorruptLines, removeStaleTempFiles, stderrDiagnosticSink, type StorageDiagnosticSink } from './StorageDiagnostics.js';
 
 export interface WalEntry {
   id: string;
@@ -16,6 +16,11 @@ export interface WalEntry {
   attempts: number;
   lastError?: string;
   ackedAt?: string;
+  /**
+   * When the retry job of this entry is due (ISO time): written when a retry is scheduled. It makes the "stuck" limit follow the entry's own retry plan (a subscriber with
+   * many retries waits up to 16 minutes between attempts for hours) instead of a fixed time since the entry was written. Absent: no retry is planned, or an older entry.
+   */
+  retryDueAt?: string;
 }
 
 /** Outcome of {@link Wal.updateEntryIf}: `rejected` carries the entry as it is now, which the predicate refused. */
@@ -24,7 +29,26 @@ export type WalConditionalUpdate =
   | { status: 'not-found' }
   | { status: 'rejected'; current: WalEntry };
 
+const WAL_STATUSES: ReadonlySet<unknown> = new Set(['pending', 'acked', 'failed', 'dlq']);
+
+/** The minimal shape every reader relies on; a line of another shape is quarantined like an unreadable one. */
+function isWalEntry(value: unknown): value is WalEntry {
+  return isPlainObject(value)
+    && typeof value.id === 'string' && value.id !== ''
+    && WAL_STATUSES.has(value.status)
+    && typeof value.event === 'string'
+    && typeof value.subscriberId === 'string'
+    && typeof value.timestamp === 'string'
+    && typeof value.attempts === 'number'
+    && isPlainObject(value.meta);
+}
+
 const ACKED_RETENTION_MS = 24 * 3600_000;
+/**
+ * At most this many acknowledged entries are kept (the newest). They only serve to refuse `queue retry` of an id that was already delivered; once evicted, that id answers
+ * "not found", which refuses the retry just the same. `queue history` keeps the trace of every delivery.
+ */
+export const MAX_RETAINED_ACKED = 500;
 
 export class Wal {
   private readonly filePath: string;
@@ -33,16 +57,18 @@ export class Wal {
 
   private readonly now: () => number;
   private readonly ackedRetentionMs: number;
+  private readonly maxRetainedAcked: number;
   private readonly diagnostics: StorageDiagnosticSink;
   private tempFilesCleaned = false;
 
   /** @param options.onDiagnostic Where unreadable lines are reported (the daemon passes EventLogger.logDiagnostic); default: stderr. */
-  constructor(filePath: string, options: { now?: () => number; ackedRetentionMs?: number; onDiagnostic?: StorageDiagnosticSink } = {}) {
+  constructor(filePath: string, options: { now?: () => number; ackedRetentionMs?: number; maxRetainedAcked?: number; onDiagnostic?: StorageDiagnosticSink } = {}) {
     this.filePath = filePath;
     this.diagnostics = options.onDiagnostic ?? stderrDiagnosticSink;
     this.lock = new FileLock(`${filePath}.lock`);
     this.now = options.now ?? Date.now;
     this.ackedRetentionMs = options.ackedRetentionMs ?? ACKED_RETENTION_MS;
+    this.maxRetainedAcked = options.maxRetainedAcked ?? MAX_RETAINED_ACKED;
   }
 
   /**
@@ -52,7 +78,14 @@ export class Wal {
    */
   private withoutOldAcked(entries: WalEntry[]): WalEntry[] {
     const limit = this.now() - this.ackedRetentionMs;
-    return entries.filter(e => e.status !== 'acked' || Date.parse(e.ackedAt ?? e.timestamp) >= limit);
+    const recent = entries.filter(e => e.status !== 'acked' || Date.parse(e.ackedAt ?? e.timestamp) >= limit);
+    // The age alone does not bound the file: a busy day acknowledges tens of thousands of entries, and each of them is rewritten by every write (measured: 40,000 acked = 18 MB, ~250 ms per append)
+    const acked = recent.filter(e => e.status === 'acked');
+    if (acked.length <= this.maxRetainedAcked) {
+      return recent;
+    }
+    const newest = new Set([...acked].sort((a, b) => Date.parse(b.ackedAt ?? b.timestamp) - Date.parse(a.ackedAt ?? a.timestamp)).slice(0, this.maxRetainedAcked));
+    return recent.filter(e => e.status !== 'acked' || newest.has(e));
   }
 
   private ensureFile(): void {
@@ -78,6 +111,20 @@ export class Wal {
     });
   }
 
+  /**
+   * Appends several entries in ONE rewrite under the lock: all of them are recorded or none is (a push for three subscribers must not leave the first one recorded
+   * and dispatched later while the caller is told the push failed), and the file is rewritten once instead of once per entry.
+   */
+  appendMany(entries: readonly WalEntry[]): void {
+    if (entries.length === 0) {
+      return;
+    }
+    this.ensureFile();
+    this.lock.withLock((held) => {
+      this.commitEntries(this.withoutOldAcked([...this.readForRewrite(), ...entries]), held);
+    });
+  }
+
   readAll(): WalEntry[] {
     const { entries, corrupt } = this.parse();
     for (const line of corrupt) {
@@ -87,23 +134,7 @@ export class Wal {
   }
 
   private parse(): { entries: WalEntry[]; corrupt: string[] } {
-    const entries: WalEntry[] = [];
-    const corrupt: string[] = [];
-    if (!existsSync(this.filePath)) {
-      return { entries, corrupt };
-    }
-    for (const line of readFileSync(this.filePath, 'utf-8').split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-      try {
-        entries.push(JSON.parse(trimmed) as WalEntry);
-      } catch {
-        corrupt.push(trimmed);
-      }
-    }
-    return { entries, corrupt };
+    return parseQueueFile(this.filePath, isWalEntry);
   }
 
   /** The entries to rewrite the file from, under the lock: the unreadable lines the rewrite is about to drop are kept aside and reported first. */
@@ -115,7 +146,12 @@ export class Wal {
 
   updateEntry(id: string, updates: Partial<WalEntry>): void {
     this.lock.withLock((held) => {
-      const updated = this.readForRewrite().map(e => (e.id === id ? { ...e, ...updates } : e));
+      const entries = this.readForRewrite();
+      // Nothing to change: do not rewrite the whole file for it
+      if (!entries.some(e => e.id === id)) {
+        return;
+      }
+      const updated = entries.map(e => (e.id === id ? { ...e, ...updates } : e));
       this.commitEntries(this.withoutOldAcked(updated), held);
     });
   }
@@ -186,7 +222,7 @@ export class Wal {
     }
     // One temp file per process: a shared name made concurrent writers rename each other's file away
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
-    writeFileSync(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
+    writeFileDurably(tmpPath, content, 0o600);
     held.assertHeld();
     renameReplacing(tmpPath, this.filePath);
   }

@@ -1,4 +1,4 @@
-import { accessSync, constants, renameSync } from 'node:fs';
+import { accessSync, closeSync, constants, fsyncSync, openSync, renameSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 // On Windows, replacing a file another process (or a scanner) has open for a moment answers one of these instead of succeeding;
@@ -11,6 +11,28 @@ const PAUSE_MS = 25;
 // the total time slept stays under this, (attempts - 1) * PAUSE_MS
 const MAX_BLOCK_MS = 1000;
 const ATTEMPTS = MAX_BLOCK_MS / PAUSE_MS;
+
+/** Test seam of {@link writeFileDurably}: the file system calls it makes. */
+export interface DurableWriteFs {
+  openSync(path: string, flags: string, mode: number): number;
+  writeSync(fd: number, text: string): number;
+  fsyncSync(fd: number): void;
+  closeSync(fd: number): void;
+}
+
+/**
+ * Writes `content` to `path` and flushes it to the disk (fsync) before returning. Used for the temp file that is renamed over a data file: without the flush a power loss
+ * after the rename can leave the data file empty or truncated, because the rename may reach the disk before the data does. The descriptor is closed even when the flush fails.
+ */
+export function writeFileDurably(path: string, content: string, mode: number, fs: DurableWriteFs = { openSync, writeSync: (fd, text) => writeSync(fd, text, null, 'utf-8'), fsyncSync, closeSync }): void {
+  const fd = fs.openSync(path, 'w', mode);
+  try {
+    fs.writeSync(fd, content);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 export interface AtomicRenameOptions {
   /** Test seam: the real rename. */

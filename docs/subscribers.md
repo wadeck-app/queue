@@ -159,6 +159,18 @@ The filter is evaluated on the whole envelope (`event`, `payload`, `meta`, ...).
 
 A filter such as `$.payload[?(@.projectId=='x')]` filters the children of `payload`, not the payload itself: it does not do what it looks like. A filter that does not match is logged with why (`queue logs`). A `when:` filter never loads a `queue.dlq.*` base event: it sees the reference (see below).
 
+## Retries, timeout and backoff
+
+| Field | Default | Meaning |
+|---|---|---|
+| `retries` | 5 | Total tries of an `on*` delivery (the first one included); `0` gives up after the first failure. A permanent failure is never retried |
+| `timeout` | 30s | Per try. For a `before*` event the timeout of the push is one budget for the whole event (see [push-protocol.md](push-protocol.md)) |
+| `backoff` | `exponential` | Wait before the next try, from the number of failed tries `n`: `exponential` 1, 2, 4, 8 then 16 minutes; `linear` `n + 1` minutes, at most 16 |
+
+- The retry is an `orch` job (`orch add --once`) that runs `queue retry --event <walId>`. When `orch` is missing or refuses, the entry becomes `failed` and its `lastError` says why and how to run it by hand; the daemon log says it once per cause.
+- `queue retry` of an entry whose delivery is running is refused: one delivery at a time per entry.
+- An in-flight entry is "stuck" (`give-up-stuck`, the dashboard) 2 hours after the later of its creation and the time its next retry was due, so a long retry plan is not given up early.
+
 ## Caveats
 
 - A value that is the whole argument and starts like an option is refused (see "Option injection").
@@ -259,7 +271,7 @@ Rules:
 - Emitted once per entry in the DLQ, at-least-once: the daemon checks the row is not there yet, emits `added`, then writes the row. A crash between the emit and the write leaves the WAL entry `failed` (the startup rescan only reschedules `pending` ones), so running it again (`queue retry --event <walId>`) emits a second `added` for the same `entryId`: a duplicate, never a loss. A row that already exists emits nothing. The one exception is `removed(evicted)`, which follows the write that evicts (a crash in between loses it).
 - No event about an entry whose base event is a `queue.` event: a subscriber failing on `queue.dlq.added` is visible in the DLQ and the history, and produces no further event.
 - Loop guard: the event carries `hops + 1` of the failed delivery and `causedBy` it. At the hop cap (5) it is not emitted and the daemon log says so, naming the entry.
-- Never lost, at-least-once: `added` is emitted before the DLQ row is written. If the emit does not succeed (invalid `subscribers.yml`, refused push) the row is still written with `announce: pending`; the daemon emits it again at its start and after the next successful push, then clears the mark. A crash between the emit and the write can give a duplicate event, never none. Not guaranteed: an event for a base event named `queue.*` (excluded), the hop cap (row marked `announce: skipped`, never retried, the log names the entry), a `removed` whose daemon crashed before emitting, and a give-up/clear done while the daemon is down.
+- Never lost, at-least-once: `added` is emitted before the DLQ row is written. If the emit does not succeed (invalid `subscribers.yml`, refused push) the row is still written with `announce: pending`; the daemon emits it again at its start and after the next successful push, then clears the mark. A crash between the emit and the write can give a duplicate event, never none. Not guaranteed: an event for a base event named `queue.*` (excluded), the hop cap (row marked `announce: skipped`, never retried, the log names the entry), a row whose project is not registered any more (marked `announce: unannounceable` with an `announceReason`, never retried, still replayable and clearable), a `removed` whose daemon crashed before emitting, and a give-up/clear done while the daemon is down.
 - A delivery still running when a give-up claims its entry does not overwrite it: its late result (ack, failure, move) is dropped and the daemon log says so (`no longer in flight`), so the entry stays in the DLQ once, never acked and replayable at the same time. Replaying it delivers again: check the target first.
 - A replay whose subscriber was renamed or whose configuration does not load is refused: the daemon answers an error that says what to fix, and the entry stays in the DLQ (nothing is removed, no `removed` event).
 - Dashboard paths (clear, give-up of one or all stuck events) go through the daemon when it runs: the dashboard sends `dlq-clear`, `give-up {id}` or `give-up-stuck`, and the daemon does the operation and builds the events from the rows it moved or removed (`given-up`, `cleared`, `evicted` when a give-up pushed the oldest row out at the cap). A client supplies no event data, so nothing can forge one. If the daemon is not running (it is not started for this), the dashboard does the operation on the files and its message says the `queue.dlq.*` event could not be sent; no subscriber was told. `queue dlq clear|replay` run inside the daemon and emit once.

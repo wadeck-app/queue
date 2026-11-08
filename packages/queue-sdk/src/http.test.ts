@@ -93,4 +93,19 @@ describe('loopbackRequest', () => {
     expect(outcome).toMatchObject({ kind: 'failure', connected: true });
     expect(outcome.kind === 'failure' && outcome.message).toContain('100');
   });
+
+  it('says that the answer was too large (not that the connection broke), with the cap', async () => {
+    const port = await listen((_req, res) => {
+      res.end('x'.repeat(2000));
+    });
+    const outcome = await loopbackRequest({ port, method: 'GET', path: '/', timeoutMs: GUARD_MS, maxBytes: 100 });
+    expect(outcome).toMatchObject({ kind: 'failure', connected: true, responseTooLarge: 100 });
+  });
+
+  it('a failure that is not a too large answer does not claim it was', async () => {
+    const port = await listen((req) => { req.socket.destroy(); });
+    const outcome = await loopbackRequest({ port, method: 'GET', path: '/', timeoutMs: GUARD_MS });
+    expect(outcome.kind).toBe('failure');
+    expect(outcome.kind === 'failure' && outcome.responseTooLarge).toBeUndefined();
+  });
 });

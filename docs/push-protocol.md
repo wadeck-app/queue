@@ -1,6 +1,6 @@
 # Push protocol
 
-The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.5.0**.
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.6.0**.
 
 Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
 
@@ -44,7 +44,7 @@ No authentication.
   "config_dir": "C:\\Users\\me\\.config\\queue",
   "sdkVersion": 1,
   "port": 47910,
-  "queueProtocol": { "version": "1.5.0", "accepts": "^1.0.0" }
+  "queueProtocol": { "version": "1.6.0", "accepts": "^1.0.0" }
 }
 ```
 
@@ -55,16 +55,16 @@ No authentication.
 Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 ```json
-{ "protocol": "1.5.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+{ "protocol": "1.6.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
 | `event` | yes | Event name; subscribers match it by pattern (`*` one segment, `>` the rest; a `**` segment is refused in `subscribers.yml`). Names starting with `queue.` are reserved, see [Reserved namespace](#reserved-namespace) |
-| `payload` | yes | Any JSON value |
+| `payload` | yes | Any JSON value; `null` when the event carries nothing. Since 1.6.0 a push without it is `rejected`, and so is a payload over **1 MiB** (1048576 bytes of its JSON serialisation: it is copied into the WAL of every subscriber). Send a reference (a path, an id) for bigger data. The SDK refuses both before sending |
 | `cwd` | yes, unless `project` is given | Directory used to find the registered project (its subscribers) and the project name. Since 1.3.0 it may be omitted when `project` names the project (an event of a virtual project, which has no folder); with neither, the push is `rejected`. A daemon older than 1.3.0 answers HTTP 500 to a push without `cwd` |
 | `protocol` | no | Protocol version the client speaks; absent = `1.0.0` |
-| `timeout` | no | Milliseconds a `before*` event may take (default 30000) |
+| `timeout` | no | Milliseconds the whole `before*` event may take (default 30000). The subscribers run one after the other and share it: each gets what is left, and the chain aborts (naming the subscriber that did not run) once nothing is left. It does not replace the `timeout` of a subscriber in `subscribers.yml`, which applies to `on*` events |
 | `replayOf` | no | Id of the event this push replays |
 | `project` | no | Since 1.2.0. Id (8 hex characters) of the project of the project registry the event belongs to. The client resolves a name or an alias to the id (and sends a `cwd` inside that project). Absent, the daemon finds the project from `cwd`. A daemon older than 1.2.0 ignores the field, so check `queueProtocol.version` before relying on it |
 | `direction` | no | Since 1.4.0. Non-empty list of where the event propagates from its project: `to-parents` (the default when absent) = the project and its ancestors, root first; `to-children` = the project and its descendants, the own subscribers file of each (not the ancestors, not their other ancestors). Give both values to get both; the emitter's own subscribers fire in every case and each subscriber fires once. A subscriber of a descendant is dispatched under the descendant: its WAL, DLQ and event `meta.projectId` carry the descendant's id and `meta.emitterProjectId` the id of the project the event was emitted in; the history outcome and filtered records of that subscriber carry the same two fields, so `queue history --project <id>` (and the dashboard filter) finds the event under the emitter and under each descendant it ran in. An unknown value, an empty list, `to-children` on a `before*` event (synchronous, one answer) or on an event that belongs to no registered project are `rejected` with the reason; nothing is recorded. The history records a non-default `direction`, so `queue replay` propagates the same way. A daemon older than 1.4.0 ignores the field and fires the ancestors only, so check `queueProtocol.version` before relying on it |
@@ -76,7 +76,7 @@ Answer, HTTP 200: `{ "ok": true, "result": <PushResponse> }`.
 | `queued` | Recorded; `on*` subscribers run in the background | `eventId`, `subscriberCount` |
 | `dispatched` | A `before*` event ran synchronously | `eventId`, `result` (the subscribers' answer) |
 | `aborted` | A subscriber refused, or `subscribers.yml` is invalid | `reason`, `eventId` |
-| `rejected` | The client protocol is not accepted, the `project` is not in the registry (or the registry cannot be read), or the `event` is in the reserved `queue.` namespace; nothing was recorded | `reason`, `supported` (the accepted range, for a protocol refusal) |
+| `rejected` | The client protocol is not accepted, the `project` is not in the registry (or the registry cannot be read), the `event` is in the reserved `queue.` namespace, or (since 1.6.0) the `payload` is absent or over 1 MiB; nothing was recorded | `reason`, `supported` (the accepted range, for a protocol refusal) |
 
 A client must treat an unknown `status` as a failure and ignore unknown fields.
 
@@ -84,9 +84,9 @@ A client must treat an unknown `status` as a failure and ignore unknown fields.
 |---|---|
 | 401 | Missing or wrong token; nothing was recorded, safe to retry with a fresh token |
 | 400 / 404 | Malformed request / unknown command |
-| 500 | Daemon error, `{ "error": "..." }` |
+| 500 | Daemon error, `{ "error": "..." }`. For an `on*` event the WAL is written for all the subscribers in one step, so a 500 means nothing was recorded (the SDK reports `dropped`) and pushing again duplicates nothing |
 
-A connection reset or a timeout after the request was sent leaves the outcome unknown: the event may be recorded. There is no idempotency key, so do not retry blindly.
+A connection reset or a timeout after the request was sent leaves the outcome unknown: the event may be recorded. There is no idempotency key, so do not retry blindly. An answer over 1 MiB (a `before*` event whose subscribers returned a huge payload) is not read by the SDK and is reported as `unknown` too: the request was handled, only its answer is lost.
 
 ## POST /register-events
 
@@ -161,6 +161,7 @@ The daemon does not use these paths for its own events, and a client cannot set 
 
 | Version | Change |
 |---|---|
+| 1.6.0 | Additive (MINOR): two new `rejected` reasons on `push`, a missing `payload` (it was documented as required but never checked) and a payload over 1 MiB (`MAX_PUSH_PAYLOAD_BYTES`); the `timeout` of a `before*` event is one budget for the whole event, not per subscriber. No field is added or removed; a client that sends a payload under 1 MiB is unaffected. A daemon older than 1.6.0 accepts both: check `queueProtocol.version` before relying on it. Recorded in `packages/queue-sdk/contract/protocol-1.json` (a case with a `null` payload; the SDK cannot send the refused ones, they are tested in queue-core) |
 | 1.5.0 | Additive (MINOR): the `queue.` event namespace is reserved for events the daemon builds itself. A new `rejected` reason on `push` (an event name starting with `queue.`) and on `register-events` (source `queue`, or a `queue.` event name). No field is added or removed; a client that never used such a name is unaffected. Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.4.0 | Additive (MINOR): the optional `direction` of a push (`to-parents` by default, `to-children`, or both); the descendants' own subscribers fire under their own project id, with `emitterProjectId`. Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.3.0 | Additive (MINOR): `cwd` is optional when `project` is named, so a virtual project (no folder) can emit events. Its subscribers run from their own `cwd:`; one without it fails with the project name. A subscriber always runs from the main folder of the project that owns its file (not the emitter's). Recorded in `packages/queue-sdk/contract/protocol-1.json` |

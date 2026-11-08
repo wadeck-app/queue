@@ -145,14 +145,23 @@ export function abandonInFlightEntryDetailed(configDir: string, id: string, now:
 }
 
 /**
- * How long an event may stay in flight before nobody is considered to be retrying it: a retry follows 1, 2, 4, 8 and 16 minutes after the
- * previous attempt (RetryScheduler), so an entry still pending or failed two hours after it was written lost its retry job.
+ * How long an event may stay in flight before nobody is considered to be retrying it, counted from the LATER of the time it was written and the time its next retry
+ * was due (`retryDueAt`): a retry follows 1, 2, 4, 8 then 16 minutes after the previous attempt, so a retry that was due two hours ago and never ran lost its job, while an
+ * entry deep in a long plan (retries: 20 waits 16 minutes between attempts for hours) is still being retried. An entry without a due time (written before it existed, or never
+ * attempted) is stuck two hours after it was written.
  */
 export const STUCK_AFTER_MS = 2 * 3_600_000;
 
+/** The time an in-flight entry has been waiting since: its creation, or the due time of its retry when that is later. */
+function waitingSince(entry: WalEntry): number {
+  const written = Date.parse(entry.timestamp);
+  const due = entry.retryDueAt === undefined ? Number.NaN : Date.parse(entry.retryDueAt);
+  return Number.isNaN(due) ? written : Math.max(written, due);
+}
+
 function stuckEntries(configDir: string, options: { now?: Date; olderThanMs?: number }): WalEntry[] {
   const limit = (options.now ?? new Date()).getTime() - (options.olderThanMs ?? STUCK_AFTER_MS);
-  return listInFlightEntries(configDir).filter((entry) => Date.parse(entry.timestamp) < limit);
+  return listInFlightEntries(configDir).filter((entry) => waitingSince(entry) < limit);
 }
 
 /** How many in-flight events are older than the limit (see {@link STUCK_AFTER_MS}). Moves nothing. */

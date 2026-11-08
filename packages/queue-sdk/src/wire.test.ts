@@ -172,3 +172,31 @@ describe('serializeRegisterRequest', () => {
     expect(!out.ok && out.reason).toContain('circular');
   });
 });
+
+describe('serializePushRequest: the payload limit (push protocol 1.6.0)', () => {
+  it('accepts a payload of exactly the limit and refuses one byte more, saying the size, the limit and what to do', async () => {
+    const { MAX_PUSH_PAYLOAD_BYTES } = await import('./protocol.js');
+    // a string payload is its length + 2 quotes once serialised
+    const atLimit = serializePushRequest({ event: 'a', payload: 'x'.repeat(MAX_PUSH_PAYLOAD_BYTES - 2), cwd: '/p' });
+    expect(atLimit.ok).toBe(true);
+    const over = serializePushRequest({ event: 'a', payload: 'x'.repeat(MAX_PUSH_PAYLOAD_BYTES - 1), cwd: '/p' });
+    expect(over.ok).toBe(false);
+    if (!over.ok) {
+      expect(over.reason).toContain(String(MAX_PUSH_PAYLOAD_BYTES + 1));
+      expect(over.reason).toContain(String(MAX_PUSH_PAYLOAD_BYTES));
+      expect(over.reason).toContain('1 MiB');
+      expect(over.reason).toContain('reference');
+    }
+  });
+
+  it('counts bytes, not characters', async () => {
+    const { MAX_PUSH_PAYLOAD_BYTES } = await import('./protocol.js');
+    // 3 bytes per character: well under the limit in characters, over it in bytes
+    const out = serializePushRequest({ event: 'a', payload: '\u20ac'.repeat(Math.ceil(MAX_PUSH_PAYLOAD_BYTES / 3)), cwd: '/p' });
+    expect(out.ok).toBe(false);
+  });
+
+  it('a null payload is a payload', () => {
+    expect(serializePushRequest({ event: 'a', payload: null, cwd: '/p' }).ok).toBe(true);
+  });
+});

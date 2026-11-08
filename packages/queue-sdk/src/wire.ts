@@ -1,4 +1,5 @@
 import { getErrorMessage } from './errors.js';
+import { MAX_PUSH_PAYLOAD_BYTES, payloadSizeProblem } from './protocol.js';
 
 // The push wire contract as the SDK sees it. Nothing read from the daemon is trusted: unknown fields are ignored, unknown
 // status values are failures.
@@ -131,6 +132,9 @@ function findUnserialisable(value: unknown, path: string, ancestors: unknown[]):
   return undefined;
 }
 
+// A body of at most this many bytes cannot hold a payload over the limit
+const MAX_PAYLOAD_PROBE = MAX_PUSH_PAYLOAD_BYTES;
+
 export type Serialized = { ok: true; body: string } | { ok: false; reason: string };
 
 /** JSON body of a push, or the reason it cannot be built. Never throws. */
@@ -140,6 +144,13 @@ export function serializePushRequest(request: PushRequest): Serialized {
   }
   try {
     const body = JSON.stringify(request);
+    // The body holds more than the payload, so a body within the limit proves the payload is; only a larger one is measured again
+    if (Buffer.byteLength(body) > MAX_PAYLOAD_PROBE) {
+      const problem = payloadSizeProblem(Buffer.byteLength(JSON.stringify(request.payload)));
+      if (problem !== undefined) {
+        return { ok: false, reason: problem };
+      }
+    }
     return { ok: true, body };
   } catch (error) {
     const culprit = findUnserialisable(request.payload, 'payload', []);

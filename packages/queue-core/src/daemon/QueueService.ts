@@ -9,7 +9,7 @@ import { ProjectResolver, type ProjectLookup } from '../project/ProjectResolver.
 import { AsyncDispatcher, inFlightWalUpdater } from '../dispatch/AsyncDispatcher.js';
 import { SyncDispatcher } from '../dispatch/SyncDispatcher.js';
 import { PayloadFilter } from '../dispatch/PayloadFilter.js';
-import { RetryScheduler } from '../dispatch/RetryScheduler.js';
+import { RetryScheduler, backoffMinutes } from '../dispatch/RetryScheduler.js';
 import { ActionTransport } from '../dispatch/ActionTransport.js';
 import { RefResolver } from '../dispatch/refResolver.js';
 import { reservedEventProblem } from '../reservedEvents.js';
@@ -22,7 +22,7 @@ import type { ActionPushRequest, ActionPushResult } from '../actions/ActionPlugi
 import { findActionCycles, type CycleSubscriber } from '../actions/findActionCycles.js';
 import type { WalEntry } from '../storage/Wal.js';
 import { getErrorMessage } from '../errors.js';
-import { checkClientProtocol, checkPushDirection, isReservedEventName, RESERVED_EVENT_PREFIX } from '@wadeck-app/queue-sdk/protocol';
+import { checkClientProtocol, checkPushDirection, isReservedEventName, payloadSizeProblem, RESERVED_EVENT_PREFIX } from '@wadeck-app/queue-sdk/protocol';
 import type { PushDirection } from '@wadeck-app/queue-sdk/protocol';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { countQueue, subscribersFor, removeDlqEntries, purgeWalOfDlqRows, abandonInFlightEntryDetailed, abandonStuckEntriesDetailed, pruneOrphanedDlqWalEntries, type DlqChanges } from '../operations.js';
@@ -186,9 +186,51 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     historyLog,
     actionTransport,
     refs,
+    (entry, error) => retryNotScheduled(entry, error),
   );
 
   let activeDispatches = 0;
+  // The WAL ids being delivered right now, by any path (push, retry, replay): one entry is never delivered twice at the same time
+  const inFlight = new Set<string>();
+
+  /** Runs the delivery of the entries of `subscribers`, marking their ids in flight until it settles. */
+  function deliver(subscribers: ResolvedSubscriber[], envelope: EventEnvelope, walEntries: Map<string, WalEntry>): Promise<void> {
+    const ids = subscribers.flatMap((sub) => {
+      const id = walEntries.get(sub.subscriberId)?.id;
+      return id === undefined ? [] : [id];
+    });
+    for (const id of ids) {
+      inFlight.add(id);
+    }
+    return asyncDispatcher.dispatch(subscribers, envelope, walEntries).finally(() => {
+      for (const id of ids) {
+        inFlight.delete(id);
+      }
+    });
+  }
+
+  const isStillInFlight = (entry: WalEntry): boolean => entry.status === 'pending' || entry.status === 'failed';
+
+  /**
+   * The retry job of an entry could not be created (orch missing, orch failing). The entry is kept retryable and made visible: it becomes 'failed' (so the daemon can idle: only
+   * 'pending' entries keep it awake) with the reason and the command to run it by hand in its lastError, which `queue status` and the Pending page show. The cause is said once
+   * per daemon run in the log, however many entries hit it. Never throws.
+   */
+  function retryNotScheduled(entry: WalEntry, error: Error): void {
+    try {
+      const cause = getErrorMessage(error.cause ?? error).split('\n')[0]!;
+      const once = `retry-not-scheduled: ${cause}`;
+      if (!saidOnce.has(once)) {
+        saidOnce.add(once);
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `${getErrorMessage(error).replace(/\s+/g, ' ')} (said once per cause: the other entries that fail the same way carry it in their lastError)` });
+      }
+      const hint = getErrorMessage(error).includes(`queue retry --event ${entry.id}`) ? '' : ` Once fixed, run it by hand: queue retry --event ${entry.id}`;
+      const note = `retry not scheduled: ${getErrorMessage(error).replace(/\s+/g, ' ').slice(0, 400)}${hint}`;
+      wal.updateEntryIf(entry.id, isStillInFlight, { status: 'failed', retryDueAt: undefined, lastError: entry.lastError !== undefined ? `${entry.lastError} (${note})` : note });
+    } catch (err) {
+      eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `${getErrorMessage(error)} (and the entry ${entry.id} could not be marked: ${getErrorMessage(err)})` });
+    }
+  }
   // Per root event: the hop cap bounds the depth of an action chain, this bounds its width
   const emissionBudget = new EmissionBudget();
 
@@ -326,6 +368,18 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    */
   async function announceAdded(row: DlqEntry, info: DlqAddedInfo): Promise<void> {
     try {
+      // The event is pushed under the project of the row: once that project is not registered any more the push is refused for good, and a scan after every push would try again for ever
+      const projectId = row.meta.projectId;
+      if (projectId !== undefined && projectResolver?.lookupId(projectId).kind === 'unregistered') {
+        const reason = `the project ${projectId} is not registered any more, so queue.dlq.added cannot be pushed under it`;
+        dlq.setAnnounce(row.id, 'unannounceable', reason);
+        const message = `DLQ entry ${row.id} (event ${row.event}) is unannounceable: ${reason}. It stays in the dead-letter queue and can still be replayed or cleared; no queue.dlq.added is sent for it`;
+        if (!saidOnce.has(message)) {
+          saidOnce.add(message);
+          eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-events', message });
+        }
+        return;
+      }
       const outcome = await emitDlqEvent(row, (entry) => buildDlqAddedEvent(entry, info));
       if (outcome === 'failed') {
         announceBacklog = true;
@@ -406,7 +460,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    * `origin` is `'queue'` for the events the daemon builds about itself, given the same way (never read from the wire, the RPC push has none): it alone
    * allows a name in the reserved `queue.` namespace, and it is required there.
    */
-  async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy; origin?: 'queue'; rootEventId?: string }): Promise<PushResponse> {
+  async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy; origin?: 'queue'; rootEventId?: string; wire?: true }): Promise<PushResponse> {
     // The wire does not check types: a number, an object or an empty name would fail deep inside (HTTP 500) after the history trigger was written
     if (typeof req.event !== 'string' || req.event === '') {
       return { status: 'rejected', reason: `the push has no usable 'event': expected a non-empty string, got ${req.event === '' ? 'an empty string' : JSON.stringify(req.event) ?? typeof req.event}. Fix: send the event name as a string (e.g. 'onTaskDone'); the event was not recorded` };
@@ -415,6 +469,23 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     const protocol = checkClientProtocol(req.protocol);
     if (!protocol.ok) {
       return { status: 'rejected', reason: protocol.reason, supported: protocol.supported };
+    }
+    // Protocol 1.6.0. A request from the wire carries a payload (null is one: absent is a client that forgot it, and the subscribers would render nothing); an action or the daemon itself
+    // may emit without one. The size is bounded for every entry: the payload is copied into the WAL of each subscriber and the WAL is rewritten whole on every write.
+    if (internal.wire === true && req.payload === undefined) {
+      return { status: 'rejected', reason: "the push has no 'payload': the payload is required (any JSON value). Fix: send the data as 'payload', or null when the event carries none; the event was not recorded" };
+    }
+    if (req.payload !== undefined) {
+      let bytes: number;
+      try {
+        bytes = Buffer.byteLength(JSON.stringify(req.payload) ?? '');
+      } catch (err) {
+        return { status: 'rejected', reason: `the payload cannot be written as JSON (${getErrorMessage(err)}); the event was not recorded` };
+      }
+      const tooBig = payloadSizeProblem(bytes);
+      if (tooBig !== undefined) {
+        return { status: 'rejected', reason: `${tooBig}; the event was not recorded` };
+      }
     }
     // The queue. namespace (protocol 1.5.0) is built by the daemon alone: a client, an action or a replay cannot produce such an event
     if (internal.origin !== 'queue') {
@@ -572,7 +643,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       // Async (onXxx)
       const walEntries = new Map<string, WalEntry>();
       for (const sub of filtered) {
-        const walEntry: WalEntry = {
+        walEntries.set(sub.subscriberId, {
           id: crypto.randomUUID(),
           timestamp: new Date().toISOString(),
           event: req.event,
@@ -581,9 +652,16 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           subscriberId: sub.subscriberId,
           status: 'pending',
           attempts: 0,
-        };
-        wal.append(walEntry);
-        walEntries.set(sub.subscriberId, walEntry);
+        });
+      }
+      // One write for all the subscribers: recorded whole or not at all. One write per subscriber could record the first and fail on the second, the caller was told the push
+      // failed (a client retries, a duplicate) while the recorded entry was delivered at the next start.
+      try {
+        wal.appendMany([...walEntries.values()]);
+      } catch (err) {
+        const reason = getErrorMessage(err);
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `event ${req.event} was not recorded: the WAL could not be written (${reason}); nothing was recorded or dispatched` });
+        throw new Error(`the event ${req.event} was not recorded: the WAL could not be written (${reason}). Nothing was recorded or dispatched, so pushing it again does not duplicate anything. Fix: check that nothing locks or protects wal.ndjson in the queue config directory (antivirus, read-only attribute) and that the disk has room`, { cause: err });
       }
 
       // Fire and forget
@@ -593,7 +671,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         groups.set(groupEnvelope, [...(groups.get(groupEnvelope) ?? []), sub]);
       }
       for (const [groupEnvelope, groupSubscribers] of groups) {
-        asyncDispatcher.dispatch(groupSubscribers, groupEnvelope, walEntries).catch((err: unknown) => {
+        deliver(groupSubscribers, groupEnvelope, walEntries).catch((err: unknown) => {
           eventLogger.logDiagnostic({ source: 'QueueDaemon.push', message: `AsyncDispatcher error for event ${req.event}: ${getErrorMessage(err)}` });
         });
       }
@@ -682,10 +760,46 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     }
   }
 
+  /** Hands every pending WAL entry to the retry scheduler; one that cannot be scheduled is marked and reported (see retryNotScheduled). */
+  function reschedulePending(sync: boolean): void {
+    for (const entry of wal.readAll().filter((candidate) => candidate.status === 'pending')) {
+      try {
+        // The due time first: the stuck limit counts from it (a pending entry written hours ago is about to be retried, not stuck)
+        wal.updateEntryIf(entry.id, isStillInFlight, { retryDueAt: new Date(Date.now() + backoffMinutes(entry.attempts) * 60_000).toISOString() });
+        RetryScheduler.scheduleRetry(entry, sync, { onError: (error) => retryNotScheduled(entry, error) });
+      } catch (err) {
+        retryNotScheduled(entry, err instanceof Error ? err : new Error(getErrorMessage(err)));
+      }
+    }
+  }
+
+  /**
+   * A dlq-replay writes the pending WAL entry first and removes the DLQ row second; a crash between the two leaves an entry that will be delivered at the next start AND a row
+   * that can be replayed again (a double delivery). Such a row is recognisable: the WAL entry of its id is pending and newer than the row (the mover only ever leaves it failed or dlq).
+   * Runs at the start; the row is removed and its queue.dlq.removed (replayed) is sent.
+   */
+  function dropReplayedRows(): void {
+    try {
+      const byId = new Map(wal.readAll().map((candidate) => [candidate.id, candidate]));
+      const stale = dlq.readAll().filter((row) => {
+        const walEntry = byId.get(row.id);
+        return walEntry !== undefined && walEntry.status === 'pending' && Date.parse(walEntry.timestamp) >= Date.parse(row.movedAt);
+      });
+      if (stale.length === 0) {
+        return;
+      }
+      const removed = dlq.removeEntries(stale.map((row) => row.id));
+      eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `removed ${removed.length} DLQ row(s) (${removed.map((row) => row.id).join(', ')}) whose replay had started before the last stop: the WAL entry is pending and is delivered once, the row would have allowed a second delivery` });
+      void emitDlqRemoved(removed, 'replayed');
+    } catch (err) {
+      eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `could not check the DLQ rows of interrupted replays: ${getErrorMessage(err)}` });
+    }
+  }
+
   const commands: QueueCommands = {
     async push(payload?: unknown): Promise<PushResponse> {
       options.onActivity?.();
-      return pushInternal(payload as PushRequest, { hops: 0 });
+      return pushInternal(payload as PushRequest, { hops: 0, wire: true });
     },
 
     async retry(payload?: unknown): Promise<RetryResponse> {
@@ -701,6 +815,11 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       }
       if (entry.status === 'dlq') {
         return { status: 'error', message: `WAL entry ${entry.id} was given up and sits in the dead-letter queue: retrying it from the WAL would duplicate it. Use 'queue dlq replay --id ${entry.id}' to run it again, or 'queue dlq clear --id ${entry.id}' to drop it.` };
+      }
+
+      // A delivery of this entry is running: a second one would run the subscriber twice at the same time (a retry job scheduled twice, a retry while the first run is slow)
+      if (inFlight.has(entry.id)) {
+        return { status: 'error', message: `WAL entry ${entry.id} is being delivered right now: running it again at the same time would run ${entry.subscriberId} twice. Wait for that delivery to end; if it fails it is retried on its own, or run 'queue retry --event ${entry.id}' again afterwards.` };
       }
 
       const cwd = entry.meta.cwd;
@@ -731,7 +850,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
       const walEntries = new Map([[sub.subscriberId, entry]]);
       activeDispatches++;
-      asyncDispatcher.dispatch([sub], envelope, walEntries).catch((err: unknown) => {
+      deliver([sub], envelope, walEntries).catch((err: unknown) => {
         eventLogger.logDiagnostic({ source: 'QueueDaemon.retry', message: `retry dispatch error for ${entry.subscriberId} (WAL ${entry.id}): ${getErrorMessage(err)}` });
       }).finally(() => { activeDispatches--; });
 
@@ -797,6 +916,10 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         return { status: 'error', message: `The replay of DLQ entry ${entry.id} did not start: the subscriber ${entry.subscriberId} no longer exists in subscribers.yml for event ${entry.event}. The entry is still in the dead-letter queue. Fix: restore that subscriber and replay it again (queue dlq replay --id ${entry.id}), or drop the entry (queue dlq clear --id ${entry.id})` };
       }
 
+      if (inFlight.has(entry.id)) {
+        return { status: 'error', message: `The replay of DLQ entry ${entry.id} did not start: that entry is being delivered right now, replaying it would run ${entry.subscriberId} twice at the same time. The entry is still in the dead-letter queue. Fix: wait for the delivery to end, then replay it again if it is still needed (queue dlq replay --id ${entry.id})` };
+      }
+
       const walEntry: WalEntry = {
         id: entry.id,
         timestamp: new Date().toISOString(),
@@ -807,10 +930,29 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         status: 'pending',
         attempts: 0,
       };
+      const previous = wal.readAll().find((candidate) => candidate.id === entry.id);
       // Replaces the WAL entry the give-up left in status dlq: the id is in the WAL once, so a retry or a give-up finds the delivery that is running
       wal.upsert(walEntry);
       // The entry as stored at the moment of the removal: what the removed event is about. Empty when someone else removed it since the read (that remover emits)
-      const removed = dlq.removeEntries(entry.id);
+      let removed: DlqEntry[];
+      try {
+        removed = dlq.removeEntries(entry.id);
+      } catch (err) {
+        // The row is still there: the WAL entry goes back to what it was, or the entry would be delivered by its pending status AND replayable from the row. (A crash right here is
+        // repaired at the next start: a pending entry newer than its row means a replay began, see dropReplayedRows.)
+        const reason = getErrorMessage(err);
+        try {
+          if (previous !== undefined) {
+            wal.upsert(previous);
+          } else {
+            wal.removeWhere((candidate) => candidate.id === walEntry.id && candidate.status === 'pending' && candidate.timestamp === walEntry.timestamp);
+          }
+        } catch (undoErr) {
+          eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `replay of DLQ entry ${entry.id}: the WAL entry could not be put back (${getErrorMessage(undoErr)}); it stays pending and the row stays in the DLQ, the next start removes the row` });
+        }
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `replay of DLQ entry ${entry.id}: the row could not be removed (${reason}); nothing was run` });
+        return { status: 'error', message: `The replay of DLQ entry ${entry.id} did not start: the row could not be removed from the dead-letter queue (${reason}), so nothing was run and the entry is still in the dead-letter queue. Fix: check that nothing locks dlq.ndjson in the queue config directory, then replay it again (queue dlq replay --id ${entry.id})` };
+      }
       if (removed.length !== 1) {
         // Undo the re-creation (only the entry this call wrote): the row is gone, a clear removed it on purpose
         wal.removeWhere((candidate) => candidate.id === walEntry.id && candidate.status === 'pending' && candidate.timestamp === walEntry.timestamp);
@@ -825,7 +967,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         meta: walEntry.meta,
       };
       const walEntries = new Map([[sub.subscriberId, walEntry]]);
-      asyncDispatcher.dispatch([sub], envelope, walEntries).catch((err: unknown) => {
+      deliver([sub], envelope, walEntries).catch((err: unknown) => {
         eventLogger.logDiagnostic({ source: 'QueueDaemon.dlq-replay', message: `replay dispatch error for ${entry.subscriberId} (WAL ${walEntry.id}): ${getErrorMessage(err)}` });
       });
       // The dispatch has started (the call above runs up to its first await): only now is the entry really replayed
@@ -903,7 +1045,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     commands,
     eventLogger,
     pushDaemonEvent: (request, options = {}) => pushInternal(request, { hops: options.hops ?? 0, ...(options.causedBy !== undefined && { causedBy: options.causedBy }), origin: 'queue' }),
-    isIdle: () => wal.pendingCount() === 0 && activeDispatches === 0,
+    // The acknowledgements that could not be written when a delivery ended are written again here (the host asks every few seconds): a delivered entry left pending keeps the daemon awake
+    isIdle: () => asyncDispatcher.retryUnrecorded() === 0 && wal.pendingCount() === 0 && activeDispatches === 0,
     onStart: () => {
       declareDaemonEvents();
       declareActionEvents();
@@ -924,33 +1067,15 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       }
       // The queue.dlq.added that could not go out before the last stop (mark pending) is emitted now, or after the next successful push if the configuration does not load yet
       void retryPendingAnnouncements();
+      dropReplayedRows();
       // Startup scan: reschedule pending WAL entries
-      const pending = wal.readAll().filter(e => e.status === 'pending');
-      for (const entry of pending) {
-        try {
-          RetryScheduler.scheduleRetry(entry);
-        } catch (err) {
-          // orch may not be available; best-effort, but the skipped entry must be traceable
-          eventLogger.logDiagnostic({
-            source: 'QueueDaemon.onStart',
-            message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
-          });
-        }
-      }
+      reschedulePending(false);
     },
     onShutdown: () => {
+      // A delivered entry whose acknowledgement is still waiting must not be rescheduled: one more try to write it
+      asyncDispatcher.retryUnrecorded();
       // Shutdown scan: sync reschedule
-      const pending = wal.readAll().filter(e => e.status === 'pending');
-      for (const entry of pending) {
-        try {
-          RetryScheduler.scheduleRetry(entry, true);
-        } catch (err) {
-          eventLogger.logDiagnostic({
-            source: 'QueueDaemon.onShutdown',
-            message: `could not reschedule pending WAL entry ${entry.id} (${entry.subscriberId}): ${getErrorMessage(err)}`,
-          });
-        }
-      }
+      reschedulePending(true);
     },
   };
 }

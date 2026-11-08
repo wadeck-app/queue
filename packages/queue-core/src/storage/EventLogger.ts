@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { appendLine } from './AppendLine.js';
+import { getErrorMessage } from '../errors.js';
 import { join } from 'node:path';
 import { pruneLogDir, describeRetention, type PruneOptions, type PruneReport } from './LogRetention.js';
 
@@ -80,7 +81,50 @@ export class EventLogger implements QueueLogWriter {
     return new Date().toISOString().slice(0, 10);
   }
 
+  // Records that could not be written since the last one that could: the next record says so in the log itself
+  private lost: { count: number; firstCause: string } | undefined;
+  private readonly reportedCauses = new Set<string>();
+
+  /**
+   * Never throws: a log that cannot be written (the day file is locked by an antivirus, the disk is full) must not take the dispatch, the push or the retry down with it.
+   * The loss is said once per cause on stderr, and the first record that can be written afterwards says in the log how many were lost and why.
+   */
   private write(type: 'dispatch' | 'filter-miss' | 'diagnostic', entry: object): void {
+    try {
+      this.writeRecord(type, entry);
+      this.reportLoss();
+    } catch (err) {
+      this.noteLoss(err);
+    }
+  }
+
+  private noteLoss(err: unknown): void {
+    const cause = getErrorMessage(err);
+    this.lost = { count: (this.lost?.count ?? 0) + 1, firstCause: this.lost?.firstCause ?? cause };
+    if (!this.reportedCauses.has(cause)) {
+      this.reportedCauses.add(cause);
+      try {
+        process.stderr.write(`[queue] EventLogger: could not write to ${this.logsDir}: ${cause}. Records are lost until it can be written; the first record written afterwards says how many. Check that nothing locks the folder and that the disk has room\n`);
+      } catch {
+        // nowhere left to say it
+      }
+    }
+  }
+
+  private reportLoss(): void {
+    if (this.lost === undefined) {
+      return;
+    }
+    const { count, firstCause } = this.lost;
+    this.append(join(this.logsDir, `${this.currentDateStr()}.ndjson`), 'diagnostic', {
+      source: 'EventLogger',
+      level: 'warn',
+      message: `${count} log record(s) could not be written to ${this.logsDir} and are missing from this log (first cause: ${firstCause}). Check that nothing locks the folder (antivirus, indexer) and that the disk has room`,
+    });
+    this.lost = undefined;
+  }
+
+  private writeRecord(type: 'dispatch' | 'filter-miss' | 'diagnostic', entry: object): void {
     this.ensureDir();
     const day = this.currentDateStr();
     const file = join(this.logsDir, `${day}.ndjson`);
@@ -106,7 +150,7 @@ export class EventLogger implements QueueLogWriter {
         lines.push({ type: 'diagnostic', ...line });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       lines.push({ type: 'diagnostic', level: 'warn', message: `Log retention failed: ${msg}. Check that ${this.logsDir} is readable; old logs are not pruned until the next new day.` });
     }
     return lines;

@@ -6,7 +6,7 @@ import { parseRange, parseVersion, satisfies, compareVersions } from './semver.j
 // included, so there is exactly one place that says what version is spoken.
 
 /** The protocol version this SDK speaks and the daemon of the same release implements. */
-export const PROTOCOL_VERSION = '1.5.0';
+export const PROTOCOL_VERSION = '1.6.0';
 /** Daemon protocol versions whose answers this SDK can read. */
 export const SDK_UNDERSTANDS = '^1.0.0';
 /** Client protocol versions the daemon accepts. While a MAJOR is deprecated, both stay listed (e.g. `^1.0.0 || ^2.0.0`). */
@@ -75,6 +75,26 @@ export function checkPushDirection(value: unknown): DirectionCheck {
     return { ok: false, reason: `unknown direction ${unknown.map((item) => JSON.stringify(item)).join(', ')}: the accepted values are ${accepted}` };
   }
   return { ok: true, directions: [...new Set(value.filter(known))] };
+}
+
+/**
+ * The protocol version from which the daemon refuses a push without `payload` (`null` is a payload) and a payload over {@link MAX_PUSH_PAYLOAD_BYTES}, both with
+ * a `rejected` answer that says why and records nothing. Both were already the documented contract of an earlier version for the first, and unbounded for the second.
+ */
+export const PUSH_PAYLOAD_RULES_MIN_VERSION = '1.6.0';
+
+/**
+ * Largest payload of a push, in bytes of its JSON serialisation (1 MiB). The payload is copied into the WAL of every subscriber, and the WAL is rewritten whole on every
+ * write, so it is bounded. An event that carries a big document should carry a reference (a path, an id) to it.
+ */
+export const MAX_PUSH_PAYLOAD_BYTES = 1024 * 1024;
+
+/** The reason a payload of `bytes` bytes is refused, or undefined when it is within {@link MAX_PUSH_PAYLOAD_BYTES}. Used by the SDK before sending and by the daemon. */
+export function payloadSizeProblem(bytes: number): string | undefined {
+  if (bytes <= MAX_PUSH_PAYLOAD_BYTES) {
+    return undefined;
+  }
+  return `the payload is ${bytes} bytes serialised, over the ${MAX_PUSH_PAYLOAD_BYTES} bytes (1 MiB) a push may carry (push protocol ${PUSH_PAYLOAD_RULES_MIN_VERSION}). Fix: send a reference to the data (a file path, an id) instead of the data itself`;
 }
 
 /** The protocol version that reserved the `queue.` event namespace; an older daemon accepts such an event name from any client. */

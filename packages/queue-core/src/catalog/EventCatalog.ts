@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { getErrorMessage } from '../errors.js';
-import { renameReplacing } from '../storage/AtomicRename.js';
+import { renameReplacing, writeFileDurably } from '../storage/AtomicRename.js';
+import { removeStaleTempFiles } from '../storage/StorageDiagnostics.js';
 import { isRecord } from '../isRecord.js';
 
 // The event catalog: what each program that pushes events declares about them (name, description, JSON Schema of the payload...).
@@ -181,18 +182,46 @@ function eventsDir(configDir: string): string {
   return join(configDir, 'events');
 }
 
+// The temp files of the previous naming scheme (.<source>.<pid>.<time>.tmp) are removed once they are this old
+const LEGACY_TEMP = /^\..+\.\d+\.\d+\.tmp$/;
+const LEGACY_TEMP_MAX_AGE_MS = 3600_000;
+
+function removeLegacyTempFiles(dir: string, now: number): void {
+  for (const name of readdirSync(dir).filter((candidate) => LEGACY_TEMP.test(candidate))) {
+    try {
+      if (now - statSync(join(dir, name)).mtimeMs > LEGACY_TEMP_MAX_AGE_MS) {
+        unlinkSync(join(dir, name));
+      }
+    } catch {
+      // gone already, or held open: the next write retries
+    }
+  }
+}
+
 /**
- * Stores a validated declaration, replacing everything the same source declared before. The file is written to a temporary name
- * then renamed, so a reader never sees a half-written declaration.
+ * Stores a validated declaration, replacing everything the same source declared before. The file is written (and flushed to the disk) under a temporary name
+ * then renamed, so a reader never sees a half-written declaration. The temporary file never outlives a failed write, and the leftovers of writers that died
+ * in between (a dead pid, or an old file of the previous naming scheme) are removed first.
  */
 export function writeSourceDeclaration(configDir: string, declaration: SourceDeclaration, now: Date = new Date()): void {
   const dir = eventsDir(configDir);
   mkdirSync(dir, { recursive: true });
   const stored: StoredSource = { source: declaration.source, registeredAt: now.toISOString(), events: declaration.events };
   const target = join(dir, `${declaration.source}.json`);
-  const temporary = join(dir, `.${declaration.source}.${process.pid}.${Date.now()}.tmp`);
-  writeFileSync(temporary, JSON.stringify(stored, null, 2) + '\n', 'utf8');
-  renameReplacing(temporary, target);
+  const temporary = `${target}.${process.pid}.tmp`;
+  removeStaleTempFiles(target);
+  removeLegacyTempFiles(dir, Date.now());
+  try {
+    writeFileDurably(temporary, JSON.stringify(stored, null, 2) + '\n', 0o644);
+    renameReplacing(temporary, target);
+  } catch (error) {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // never written, or already gone: the original error is the one to report
+    }
+    throw error;
+  }
 }
 
 /** Every declared source, sorted by name. A file that cannot be read goes to `problems`. */

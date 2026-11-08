@@ -34,19 +34,30 @@ export class SyncDispatcher {
     private readonly actionTransport?: ActionTransport,
     // Absent: no payload reference is followed in the templates of a cli subscriber
     private readonly refs?: RefResolver,
+    // The clock of the budget, replaceable by tests
+    private readonly now: () => number = Date.now,
   ) {}
 
+  /**
+   * `timeoutMs` is the time of the WHOLE before* event, as the push protocol says: the subscribers run one after the other and share it. Each one gets what is left
+   * (the first one all of it); when nothing is left the chain aborts, naming the subscriber that did not run, instead of starting it with a fresh full timeout.
+   */
   async dispatch(
     subscribers: ResolvedSubscriber[],
     envelope: EventEnvelope,
     timeoutMs: number
   ): Promise<SyncResult> {
     let currentPayload = envelope.payload;
+    const startedAt = this.now();
 
-    for (const sub of subscribers) {
+    for (const [index, sub] of subscribers.entries()) {
       const currentEnvelope: EventEnvelope = { ...envelope, payload: currentPayload };
+      const remainingMs = index === 0 ? timeoutMs : timeoutMs - (this.now() - startedAt);
+      if (remainingMs <= 0) {
+        return this.abort(envelope, sub, `the timeout of ${formatDuration(timeoutMs)} for the whole ${envelope.event} event was used up before subscriber ${sub.subscriberId} could run (the subscribers of a before* event share it, they run one after the other). Fix: raise the timeout of the push, or make the subscribers faster`);
+      }
 
-      const outcome = await runSubscriber(sub, currentEnvelope, timeoutMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport, refs: this.refs });
+      const outcome = await runSubscriber(sub, currentEnvelope, remainingMs, { cli: this.cliTransport, http: this.httpTransport, action: this.actionTransport, refs: this.refs });
       if (outcome.kind === 'config') {
         return this.abort(envelope, sub, outcome.error);
       }

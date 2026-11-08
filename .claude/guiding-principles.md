@@ -10,7 +10,7 @@ An event is not considered dispatched until the WAL entry is updated to `status:
 
 ## WAL and DLQ are mutable state files guarded by a lock, not append-only logs
 
-`wal.ndjson` and `dlq.ndjson` are rewritten whole (temp file + rename) on every write, so two processes writing at once lose entries (measured: ~200 of 400 lost, one writer crashed). Every write goes through `FileLock` (`<file>.lock` holding the writer's pid, retry with backoff, taken over when the pid is dead or the lock is 5 s old), one temp file per pid, and `assertHeld()` right before the rename. Readers never lock. `history/` and the event log are real append-only files (`appendFileSync`) and need none of this.
+`wal.ndjson` and `dlq.ndjson` are rewritten whole (temp file + rename) on every write, so two processes writing at once lose entries (measured: ~200 of 400 lost, one writer crashed). Every write goes through `FileLock` (`<file>.lock` holding the writer's pid, retry with backoff, taken over when the pid is dead or the lock is 5 s old), one temp file per pid, and `assertHeld()` right before the rename. Readers never lock. `history/` and the event log are real append-only files (`appendLine`) and need none of this. The temp file is flushed (fsync) before the rename (a power loss cannot leave a truncated WAL; measured cost: under 1 ms on a 225 KB file), a line that is valid JSON but not an entry (`null`, a number, an object without `id`/`status`/`meta`...) is quarantined to `<file>.corrupt` like an unreadable one, and a push writes all its WAL entries in one rewrite (`Wal.appendMany`: recorded whole or not at all). Only the newest 500 acknowledged entries are kept (and for 24 h): a rewrite of 40,000 acked entries took ~250 ms per write.
 
 ## Config is merged: global first, then project-local
 
@@ -38,7 +38,11 @@ These are the defaults in `ConfigLoader.toResolved()`. Any change to defaults is
 
 ## Idle shutdown: 60s after queue is empty and no active dispatches
 
-`IDLE_TIMEOUT_MS = 60_000` in `queue-cli/src/daemon/QueueDaemon.ts` (the logic it drives lives in queue-core's `createQueueService`). The daemon self-terminates when `wal.pendingCount() === 0 && activeDispatches === 0`. On shutdown, pending WAL entries are rescheduled synchronously via `RetryScheduler.scheduleRetry(entry, true)`.
+`IDLE_TIMEOUT_MS = 60_000` in `queue-cli/src/daemon/QueueDaemon.ts`; the countdown is `IdleShutdown` (injected timers in its tests). The daemon self-terminates when `service.isIdle()` (no pending WAL entry, no active dispatch, no acknowledgement waiting to be written) holds when the countdown fires, not only when it started; every RPC command counts as activity and a running command keeps the daemon alive. On shutdown, pending WAL entries are rescheduled synchronously via `RetryScheduler.scheduleRetry(entry, true)`.
+
+## Retries are orch jobs; a retry that cannot be scheduled is visible
+
+A failed delivery with tries left creates a one-shot orch job (`orch add --once <id> --delay <d> --command "queue retry --event <walId>"`; orch requires the id and `--command`, the earlier call without them exited 4 and was never seen). When orch is missing or refuses, the entry becomes `failed` with the reason and the command to run by hand in its `lastError`, and the cause is logged once. `queue retry` of an entry that is being delivered is refused (one delivery at a time per entry). An entry is "stuck" (`give-up-stuck`) 2 h after the later of its creation and its `retryDueAt`.
 
 ## The relay client starts on demand and stops itself
 

@@ -3,6 +3,7 @@ import type { ShutdownReason } from '@wadeck-app/singleton-daemon-kit';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { createQueueService, getErrorMessage, getQueueProtocolInfo, resolveQueueDaemonPort } from '@wadeck-app/queue-core';
 import { registerWithAppCore } from './AppCoreRegistration.js';
+import { IdleShutdown } from './IdleShutdown.js';
 import { createBuiltinActionRegistry } from '../actions/builtinActions.js';
 
 export const IDLE_TIMEOUT_MS = 60_000;
@@ -17,34 +18,20 @@ export interface AppCoreModuleOptions { manifestPath: string; }
 export async function startDaemon(configDir: string, options?: { appCoreModule?: AppCoreModuleOptions; port?: number; version?: string }): Promise<void> {
   // explicit option (tests: 0 = any free one) > QUEUE_DAEMON_PORT > 47910; an invalid QUEUE_DAEMON_PORT throws before anything starts, never falls back
   const port = resolveQueueDaemonPort(options?.port);
-  let idleCountdown: ReturnType<typeof setTimeout> | null = null;
   let daemonHandle: Awaited<ReturnType<typeof createDaemon>> | null = null;
 
   // The action plugins this build ships (emit, plus the ones in builtinActions.ts): a type: action subscriber naming any other fails alone, to the DLQ, with the list of the available ones
-  const service = createQueueService(configDir, { onActivity: resetIdleCountdown, registryDir: defaultRegistryDir(process.env), actions: createBuiltinActionRegistry() });
+  const service = createQueueService(configDir, { onActivity: () => idleShutdown.noteActivity(), registryDir: defaultRegistryDir(process.env), actions: createBuiltinActionRegistry() });
 
-  function resetIdleCountdown(): void {
-    if (idleCountdown) {
-      clearTimeout(idleCountdown);
-      idleCountdown = null;
-    }
-  }
-
-  function maybeStartIdleCountdown(): void {
-    if (service.isIdle()) {
-      if (!idleCountdown) {
-        idleCountdown = setTimeout(() => {
-          daemonHandle?.stop('idle' as ShutdownReason).catch((err: unknown) => {
-            service.eventLogger.logDiagnostic({ source: 'QueueDaemon.idleShutdown', message: `idle stop failed: ${getErrorMessage(err)}` });
-          });
-        }, IDLE_TIMEOUT_MS);
-      }
-    } else {
-      resetIdleCountdown();
-    }
-  }
-
-  const idleCheckInterval = setInterval(maybeStartIdleCountdown, IDLE_CHECK_INTERVAL_MS);
+  // Every command counts as activity, not only a push, and the stop re-checks that the service is still idle when the countdown fires
+  const idleShutdown = new IdleShutdown({
+    isIdle: () => service.isIdle(),
+    stop: () => daemonHandle?.stop('idle' as ShutdownReason),
+    onStopError: (err) => service.eventLogger.logDiagnostic({ source: 'QueueDaemon.idleShutdown', message: `idle stop failed: ${getErrorMessage(err)}` }),
+    timeoutMs: IDLE_TIMEOUT_MS,
+    checkIntervalMs: IDLE_CHECK_INTERVAL_MS,
+  });
+  idleShutdown.start();
 
   daemonHandle = await createDaemon({
     configDir,
@@ -54,7 +41,7 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
     ...(options?.version !== undefined && { appVersion: options.version }),
     // GET /version tells the SDK clients which push protocol this daemon speaks and which client versions it accepts
     versionExtra: () => ({ queueProtocol: getQueueProtocolInfo() }),
-    commands: service.commands,
+    commands: idleShutdown.wrap(service.commands),
     hooks: {
       onStart: (_port: number) => {
         service.onStart();
@@ -67,8 +54,7 @@ export async function startDaemon(configDir: string, options?: { appCoreModule?:
         }
       },
       onShutdown: (_reason: ShutdownReason) => {
-        clearInterval(idleCheckInterval);
-        resetIdleCountdown();
+        idleShutdown.dispose();
         service.onShutdown();
       },
     },

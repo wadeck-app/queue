@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DlqStore, type DlqEntry } from './DlqStore.js';
@@ -8,10 +8,11 @@ import { Wal } from './Wal.js';
 // File modes cannot be read back on Windows, so the request itself is checked: every temp file and every .corrupt file is created with mode 0600
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  return { ...actual, writeFileSync: vi.fn(actual.writeFileSync), appendFileSync: vi.fn(actual.appendFileSync) };
+  return { ...actual, openSync: vi.fn(actual.openSync), writeFileSync: vi.fn(actual.writeFileSync), appendFileSync: vi.fn(actual.appendFileSync) };
 });
 
-const writeMock = vi.mocked(writeFileSync);
+// The temp files are opened by writeFileDurably (open, write, fsync), the mode is the third argument of openSync
+const writeMock = vi.mocked(openSync);
 const appendMock = vi.mocked(appendFileSync);
 
 const row: DlqEntry = { id: 'a', event: 'e', payload: {}, meta: { cwd: '/tmp' }, subscriberId: 's', attempts: 1, lastError: 'x', movedAt: '2026-10-19T10:00:00.000Z' };
@@ -29,8 +30,11 @@ describe('private modes of the queue temp and quarantine files', () => {
 
   const modeOf = (mock: typeof writeMock | typeof appendMock, suffix: string): unknown => {
     const call = mock.mock.calls.find(c => String(c[0]).endsWith(suffix));
-    if (call === undefined) throw new Error(`no call wrote a file ending with ${suffix}`);
-    return (call[2] as { mode?: number } | undefined)?.mode;
+    if (call === undefined) {
+      throw new Error(`no call wrote a file ending with ${suffix}`);
+    }
+    const options = call[2] as { mode?: number } | number | undefined;
+    return typeof options === 'number' ? options : options?.mode;
   };
 
   it('the DLQ temp file is written 0600, like the WAL one', () => {

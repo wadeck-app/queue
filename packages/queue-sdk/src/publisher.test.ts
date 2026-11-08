@@ -200,6 +200,30 @@ describe('failures of a running daemon', () => {
     expect(h.failures).toHaveLength(1);
   });
 
+  // The daemon answered (it handled the request); only its answer is over the 1 MiB the SDK reads. It used to be reported as "the connection broke"
+  it('a push answer over 1 MiB is unknown, says the request was handled and only the answer was lost, names the size, and is not retried', async () => {
+    const h = await setup();
+    const huge = JSON.stringify({ ok: true, result: { status: 'dispatched', eventId: 'e', result: 'x'.repeat(1_100_000) } });
+    h.fake!.script.push({ kind: 'http', status: 200, body: huge });
+    const result = await h.publisher.publishAndWait('beforeBig', {});
+    expect(result.status).toBe('unknown');
+    expect(result.reason).toContain('1 MiB');
+    expect(result.reason).toContain('answer');
+    expect(result.reason).not.toContain('connection broke');
+    expect(h.fake!.pushes()).toHaveLength(1);
+    expect(h.failures).toHaveLength(1);
+    expect(h.failures[0]).toMatchObject({ kind: 'unknown-outcome', outcome: 'unknown' });
+  });
+
+  it('drops a payload over 1 MiB before sending anything, saying the size and the limit', async () => {
+    const h = await setup();
+    const result = await h.publisher.publishAndWait('big', 'x'.repeat(1_100_000));
+    expect(result.status).toBe('dropped');
+    expect(result.reason).toContain('1 MiB');
+    expect(h.fake!.pushes()).toHaveLength(0);
+    expect(h.failures).toHaveLength(1);
+  });
+
   it('re-reads the token after a 401 and retries once', async () => {
     const h = await setup();
     const fake = h.fake!;

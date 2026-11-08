@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { renameReplacing } from './AtomicRename.js';
+import { existsSync, mkdirSync } from 'node:fs';
+import { renameReplacing, writeFileDurably } from './AtomicRename.js';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
 import { FileLock } from './FileLock.js';
-import { quarantineCorruptLines, removeStaleTempFiles, stderrDiagnosticSink, type StorageDiagnosticSink } from './StorageDiagnostics.js';
+import { isPlainObject, parseQueueFile, quarantineCorruptLines, removeStaleTempFiles, stderrDiagnosticSink, type StorageDiagnosticSink } from './StorageDiagnostics.js';
 import type { DlqAddedInfo } from '../dlqEvents.js';
 
 export interface DlqEntry {
@@ -18,10 +18,25 @@ export interface DlqEntry {
   /**
    * Whether the queue.dlq.added event of this row still has to be emitted. `pending`: the emit did not succeed (an invalid subscribers.yml, a refused push), the daemon
    * tries again at its start and after the next successful push; `skipped`: deliberately not emitted (the hop cap), the diagnostic names the entry. Absent: emitted.
+   * `unannounceable`: it can never be emitted (the project of the entry is not registered any more), `announceReason` says why.
    */
-  announce?: 'pending' | 'skipped';
+  announce?: 'pending' | 'skipped' | 'unannounceable';
+  /** Why the row is `unannounceable` (its project is not registered any more): the daemon does not try again, the row stays replayable. */
+  announceReason?: string;
   /** The facts the event is built from later (the reason, exit code and target of the failure): present while `announce` is. */
   announceInfo?: DlqAddedInfo;
+}
+
+/** The minimal shape every reader relies on; a line of another shape is quarantined like an unreadable one. */
+function isDlqEntry(value: unknown): value is DlqEntry {
+  return isPlainObject(value)
+    && typeof value.id === 'string' && value.id !== ''
+    && typeof value.event === 'string'
+    && typeof value.subscriberId === 'string'
+    && typeof value.attempts === 'number'
+    && typeof value.lastError === 'string'
+    && typeof value.movedAt === 'string'
+    && isPlainObject(value.meta);
 }
 
 export interface DlqAppendResult {
@@ -65,7 +80,7 @@ export class DlqStore {
     // One temp file per process: a shared name made concurrent writers rename each other's file away
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
     // 0600 like the WAL: the rows carry push payloads
-    writeFileSync(tmpPath, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length > 0 ? '\n' : ''), { encoding: 'utf-8', mode: 0o600 });
+    writeFileDurably(tmpPath, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length > 0 ? '\n' : ''), 0o600);
     held.assertHeld();
     renameReplacing(tmpPath, this.filePath);
   }
@@ -105,8 +120,8 @@ export class DlqStore {
     return this.readAll().find((entry) => entry.id === id);
   }
 
-  /** Sets the mark of a row (`undefined` clears it together with its facts) in one write under the lock. False when the row is not there: nothing is written. */
-  setAnnounce(id: string, announce: 'pending' | 'skipped' | undefined): boolean {
+  /** Sets the mark of a row (`undefined` clears it together with its facts; `reason` goes with `unannounceable`) in one write under the lock. False when the row is not there: nothing is written. */
+  setAnnounce(id: string, announce: 'pending' | 'skipped' | 'unannounceable' | undefined, reason?: string): boolean {
     this.ensureDir();
     return this.lock.withLock((held) => {
       const entries = this.readForRewrite();
@@ -114,8 +129,8 @@ export class DlqStore {
       if (index === -1) {
         return false;
       }
-      const { announce: _previous, announceInfo, ...rest } = entries[index] as DlqEntry;
-      entries[index] = announce === undefined ? rest : { ...rest, announce, ...(announceInfo !== undefined && { announceInfo }) };
+      const { announce: _previous, announceReason: _previousReason, announceInfo, ...rest } = entries[index] as DlqEntry;
+      entries[index] = announce === undefined ? rest : { ...rest, announce, ...(announceInfo !== undefined && { announceInfo }), ...(reason !== undefined && { announceReason: reason }) };
       this.write(entries, held);
       return true;
     });
@@ -138,23 +153,7 @@ export class DlqStore {
   }
 
   private parse(): { entries: DlqEntry[]; corrupt: string[] } {
-    const entries: DlqEntry[] = [];
-    const corrupt: string[] = [];
-    if (!existsSync(this.filePath)) {
-      return { entries, corrupt };
-    }
-    for (const line of readFileSync(this.filePath, 'utf-8').split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-      try {
-        entries.push(JSON.parse(trimmed) as DlqEntry);
-      } catch {
-        corrupt.push(trimmed);
-      }
-    }
-    return { entries, corrupt };
+    return parseQueueFile(this.filePath, isDlqEntry);
   }
 
   /** The rows to rewrite the file from, under the lock: the unreadable lines the rewrite is about to drop are kept aside and reported first. */

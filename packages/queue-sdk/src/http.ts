@@ -23,6 +23,8 @@ export type HttpOutcome =
       /** True once the TCP connection was established: the daemon may have received the request. */
       connected: boolean;
       timedOut: boolean;
+      /** The cap in bytes when the failure is an answer larger than it: the daemon did answer, only the answer was not read. */
+      responseTooLarge?: number;
     };
 
 const DEFAULT_MAX_BYTES = 1024 * 1024;
@@ -41,8 +43,8 @@ export function loopbackRequest(options: LoopbackRequest): Promise<HttpOutcome> 
         resolve(outcome);
       }
     };
-    const fail = (message: string, code?: string): void => {
-      settle({ kind: 'failure', message, ...(code !== undefined && { code }), connected, timedOut });
+    const fail = (message: string, code?: string, responseTooLarge?: number): void => {
+      settle({ kind: 'failure', message, ...(code !== undefined && { code }), connected, timedOut, ...(responseTooLarge !== undefined && { responseTooLarge }) });
     };
     const headers = { ...options.headers, ...(options.body !== undefined && { 'Content-Length': String(Buffer.byteLength(options.body)) }) };
     const req = request({ host: '127.0.0.1', port: options.port, method: options.method, path: options.path, headers, agent: false }, (res) => {
@@ -51,7 +53,7 @@ export function loopbackRequest(options: LoopbackRequest): Promise<HttpOutcome> 
       res.on('data', (chunk: Buffer) => {
         size += chunk.length;
         if (size > maxBytes) {
-          fail(`the response is larger than ${maxBytes} bytes`);
+          fail(`the response is larger than ${maxBytes} bytes`, undefined, maxBytes);
           req.destroy();
           return;
         }

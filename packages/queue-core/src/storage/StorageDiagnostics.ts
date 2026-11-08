@@ -1,5 +1,6 @@
 import { appendFileSync, chmodSync, existsSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { getErrorMessage } from '../errors.js';
 
 /**
  * What the WAL and the DLQ have to tell: the daemon passes EventLogger.logDiagnostic (its stdio is ignored, so a stderr line is lost); this shape is a subset of
@@ -18,6 +19,40 @@ export type StorageDiagnosticSink = (diagnostic: StorageDiagnostic) => void;
 export const stderrDiagnosticSink: StorageDiagnosticSink = (diagnostic) => {
   process.stderr.write(`[queue] ${diagnostic.source}: ${diagnostic.message}\n`);
 };
+
+/**
+ * Reads an ndjson queue file: a line that is not valid JSON, or is valid JSON that `isEntry` refuses (`null`, a number, an array, an object without the fields
+ * every reader relies on), comes back raw in `corrupt` instead of crashing every later read and append. A missing file is empty.
+ */
+export function parseQueueFile<T>(file: string, isEntry: (value: unknown) => value is T): { entries: T[]; corrupt: string[] } {
+  const entries: T[] = [];
+  const corrupt: string[] = [];
+  if (!existsSync(file)) {
+    return { entries, corrupt };
+  }
+  for (const line of readFileSync(file, 'utf-8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      const value: unknown = JSON.parse(trimmed);
+      if (isEntry(value)) {
+        entries.push(value);
+      } else {
+        corrupt.push(trimmed);
+      }
+    } catch {
+      corrupt.push(trimmed);
+    }
+  }
+  return { entries, corrupt };
+}
+
+/** A plain JSON object (not null, not an array). */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 const SAMPLE_CHARS = 80;
 // A temp file of a crashed writer is removed once it is this old, even if its pid has been reused by another program
@@ -49,11 +84,11 @@ export function quarantineCorruptLines(file: string, lines: string[], source: st
       source,
       level: 'warn',
       message:
-        `${fresh.length} unreadable line(s) found in ${file} (not valid JSON, most likely a write cut short by a crash) were moved to ${corruptPath} before the file was rewritten. ` +
+        `${fresh.length} unreadable line(s) found in ${file} (not valid JSON, or JSON that is not a queue entry: most likely a write cut short by a crash or a hand edit; they are kept exactly as they were) were moved to ${corruptPath} before the file was rewritten. ` +
         `First: ${fresh[0]!.slice(0, SAMPLE_CHARS)}. Inspect them there and re-add by hand what is still needed.`,
     });
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = getErrorMessage(err);
     sink({
       source,
       level: 'warn',

@@ -308,6 +308,11 @@ export function createQueuePublisherWithDeps(options: QueuePublisherOptions, dep
         if (!outcome.connected) {
           return ex.fail('unexpected', `could not reach the daemon on port ${daemon.port}: ${outcome.message}`);
         }
+        // The daemon handled the request and answered; only the answer is over what the SDK reads. Repeating the request would repeat its effect: no retry
+        if (outcome.responseTooLarge !== undefined) {
+          const limit = outcome.responseTooLarge >= 1024 * 1024 ? `${outcome.responseTooLarge / (1024 * 1024)} MiB` : `${outcome.responseTooLarge} bytes`;
+          return ex.fail('unknown-outcome', `the daemon's answer is larger than the ${limit} the SDK reads, so it was not read: the request reached the daemon and was handled (typically a before* event whose subscribers returned a very large payload), only its answer is lost. It is not retried, it would run again. Fix: make the subscribers return less data`, 'unknown');
+        }
         if (ex.retryAmbiguous && !ambiguousRetried) {
           ambiguousRetried = true;
           continue;
