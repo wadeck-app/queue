@@ -30,7 +30,8 @@ function put(record: WaiterRecord, mtimeMs = T0, text?: string): string {
   return path;
 }
 
-const options = (extra: Partial<WaiterScanOptions> = {}): WaiterScanOptions => ({ now: () => T0, isAlive: () => true, ...extra });
+// A frozen monotonic clock by default: the 100 ms time box of the scan must never decide a test (a loaded machine reads 201 files slowly); the time box tests pass their own clock
+const options = (extra: Partial<WaiterScanOptions> = {}): WaiterScanOptions => ({ now: () => T0, isAlive: () => true, clock: () => 0, ...extra });
 
 describe('listLiveWaiters', () => {
   it('lists the live waiters with their last heartbeat', () => {
@@ -291,5 +292,13 @@ describe('listLiveWaiters', () => {
     expect(scan.problems[0]).toContain(waitersDir(configDir));
     expect(scan.problems[0]).toContain('EACCES');
     expect(readdirSync(waitersDir(configDir))).toEqual([]);
+  });
+
+  it('a folder that cannot be listed is flagged `unreadable` (a caller that must not show an empty list for it throws); a missing folder and a readable one are not', () => {
+    const fs: WaiterFs = { ...defaultWaiterFs, readdir: () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); } };
+    expect(listLiveWaiters(configDir, options({ fs })).unreadable).toEqual(expect.stringContaining('EACCES'));
+    expect(listLiveWaiters(configDir, options()).unreadable).toBeUndefined();
+    rmSync(waitersDir(configDir), { recursive: true, force: true });
+    expect(listLiveWaiters(configDir, options()).unreadable).toBeUndefined();
   });
 });

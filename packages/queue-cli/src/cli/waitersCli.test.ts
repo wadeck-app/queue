@@ -66,6 +66,21 @@ describe('queue waiters', () => {
     expect(out.stdout).not.toContain('(stale)');
   });
 
+  it('shows the contact: "pipe" for a wait the daemon wakes, "polling only" for one it cannot', async () => {
+    registryFor(100).register(input('a.piped', { contact: { kind: 'pipe', path: '/c/waiters/wake-0123456789abcdef.sock' } }));
+    registryFor(200).register(input('b.polled'));
+    const out = await run([]);
+    const piped = out.stdout.split('\n').find((line) => line.includes('a.piped'))!;
+    const polled = out.stdout.split('\n').find((line) => line.includes('b.polled'))!;
+    expect(piped).toMatch(/\bpipe\b/);
+    expect(piped).not.toContain('polling only');
+    expect(polled).toContain('polling only');
+    const json = JSON.parse((await run(['--json'])).stdout) as Array<{ name: string; contact: string }>;
+    expect(json.map((row) => [row.name, row.contact]).sort()).toEqual([['a.piped', 'pipe'], ['b.polled', 'none']]);
+    // The path is not repeated in the list: it is derived from the name
+    expect(out.stdout).not.toContain('wake-0123456789abcdef');
+  });
+
   it('--json is an array of waiters with every field, a numeric-free last seen as ISO, and the stale and anonymous flags', async () => {
     registryFor(100).register(input('a.b', { whens: ['payload.x=1'], label: 'L' }));
     const parsed = JSON.parse((await run(['--json'])).stdout) as Array<Record<string, unknown>>;

@@ -23,7 +23,7 @@ Usage:
   queue waiters --history [--since <duration>] [--name <glob>] [--outcome <outcome>] [--limit <N>] [--json]
 
 queue waiters: the waits running now ("queue wait <event> --name <who>.<what>", "queue wait ci"): name, what they wait for (events and --when filters),
-label (the commit of a CI wait), how the daemon can wake them (polling only), since when, last heartbeat and its process. A wait whose heartbeat is
+label (the commit of a CI wait), how the daemon can wake them (pipe = woken the moment an event is pushed; polling only = no pipe, the wait reads the history every 500 ms), since when, last heartbeat and its process. A wait whose heartbeat is
 more than 30 s late is marked (stale); after 60 s, or when its process is gone, it is no longer listed. A wait started without --name is called anon.<pid>.
   --json             An array, one object per wait (name, anonymous, events, whens, label, contact, pid, cwd, since, startedAt, lastSeen, stale)
 

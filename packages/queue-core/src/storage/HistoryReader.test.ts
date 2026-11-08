@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, utimesSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, utimesSync, statSync, appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HistoryReader } from './HistoryReader.js';
@@ -328,12 +328,28 @@ describe('HistoryReader', () => {
       const reader = new HistoryReader(historyDir);
       reader.read();
 
-      // Corrupt the file without touching mtime: if read() re-parsed it, this would throw.
-      writeFileSync(filePath, 'not json\n', 'utf-8');
+      // Corrupt the file without touching mtime OR size: if read() re-parsed it, ev-1 would be gone.
+      const original = readFileSync(filePath, 'utf-8');
+      writeFileSync(filePath, 'x'.repeat(original.length - 1) + '\n', 'utf-8');
       utimesSync(filePath, originalMtime, originalMtime);
 
       expect(() => reader.read()).not.toThrow();
       expect(reader.read()[0]).toMatchObject({ eventId: 'ev-1' });
+    });
+
+    it('re-reads a file that grew although its mtime is the same (two appends inside one timestamp tick): a wake makes this window real', () => {
+      const filePath = join(historyDir, '2026-01-01.ndjson');
+      writeDay(historyDir, '2026-01-01', [
+        { ts: '2026-01-01T10:00:00.000Z', type: 'trigger', eventId: 'ev-1', event: 'onA', matchedCount: 0, totalCount: 0 },
+      ]);
+      const sameMtime = statSync(filePath).mtime;
+      const reader = new HistoryReader(historyDir);
+      expect(reader.read().map((e) => e.eventId)).toEqual(['ev-1']);
+
+      appendFileSync(filePath, JSON.stringify({ ts: '2026-01-01T10:00:00.001Z', type: 'trigger', eventId: 'ev-2', event: 'onA', matchedCount: 0, totalCount: 0 }) + '\n', 'utf-8');
+      utimesSync(filePath, sameMtime, sameMtime);
+
+      expect(reader.read().map((e) => e.eventId).sort()).toEqual(['ev-1', 'ev-2']);
     });
 
     it('re-reads a file once its mtime changes', () => {

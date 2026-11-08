@@ -1,5 +1,5 @@
 import { DEFAULT_HISTORY_LIMIT, readWaiterHistory, type WaitRow, type WaitRowOutcome } from '@wadeck-app/queue-core';
-import { printable, span, sweepWaiters, warningsOf, whensText, isAnonymous, type WaitersDeps } from './waiters.js';
+import { printable, span, warningsOf, whensText, isAnonymous, type WaitersDeps } from './waiters.js';
 import type { ParsedWaiterHistoryQuery } from './waitersQuery.js';
 
 /** One wait of the history, as the Waiters page shows it. `to`, `durationMs`, `event` and `eventId` are absent (not empty) when the wait has none. */
@@ -17,7 +17,7 @@ export interface WaiterHistoryEntry {
   cwd: string;
   /** ISO: when the wait registered. */
   from: string;
-  /** ISO: when it ended (a `lost` wait: its last heartbeat). Absent while waiting and for a lost wait nobody has swept yet. */
+  /** ISO: when it ended (a `lost` wait: its last heartbeat). Absent while waiting and for a lost wait whose record is gone. */
   to?: string;
   durationMs?: number;
   /** `5m 3s`; the time so far for a wait still waiting; `unknown` for a lost wait with no end time. */
@@ -34,7 +34,6 @@ export interface WaiterHistoryPage {
   total: number;
   limit: number;
   offset: number;
-  sweptText?: string;
   /** Lines and files that could not be read, one text. Absent when everything was readable. */
   warningText?: string;
 }
@@ -73,11 +72,10 @@ function entry(wait: WaitRow, nowMs: number): WaiterHistoryEntry {
 
 /**
  * The waits that were, newest first: who waited, from when to when, how it ended, read from `waiters/history/<day>.ndjson` (no daemon needed). The waits that are over are
- * swept first (recorded as lost), like `queue waiters --history`. Paged like the History route (`limit`, `offset` or `page`, answered with `total`, `limit`, `offset`).
+ * READ ONLY, like {@link getWaiters}: a wait that is over and not yet swept shows as `lost` (ending at its last heartbeat when its record is still there) without anything being written. Paged like the History route (`limit`, `offset` or `page`, answered with `total`, `limit`, `offset`).
  */
 export function listWaiterHistory(configDir: string, query: ParsedWaiterHistoryQuery, deps: WaitersDeps = {}): WaiterHistoryPage {
   const now = deps.now ?? Date.now;
-  const swept = sweepWaiters(configDir, deps);
   const limit = query.pagination.limit ?? DEFAULT_HISTORY_LIMIT;
   const offset = query.pagination.page !== undefined ? query.pagination.page * limit : (query.pagination.offset ?? 0);
   const read = readWaiterHistory(configDir, {
@@ -90,17 +88,19 @@ export function listWaiterHistory(configDir: string, query: ParsedWaiterHistoryQ
     // The reader keeps the newest `limit`: ask for all of them to count the total, this route slices
     limit: Number.MAX_SAFE_INTEGER,
   });
+  if (read.waitersUnreadable !== undefined) {
+    throw new Error(read.waitersUnreadable);
+  }
   const problems = [...read.problems];
   if (read.skippedLines > 0) {
     problems.push(`${read.skippedLines} line${read.skippedLines === 1 ? '' : 's'} of the waits history could not be read (torn or not a record) and ${read.skippedLines === 1 ? 'was' : 'were'} skipped.`);
   }
-  const warningText = warningsOf(swept.problems, problems);
+  const warningText = warningsOf(problems);
   return {
     entries: read.rows.slice(offset, offset + limit).map((wait) => entry(wait, now())),
     total: read.rows.length,
     limit,
     offset,
-    ...(swept.sweptText !== undefined && { sweptText: swept.sweptText }),
     ...(warningText !== undefined && { warningText }),
   };
 }

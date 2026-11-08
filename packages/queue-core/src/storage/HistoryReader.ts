@@ -192,7 +192,7 @@ export class HistoryReader {
   // Keyed by filename, so `queue history --follow` -- which holds one reader across many
   // polls -- only re-reads/re-parses a day file once its mtime actually changes, instead of
   // paying full directory I/O + JSON.parse on every tick as history grows.
-  private readonly fileCache = new Map<string, { mtimeMs: number; records: Record<string, unknown>[]; malformed?: MalformedHistoryFile }>();
+  private readonly fileCache = new Map<string, { mtimeMs: number; size: number; records: Record<string, unknown>[]; malformed?: MalformedHistoryFile }>();
   // What the operations met so far, per file: a line that is not valid JSON is skipped (it used to make every read throw, for as long as the file lived) and listed here
   private readonly malformedByFile = new Map<string, MalformedHistoryFile>();
 
@@ -594,10 +594,14 @@ export class HistoryReader {
   private readFileRecords(file: string): Record<string, unknown>[] {
     const filePath = join(this.historyDir, file);
     let mtimeMs: number;
+    let size: number;
     try {
       // Rounded: utimes/stat round-trips can shift sub-millisecond precision on some
       // filesystems even with no real content change, which would defeat the cache.
-      mtimeMs = Math.round(statSync(filePath).mtimeMs);
+      const stat = statSync(filePath);
+      mtimeMs = Math.round(stat.mtimeMs);
+      // The size is part of the key: an append inside the same timestamp tick (coarse clocks) keeps the mtime, never the size. A wait that is woken re-reads right after the append.
+      size = stat.size;
     } catch (err) {
       // Deleted by the history retention since the directory was listed: see readDayFile
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -607,7 +611,7 @@ export class HistoryReader {
       throw err;
     }
     const cached = this.fileCache.get(file);
-    if (cached && cached.mtimeMs === mtimeMs) {
+    if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
       this.setMalformed(file, cached.malformed);
       return cached.records;
     }
@@ -626,7 +630,7 @@ export class HistoryReader {
       }
     }
     const malformed = tally.files.get(file);
-    this.fileCache.set(file, { mtimeMs, records, ...(malformed !== undefined && { malformed }) });
+    this.fileCache.set(file, { mtimeMs, size, records, ...(malformed !== undefined && { malformed }) });
     this.setMalformed(file, malformed);
     return records;
   }

@@ -35,3 +35,17 @@ export function errorCode(error: unknown): string | undefined {
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/** A heartbeat older than this (two periods) is shown as stale by every list (`queue waiters`, the dashboard): the wait may be stalled. It is dropped after {@link WAITER_TTL_MS}. */
+export const WAITER_STALE_AFTER_MS = 2 * WAITER_HEARTBEAT_MS;
+
+/** A wait started without `--name` is called `anon.<pid>`. */
+export const ANONYMOUS_WAITER_PREFIX = 'anon.';
+
+export function anonymousWaiterName(pid: number): string {
+  return `${ANONYMOUS_WAITER_PREFIX}${pid}`;
+}
+
+export function isAnonymousWaiterName(name: string): boolean {
+  return name.startsWith(ANONYMOUS_WAITER_PREFIX);
+}

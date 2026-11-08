@@ -62,6 +62,14 @@ describe('register', () => {
     expect(registration.takeover).toBeUndefined();
   });
 
+  it('writes the contact the wait gives (the pipe it listens on) into the file and the start record', () => {
+    const contact = { kind: 'pipe' as const, path: '/c/waiters/wake-0123456789abcdef.sock' };
+    registryFor(100).register({ ...input, contact });
+    const parsed = parseWaiterRecord(readFileSync(fileOf(), 'utf8'), 'waiter-w-agent-wake.ab12cd34.json');
+    expect(parsed.ok && parsed.record.contact).toEqual(contact);
+    expect(historyLines()[0]).toMatchObject({ kind: 'start', contact });
+  });
+
   it('writes the start record of the waits history, once', () => {
     registryFor(100).register(input);
     expect(historyLines()).toEqual([

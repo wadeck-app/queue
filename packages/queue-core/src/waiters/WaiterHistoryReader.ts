@@ -1,13 +1,14 @@
 import { join } from 'node:path';
 import { parseLogDay } from '../storage/LogRetention.js';
-import { waiterHistoryDir, type WaiterOutcome } from './WaiterHistory.js';
+import { waiterHistoryDir, waitersDir, type WaiterOutcome } from './WaiterHistory.js';
 import { defaultWaiterFs, errorCode, errorText, type WaiterFs } from './WaiterLiveness.js';
 import { listLiveWaiters } from './WaiterScan.js';
-import type { WaiterRecord } from './WaiterRecord.js';
+import { parseWaiterContact, parseWaiterRecord, type WaiterRecord } from './WaiterRecord.js';
+import { waiterFileName, waiterNameProblem } from './waiterName.js';
 
 export type WaitRowOutcome = WaiterOutcome | 'waiting';
 
-/** One wait: who, from when to when, how it ended. `waiting`: still running. A `lost` wait whose sweep has not run yet has no `endedAt`. */
+/** One wait: who, from when to when, how it ended. `waiting`: still running. A `lost` wait whose sweep has not run yet ends at its last heartbeat when its record is still there, otherwise it has no `endedAt`. */
 export type WaitRow = Omit<WaiterRecord, 'v'> & {
   endedAt?: string;
   durationMs?: number;
@@ -36,11 +37,16 @@ export interface WaiterHistoryRead {
   skippedLines: number;
   /** Files that could not be read, with the path. */
   problems: string[];
+  /** Set when the folder of the live waiters exists but cannot be listed: the live/lost split below is then not trustworthy (see {@link listLiveWaiters}). */
+  waitersUnreadable?: string;
 }
 
 export const DEFAULT_WAITER_HISTORY_LIMIT = 100;
 /** The day files read at most in one call. */
 export const MAX_HISTORY_DAY_FILES = 100;
+
+/** At most this many stale record files are read to give a lost wait its last heartbeat; the others are shown without an end time. */
+const MAX_LOST_LOOKUPS = 50;
 
 const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.ndjson$/;
 
@@ -61,10 +67,10 @@ function stringArray(value: unknown): value is string[] {
 /** A `start` line as a row, undefined when it lacks what a row needs. */
 function toStart(line: Fields): Omit<WaiterRecord, 'v'> | undefined {
   const { id, name, events, whens, label, contact, pid, cwd, since, startedAt } = line;
-  if (typeof id !== 'string' || typeof name !== 'string' || !stringArray(events) || !stringArray(whens) || typeof label !== 'string' || !isFields(contact) || typeof pid !== 'number' || typeof cwd !== 'string' || typeof since !== 'string' || typeof startedAt !== 'string') {
+  if (typeof id !== 'string' || typeof name !== 'string' || !stringArray(events) || !stringArray(whens) || typeof label !== 'string' || parseWaiterContact(contact) === undefined || typeof pid !== 'number' || typeof cwd !== 'string' || typeof since !== 'string' || typeof startedAt !== 'string') {
     return undefined;
   }
-  return { id, name, events, whens, label, contact: { kind: contact['kind'] === 'pipe' ? 'pipe' : 'none' }, pid, cwd, since, startedAt };
+  return { id, name, events, whens, label, contact: parseWaiterContact(contact)!, pid, cwd, since, startedAt };
 }
 
 interface EndLine {
@@ -177,13 +183,42 @@ export function readWaiterHistory(configDir: string, options: ReadWaiterHistoryO
     }
   }
 
-  const live = new Set(listLiveWaiters(configDir, { now, ...(options.isAlive !== undefined && { isAlive: options.isAlive }), fs: options.fs }).waiters.map((waiter) => waiter.id));
+  const scan = listLiveWaiters(configDir, { now, ...(options.isAlive !== undefined && { isAlive: options.isAlive }), fs: options.fs });
+  result.problems.push(...scan.problems);
+  if (scan.unreadable !== undefined) {
+    result.waitersUnreadable = scan.unreadable;
+  }
+  const live = new Set(scan.waiters.map((waiter) => waiter.id));
+  // A wait nobody has swept yet (no `end`, not live): its record, if it is still there and is its own (same id), says when it last gave a sign of life. Read only, nothing is written
+  let lostLookups = 0;
+  const lastHeartbeatOf = (start: Omit<WaiterRecord, 'v'>): number | undefined => {
+    if (waiterNameProblem(start.name) !== undefined || lostLookups >= MAX_LOST_LOOKUPS) {
+      return undefined;
+    }
+    lostLookups++;
+    const fileName = waiterFileName(start.name);
+    const path = join(waitersDir(configDir), fileName);
+    try {
+      const stat = fs.stat(path);
+      const parsed = parseWaiterRecord(fs.readFile(path), fileName);
+      return parsed.ok && parsed.record.id === start.id ? stat.mtimeMs : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const matchesName = options.name === undefined ? undefined : nameMatcher(options.name);
   const limit = options.limit ?? DEFAULT_WAITER_HISTORY_LIMIT;
   const rows: WaitRow[] = [];
   for (const start of starts.values()) {
     const end = ends.get(start.id);
     const row: WaitRow = { ...start, ...(end !== undefined ? end : {}), outcome: end?.outcome ?? (live.has(start.id) ? 'waiting' : 'lost') };
+    if (end === undefined && row.outcome === 'lost') {
+      const heartbeat = lastHeartbeatOf(start);
+      if (heartbeat !== undefined) {
+        row.endedAt = new Date(heartbeat).toISOString();
+        row.durationMs = Math.max(0, heartbeat - Date.parse(start.startedAt));
+      }
+    }
     if (matchesName !== undefined && !matchesName.test(row.name)) {
       continue;
     }

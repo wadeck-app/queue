@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readWaiterHistory, waitersDir } from '@wadeck-app/queue-core';
-import { getWaiters, STALE_AFTER_MS } from './waiters.js';
-import { registerFixtureWait } from './waitersFixture.testUtil.js';
+import { WAITER_STALE_AFTER_MS as STALE_AFTER_MS } from '@wadeck-app/queue-core';
+import { getWaiters } from './waiters.js';
+import { registerFixtureWait, snapshotTree } from './waitersFixture.testUtil.js';
 import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 const NOW = Date.parse('2026-11-08T10:00:00.000Z');
@@ -87,27 +88,33 @@ describe('getWaiters: the waits running now, read from the waiter files (no daem
     expect(answer.count).toBe(2);
   });
 
-  it('a wait silent for more than the TTL is no longer listed: it is swept, recorded as lost, and the answer says so', () => {
+  it('shows the contact: pipe for a wait the daemon wakes, polling only for one it cannot, and never the path', () => {
+    registerFixtureWait(configDir, { name: 'a.piped', at: NOW, contact: { kind: 'pipe', path: '/c/waiters/wake-0123456789abcdef.sock' } });
+    registerFixtureWait(configDir, { name: 'b.polled', at: NOW });
+    const answer = get();
+    expect(answer.waiters.map((waiter) => [waiter.name, waiter.contact, waiter.contactText])).toEqual([['a.piped', 'pipe', 'pipe'], ['b.polled', 'none', 'polling only']]);
+    expect(JSON.stringify(answer)).not.toContain('wake-0123456789abcdef');
+  });
+
+  it('a wait silent for more than the TTL is not listed, shows as lost in the history, and the GET writes nothing (the CLI and the daemon sweep, this route only reads)', () => {
     registerFixtureWait(configDir, { name: 'gone.silent', at: NOW - 61 * SECOND });
+    const before = snapshotTree(configDir);
     const answer = get();
     expect(answer.waiters).toEqual([]);
-    expect(answer.sweptText).toContain('gone.silent');
-    expect(answer.sweptText).toContain('lost');
+    expect(answer).not.toHaveProperty('sweptText');
     expect(readWaiterHistory(configDir, { now: () => NOW, isAlive: () => true }).rows[0]).toMatchObject({ name: 'gone.silent', outcome: 'lost' });
+    expect(snapshotTree(configDir)).toEqual(before);
   });
 
-  it('a wait whose process is gone is swept the same way', () => {
+  it('a wait whose process is gone is not listed either, and a second GET gives the same answer without writing', () => {
     registerFixtureWait(configDir, { name: 'dead.proc', at: NOW, pid: 9999 });
     registerFixtureWait(configDir, { name: 'live.proc', at: NOW, pid: 1 });
-    const answer = get({ isAlive: (pid) => pid === 1 });
-    expect(answer.waiters.map((waiter) => waiter.name)).toEqual(['live.proc']);
-    expect(answer.sweptText).toContain('dead.proc');
-    expect(answer.sweptText).not.toContain('live.proc');
-  });
-
-  it('says nothing about a sweep when nothing was swept', () => {
-    registerFixtureWait(configDir, { name: 'a.one', at: NOW });
-    expect(get()).not.toHaveProperty('sweptText');
+    const before = snapshotTree(configDir);
+    const isAlive = (pid: number): boolean => pid === 1;
+    const first = get({ isAlive });
+    expect(first.waiters.map((waiter) => waiter.name)).toEqual(['live.proc']);
+    expect(get({ isAlive })).toEqual(first);
+    expect(snapshotTree(configDir)).toEqual(before);
   });
 
   it('strips control characters from every string a file can carry (terminal escapes, line breaks)', () => {

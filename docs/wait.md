@@ -92,7 +92,7 @@ Put the awaited thing in the name: one session often runs several waits (`wait c
 
 **Without `--name` (transitional).** The wait is called `anon.<pid>` and prints one `[warn]` on stderr; lists mark it `(no --name)` (`"anonymous": true` in JSON). A name will become mandatory in a later release (exit 4 with an example), once the agent skills pass `--name`: add it now.
 
-**What the record holds.** Name, events, `--when` filters, label (the commit for `wait ci`), the effective `--since`, the working directory, the pid, the start time. A wait with several events registers one filter list: the common one when all events share it, none otherwise (it is then counted for more pushes than needed, never fewer). `wait ci` registers `on.github.workflow_run` for every repository; the commit is the label, and the count is by event name only. The wake contact is `none` ("polling only"): the wait polls the history every 500 ms (1 s for CI). No payload is ever stored; `--when` and the cwd are shown as written.
+**What the record holds.** Name, events, `--when` filters, label (the commit for `wait ci`), the effective `--since`, the working directory, the pid, the start time. A wait with several events registers one filter list: the common one when all events share it, none otherwise (it is then counted for more pushes than needed, never fewer). `wait ci` registers `on.github.workflow_run` for every repository; the commit is the label, and the count is by event name only. The wake contact is `pipe` (the daemon wakes the wait, see "The wake") or `none` ("polling only": the wait polls the history every 500 ms, 1 s for CI). No payload is ever stored; `--when` and the cwd are shown as written.
 
 **Lifecycle.**
 - Registration happens before the history is read, so a push racing the start counts it, and `--since` still finds earlier events.
@@ -107,7 +107,23 @@ Put the awaited thing in the name: one session often runs several waits (`wait c
 - `queue list-subscribers [event]` and `queue sub list [event]` (without `--scope`) append a "Waiting now" section on a terminal, only when someone waits. Their `--json` arrays and piped output are unchanged.
 - `queue waiters --history [--since <duration>] [--name <glob>] [--outcome <o>] [--limit N] [--json]`: newest first, with from, to, duration, outcome (`matched` with the event and its id, `timeout`, `cancelled`, `refused` for a taken name, `lost`, or `waiting`). Journal: `waiters/history/<day>.ndjson`, 90 days. For a CI wait, exit 0 and 1 (passed, failed) are recorded `matched`; exit 2 and 3 (timeout, no run, relay down) `timeout`.
 - Dashboard: the **Queue Waiters** page (menu figure = waits running now) shows both lists, refreshed every 15 s, with the History filters on name (`*` glob) and outcome; the event of a `matched` wait links to the History page. Routes `GET /waiters` and `GET /waiters/history` read the same files with the daemon stopped.
-- A listing sweeps first: the waits that are over are recorded `lost` once and named on stderr (`[info]`). A record that cannot be read is named with its path (`[warn]`) and ignored.
+- `queue waiters` (and a registering wait, and the daemon start) sweeps first: the waits that are over are recorded `lost` once and named on stderr (`[info]`). The dashboard routes never sweep: a wait that is over is not listed and shows `lost` in the history. A record that cannot be read is named with its path (`[warn]`) and ignored.
+
+## The wake
+
+`queue push` wakes the waits that listen, so they see the event at once instead of at the next poll. It is a hint: the wait re-reads the history immediately and only the history decides, and the poll stays as the safety net, so a lost, late or forged wake changes nothing. `--since` is unchanged.
+
+| | Windows | POSIX |
+|---|---|---|
+| Address | `\\.\pipe\queue-wait-<hash of the config dir>-<name>` | `<config dir>/waiters/wake-<hash of the name>.sock` (mode 0600) |
+| Too long for `sun_path` (103 bytes, the macOS limit minus the NUL, used everywhere) | n/a | `<tmpdir>/queue-wait-<uid>/<hash>-<hash>.sock` in a 0700 folder; if still too long, no wake |
+| Left behind by a killed wait | nothing (the pipe vanishes) | swept by the next wait that registers (a connection to it is refused) |
+
+- The address is derived from the config dir and the validated name only. The record's `contact.path` is informational: the daemon recomputes the address and refuses, with one log line, a record whose path differs.
+- The wake line is `{"wake":1,"event":...,"eventId":...}`: no payload. The wait ignores any other line, and serves at most 8 connections at once.
+- The daemon connects with a 1 s timeout after the history write, never awaits it, and logs each failure cause once per run; the push answer is unaffected.
+- No wake (reason on stderr as one `[warn]`, contact `none`): the address is held by a live process (a same-name wait), the folder is not safe (not owned by the user, or group/other writable and not fixable), the path is too long, the system refuses. The wait still works by polling.
+- The wait closes the pipe and removes its socket on every exit it controls.
 
 ## Exit codes
 

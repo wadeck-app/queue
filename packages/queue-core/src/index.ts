@@ -78,9 +78,14 @@ export { WaiterRegistry, WaiterInputError, WaiterNameTakenError } from './waiter
 export type { WaiterRegistration, WaiterRegistryDeps, WaiterTakeover, WaiterEnd, HeartbeatResult, SweepReport } from './waiters/WaiterRegistry.js';
 export { listLiveWaiters, WaiterScanCache, MAX_WAITER_FILES, WAITER_SCAN_TIME_BOX_MS } from './waiters/WaiterScan.js';
 export type { LiveWaiter, WaiterScan, WaiterScanOptions } from './waiters/WaiterScan.js';
-export { WAITER_TTL_MS, WAITER_HEARTBEAT_MS, isWaiterLive } from './waiters/WaiterLiveness.js';
+export { WAITER_TTL_MS, WAITER_HEARTBEAT_MS, WAITER_STALE_AFTER_MS, ANONYMOUS_WAITER_PREFIX, anonymousWaiterName, isAnonymousWaiterName, isWaiterLive } from './waiters/WaiterLiveness.js';
 export { WaiterHistoryLog, waitersDir, waiterHistoryDir, WAITER_OUTCOMES } from './waiters/WaiterHistory.js';
 export type { WaiterOutcome, WaiterEndRecord, WaiterStartRecord } from './waiters/WaiterHistory.js';
 export { readWaiterHistory, DEFAULT_WAITER_HISTORY_LIMIT } from './waiters/WaiterHistoryReader.js';
 export type { WaitRow, WaitRowOutcome, ReadWaiterHistoryOptions, WaiterHistoryRead } from './waiters/WaiterHistoryReader.js';
 export { describeWaiting } from './waiters/waitingText.js';
+// The wake: a named pipe or unix socket per wait, a hint from the daemon after the history write (see waiters/WaiterWake.ts)
+export { deriveWakeAddress, encodeWake, parseWake, WAKE_LINE_MAX_BYTES, MAX_SOCKET_PATH_BYTES } from './waiters/WaiterWake.js';
+export type { WakeAddress, WakeHint, WakeDeriveDeps } from './waiters/WaiterWake.js';
+export { openWakeListener, sweepStaleWakeSockets } from './waiters/WaiterWakeListener.js';
+export type { WakeListener, WakeListenerDeps } from './waiters/WaiterWakeListener.js';

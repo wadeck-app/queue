@@ -21,6 +21,8 @@ export interface WaiterScan {
   problems: string[];
   /** True when a bound (file cap, time box) cut the scan: the list may be short. */
   partial: boolean;
+  /** Set when the folder exists but cannot be listed: the list is empty because it was not read, not because nobody waits. The text names the folder and the fix. */
+  unreadable?: string;
 }
 
 /**
@@ -81,7 +83,9 @@ export function listLiveWaiters(configDir: string, options: WaiterScanOptions = 
     names = fs.readdir(dir).filter((name) => waiterNameOfFile(name) !== undefined).sort();
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') {
-      result.problems.push(`could not list ${dir}: ${errorText(error)}; the waiters were not counted. Fix: check that the folder is readable by this user.`);
+      const problem = `could not list ${dir}: ${errorText(error)}; the waiters were not counted. Fix: check that the folder is readable by this user.`;
+      result.problems.push(problem);
+      result.unreadable = problem;
     }
     return result;
   }

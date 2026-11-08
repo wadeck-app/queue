@@ -5,7 +5,8 @@
  * Everything that touches the outside (timers, signals, exit, stderr) comes in through {@link WaitSessionDeps}, so the tests run without sleeping or sending a signal.
  */
 
-import { WAITER_HEARTBEAT_MS, WaiterInputError, WaiterNameTakenError, WaiterRegistry, getErrorMessage, type WaiterEnd, type WaiterInput } from '@wadeck-app/queue-core';
+import { WAITER_HEARTBEAT_MS, WaiterInputError, WaiterNameTakenError, WaiterRegistry, anonymousWaiterName, getErrorMessage, isAnonymousWaiterName, openWakeListener, sweepStaleWakeSockets, waiterNameProblem, type WakeHint, type WakeListener, type WaiterEnd, type WaiterInput } from '@wadeck-app/queue-core';
+import { WakeSignal } from './wakeSignal.js';
 
 export interface WaitSessionDeps {
   registry: Pick<WaiterRegistry, 'register' | 'heartbeat' | 'deregister' | 'sweepStale'>;
@@ -17,6 +18,10 @@ export interface WaitSessionDeps {
   /** Calls `handler` (synchronously) when the process is about to exit, until the returned function is called. */
   onExit: (handler: () => void) => () => void;
   exit: (code: number) => void;
+  /** Opens the pipe the daemon wakes this wait on (see queue-core waiters/WaiterWake.ts). Absent: the wait is not woken, it polls only. */
+  openWake?: (name: string, onWake: (hint: WakeHint) => void) => Promise<WakeListener>;
+  /** Removes the wake sockets that dead waits left behind. Called before the registration. */
+  sweepWake?: () => Promise<unknown>;
 }
 
 export function defaultWaitSessionDeps(configDir: string): WaitSessionDeps {
@@ -39,21 +44,21 @@ export function defaultWaitSessionDeps(configDir: string): WaitSessionDeps {
       return () => { process.off('exit', handler); };
     },
     exit: (code) => process.exit(code),
+    openWake: (name, onWake) => openWakeListener(configDir, name, onWake),
+    sweepWake: () => sweepStaleWakeSockets(configDir),
   };
 }
 
 /** The shell convention: 128 + the signal number. */
 const SIGNAL_EXIT_CODES: ReadonlyArray<readonly [NodeJS.Signals, number]> = [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]];
 
-export const ANONYMOUS_PREFIX = 'anon.';
-
-/** The name of a wait that was not given one (`--name` is optional for now): `anon.<pid>`. */
+/** The name of a wait that was not given one (`--name` is optional for now): `anon.<pid>` (the prefix is defined in queue-core, shared with the dashboard). */
 export function anonymousWaitName(name: string | undefined, pid: number): string {
-  return name ?? `${ANONYMOUS_PREFIX}${pid}`;
+  return name ?? anonymousWaiterName(pid);
 }
 
 export function isAnonymousWaitName(name: string): boolean {
-  return name.startsWith(ANONYMOUS_PREFIX);
+  return isAnonymousWaiterName(name);
 }
 
 /** The one warning of a wait without `--name`. `command` is what to type, e.g. `queue wait onX` or `queue wait ci`. */
@@ -75,6 +80,11 @@ export function ciOutcomeOf(exitCode: number): WaiterEnd['outcome'] {
 export interface WaitSessionReport {
   /** The event that satisfied the wait (for the history). */
   matched: (match: { eventId: string; event: string }) => void;
+  /**
+   * The sleep between two reads of the history: `base` (default a timer) unless the daemon wakes the wait first, then it returns at once and the wait reads again. A wake is a
+   * hint only; what the history holds decides.
+   */
+  sleep: (ms: number, base?: (ms: number) => Promise<void>) => Promise<void>;
 }
 
 export interface RegisteredWaitParams {
@@ -100,10 +110,37 @@ export async function runRegisteredWait(params: RegisteredWaitParams): Promise<n
     stderr.write(`[warn] could not clean up the waits that are over (${getErrorMessage(error)}); going on.\n`);
   }
 
+  const signal = new WakeSignal();
+  try {
+    await deps.sweepWake?.();
+  } catch (error) {
+    stderr.write(`[warn] could not clean up the wake sockets of waits that are over (${getErrorMessage(error)}); going on.\n`);
+  }
+  // The pipe is opened before the registration so the record carries it, and only for a name that is valid: the address is derived from the name
+  let wake: WakeListener | undefined;
+  if (deps.openWake !== undefined && waiterNameProblem(input.name) === undefined) {
+    try {
+      wake = await deps.openWake(input.name, () => { signal.wake(); });
+      if (wake.warning !== undefined) {
+        stderr.write(`[warn] this wait is not woken by 'queue push' (${wake.warning}); it polls the history instead, so it still sees every event, a little later.\n`);
+      }
+    } catch (error) {
+      stderr.write(`[warn] this wait is not woken by 'queue push' (${getErrorMessage(error)}); it polls the history instead, so it still sees every event, a little later.\n`);
+    }
+  }
+  const closeWake = (): void => {
+    try {
+      wake?.close();
+    } catch {
+      // A pipe that cannot be closed is gone with the process
+    }
+  };
+
   let registration: ReturnType<WaiterRegistry['register']>;
   try {
-    registration = registry.register(input);
+    registration = registry.register({ ...input, contact: wake?.contact ?? { kind: 'none' } });
   } catch (error) {
+    closeWake();
     stderr.write(`[fail] ${getErrorMessage(error)}\n`);
     return error instanceof WaiterNameTakenError || error instanceof WaiterInputError ? 4 : 1;
   }
@@ -140,6 +177,7 @@ export async function runRegisteredWait(params: RegisteredWaitParams): Promise<n
       return;
     }
     ended = true;
+    closeWake();
     stopTimer();
     dropSignals();
     dropExit();
@@ -157,7 +195,7 @@ export async function runRegisteredWait(params: RegisteredWaitParams): Promise<n
 
   let exitCode: number;
   try {
-    exitCode = await params.run({ matched: (match) => { matchedWith = match; } });
+    exitCode = await params.run({ matched: (match) => { matchedWith = match; }, sleep: (ms, base) => signal.sleep(ms, base) });
   } catch (error) {
     finish('cancelled');
     throw error;

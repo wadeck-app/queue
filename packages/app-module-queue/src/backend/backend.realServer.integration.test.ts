@@ -9,7 +9,7 @@ import { addProject, removeProject } from '@wadeck-app/project-sdk';
 import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import { createQueueService } from '@wadeck-app/queue-core';
 import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
-import { registerFixtureWait, registryAt } from './waitersFixture.testUtil.js';
+import { registerFixtureWait, registryAt, snapshotTree } from './waitersFixture.testUtil.js';
 
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
@@ -490,15 +490,17 @@ describe('the packaged module through a real app-core server', () => {
       }
     });
 
-    it('records a wait whose process is gone as lost, when the page asks', async () => {
+    it('shows a wait whose process is gone as lost, and the GET writes nothing', async () => {
       // A pid that no process has: far above the pid space of every platform
       registerFixtureWait(configDir, { name: 'it.dead', at: Date.now(), pid: 2_147_483_000 });
+      const before = snapshotTree(configDir);
       const { status, body } = await call('GET', '/waiters');
       expect(status).toBe(200);
       expect(body['count']).toBe(0);
-      expect(String(body['sweptText'])).toContain('it.dead');
+      expect(body).not.toHaveProperty('sweptText');
       const history = await call('GET', '/waiters/history?name=it.dead');
       expect((history.body['entries'] as Array<Record<string, unknown>>)[0]).toMatchObject({ name: 'it.dead', outcome: 'lost' });
+      expect(snapshotTree(configDir)).toEqual(before);
     });
   });
 });

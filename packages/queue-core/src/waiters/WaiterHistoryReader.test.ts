@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WaiterHistoryLog, waiterHistoryDir, type WaiterEndRecord } from './WaiterHistory.js';
@@ -96,6 +96,33 @@ describe('readWaiterHistory', () => {
     const registry = new WaiterRegistry(configDir, { pid: 50, now: () => D1, isAlive: () => true, newId: () => 'live-1', onRetention: () => undefined });
     registry.register({ name: 'live.one', events: ['onX'], whens: [], label: '', since: new Date(D1).toISOString(), cwd: '/p' });
     expect(read({ now: () => D1 + 1000, isAlive: () => false }).rows[0]).toMatchObject({ outcome: 'lost' });
+  });
+
+  it('a lost wait whose stale record is still there ends at its last heartbeat, without anything being written', () => {
+    const registry = new WaiterRegistry(configDir, { pid: 50, now: () => D1, isAlive: () => true, newId: () => 'live-1', onRetention: () => undefined });
+    registry.register({ name: 'live.one', events: ['onX'], whens: [], label: '', since: new Date(D1).toISOString(), cwd: '/p' });
+    const before = snapshotOf(configDir);
+    const { rows } = read({ now: () => D1 + 120_000, isAlive: () => true });
+    expect(rows[0]).toMatchObject({ id: 'live-1', outcome: 'lost', endedAt: new Date(D1).toISOString(), durationMs: 0 });
+    expect(snapshotOf(configDir)).toEqual(before);
+  });
+
+  it('the record of another registration under the same name is not this wait\'s last heartbeat', () => {
+    wait('old-1', 'live.one', D1 - 5000, null);
+    const registry = new WaiterRegistry(configDir, { pid: 50, now: () => D1, isAlive: () => true, newId: () => 'live-2', onRetention: () => undefined });
+    registry.register({ name: 'live.one', events: ['onX'], whens: [], label: '', since: new Date(D1).toISOString(), cwd: '/p' });
+    const old = read({ now: () => D1 + 1000 }).rows.find((row) => row.id === 'old-1')!;
+    expect(old.outcome).toBe('lost');
+    expect(old.endedAt).toBeUndefined();
+  });
+
+  it('says when the folder of the live waiters cannot be listed, instead of calling every running wait lost', () => {
+    wait('i1', 'a.one', D1, null);
+    const denied = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    const fs: Partial<WaiterFs> = { readdir: (dir) => { if (dir.endsWith('waiters')) throw denied; return defaultWaiterFs.readdir(dir); } };
+    const result = read({ fs });
+    expect(result.waitersUnreadable).toMatch(/EACCES.*Fix:/);
+    expect(read().waitersUnreadable).toBeUndefined();
   });
 
   it('an end whose start was pruned is not shown', () => {
@@ -201,3 +228,17 @@ describe('readWaiterHistory', () => {
     });
   });
 });
+
+/** Every file under the config dir with its content and modification time: a read must leave this unchanged. */
+function snapshotOf(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else out[path] = `${readFileSync(path, 'utf8')}@${statSync(path).mtimeMs}`;
+    }
+  };
+  walk(dir);
+  return out;
+}

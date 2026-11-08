@@ -9,6 +9,8 @@ import { waitFor } from '../waitFor.testUtil.js';
 import { MAX_WAITER_FILES, type WaiterScan } from '../waiters/WaiterScan.js';
 import { WAITER_RECORD_VERSION, type WaiterRecord } from '../waiters/WaiterRecord.js';
 import { waiterHistoryDir, waitersDir } from '../waiters/WaiterHistory.js';
+import { deriveWakeAddress, parseWake } from '../waiters/WaiterWake.js';
+import type { WakeSender } from '../waiters/WaiterNotifier.js';
 
 // Push protocol 1.7.0: the `queued` and `dispatched` answers say who was waiting for the event (`queue wait`), counted from the waiter files after the history write of the push.
 let configDir: string;
@@ -227,5 +229,98 @@ describe('daemon start', () => {
     const said = vi.spyOn(svc.eventLogger, 'logDiagnostic');
     expect(() => svc.onStart()).not.toThrow();
     expect(said.mock.calls.map(([entry]) => entry.message).some((message) => message.includes(waitersDir(configDir)))).toBe(true);
+  });
+});
+
+describe('the wake: a hint to each matching wait that listens, after the history write', () => {
+  const pipeOf = (name: string): WaiterRecord['contact'] => {
+    const address = deriveWakeAddress(configDir, name);
+    if (address.kind !== 'pipe') throw new Error('no wake address on this machine for the test');
+    return { kind: 'pipe', path: address.path };
+  };
+  const serviceWithSend = (send: WakeSender, extra: QueueServiceOptions = {}) => service({ waiters: { isAlive: () => true, wake: { send } }, ...extra });
+
+  it('wakes the matching wait that has a pipe, with the event name and id and nothing else, on the address derived from its name', async () => {
+    put(waiter('a.one', { contact: pipeOf('a.one') }));
+    const sent: Array<{ path: string; line: string }> = [];
+    const answer = await push(serviceWithSend(async (path, line) => { sent.push({ path, line }); }));
+    expect(sent).toHaveLength(1);
+    expect((pipeOf('a.one') as { path: string }).path).toBe(sent[0]!.path);
+    expect(parseWake(sent[0]!.line.trimEnd())).toEqual({ event: 'onThing', eventId: answer.eventId });
+    expect(sent[0]!.line).not.toContain('payload');
+  });
+
+  it('does not wake a wait for another event, a wait whose filters do not hold, or one that only polls', async () => {
+    put(waiter('other.event', { events: ['onOther'], contact: pipeOf('other.event') }));
+    put(waiter('other.payload', { whens: ['payload.a=2'], contact: pipeOf('other.payload') }));
+    put(waiter('polling.only'));
+    const sent: string[] = [];
+    await push(serviceWithSend(async (path) => { sent.push(path); }));
+    expect(sent).toEqual([]);
+  });
+
+  it('the wake is sent after the trigger is in the history (the wait reads the history when it is woken)', async () => {
+    put(waiter('a.one', { contact: pipeOf('a.one') }));
+    let seen: number | undefined;
+    await push(serviceWithSend(async () => { seen = new HistoryReader(join(configDir, 'history')).read({ event: 'onThing' }).length; }));
+    expect(seen).toBe(1);
+  });
+
+  it('the answer does not wait for the wake: a wait whose pipe never answers does not delay it', async () => {
+    put(waiter('a.one', { contact: pipeOf('a.one') }));
+    let started = 0;
+    const answer = await push(serviceWithSend(() => { started++; return new Promise<void>(() => undefined); }));
+    expect(answer).toMatchObject({ status: 'queued', waiterCount: 1 });
+    expect(started).toBe(1);
+  });
+
+  it('a pipe that is dead never fails the push, and the cause is said once however many pushes', async () => {
+    put(waiter('a.one', { contact: pipeOf('a.one') }));
+    const svc = serviceWithSend(async () => { throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }); });
+    const said = vi.spyOn(svc.eventLogger, 'logDiagnostic');
+    const first = await push(svc);
+    const second = await push(svc);
+    expect(first).toMatchObject({ status: 'queued', waiterCount: 1 });
+    expect(second).toMatchObject({ status: 'queued', waiterCount: 1 });
+    await waitFor('the failure is reported', () => said.mock.calls.some(([entry]) => entry.message.includes('ECONNREFUSED')));
+    await waitFor('the second push settled', () => said.mock.calls.length >= 1);
+    const lines = said.mock.calls.map(([entry]) => entry.message).filter((message) => message.includes('ECONNREFUSED'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('a.one');
+  });
+
+  it('never connects to the address a record claims when it is not the derived one: the wait is counted, not woken, and the refusal is said once', async () => {
+    put(waiter('a.one', { contact: { kind: 'pipe', path: '/tmp/forged.sock' } }));
+    const sent: string[] = [];
+    const svc = serviceWithSend(async (path) => { sent.push(path); });
+    const said = vi.spyOn(svc.eventLogger, 'logDiagnostic');
+    const answer = await push(svc);
+    await push(svc);
+    expect(answer).toMatchObject({ waiterCount: 1, waiters: ['a.one'] });
+    expect(sent).toEqual([]);
+    const lines = said.mock.calls.map(([entry]) => entry.message).filter((message) => message.includes('/tmp/forged.sock'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('a.one');
+  });
+
+  it('a wake that cannot even be started (the sender throws at once) never fails the push', async () => {
+    put(waiter('a.one', { contact: pipeOf('a.one') }));
+    const answer = await push(serviceWithSend(() => { throw new Error('boom'); }));
+    expect(answer).toMatchObject({ status: 'queued', waiterCount: 1 });
+  });
+
+  it('nobody is woken when the history record could not be written (the wait could not see the event)', async () => {
+    put(waiter('a.one', { contact: pipeOf('a.one') }));
+    writeFileSync(join(configDir, 'history'), 'not a folder');
+    const sent: string[] = [];
+    await push(serviceWithSend(async (path) => { sent.push(path); }));
+    expect(sent).toEqual([]);
+  });
+
+  it('a before* event wakes too', async () => {
+    put(waiter('a.one', { events: ['beforeThing'], contact: pipeOf('a.one') }));
+    const sent: string[] = [];
+    await push(serviceWithSend(async (path) => { sent.push(path); }), { event: 'beforeThing' });
+    expect(sent).toHaveLength(1);
   });
 });

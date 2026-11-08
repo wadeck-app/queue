@@ -90,7 +90,7 @@ describe('manifest.json figures next to menu entries (count)', () => {
 });
 
 describe('the figure next to Waiters is the number of live waits', () => {
-  it('counts the waits that are listed, not the stale ones that were swept', () => {
+  it('counts the waits that are listed, not the stale ones', () => {
     const dir = makeTempDir('queue-manifest-waiters-count-');
     try {
       const now = Date.parse('2026-11-08T10:00:00.000Z');

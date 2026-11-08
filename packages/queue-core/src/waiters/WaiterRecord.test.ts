@@ -63,6 +63,11 @@ describe('parseWaiterRecord', () => {
     ['label type', { label: 3 }],
     ['contact missing', { contact: undefined }],
     ['contact kind', { contact: { kind: 'http' } }],
+    ['a pipe contact without a path', { contact: { kind: 'pipe' } }],
+    ['a pipe contact with an empty path', { contact: { kind: 'pipe', path: '' } }],
+    ['a pipe contact with a path that is not text', { contact: { kind: 'pipe', path: 5 } }],
+    ['a pipe contact with a very long path', { contact: { kind: 'pipe', path: 'p'.repeat(WAITER_LIMITS.maxContactPathChars + 1) } }],
+    ['a pipe contact with a control character in the path', { contact: { kind: 'pipe', path: '/tmp/a\u0000b' } }],
     ['pid zero', { pid: 0 }],
     ['pid fraction', { pid: 1.5 }],
     ['pid string', { pid: '12' }],
@@ -83,13 +88,23 @@ describe('parseWaiterRecord', () => {
     expect(parsed).toMatchObject({ ok: false, kind: 'oversize' });
   });
 
-  it('accepts a pipe contact, which a later step writes', () => {
-    expect(parseWaiterRecord(JSON.stringify(record({ contact: { kind: 'pipe' } })), file).ok).toBe(true);
+  it('reads a pipe contact with its path back', () => {
+    const contact = { kind: 'pipe' as const, path: '/home/me/.config/queue/waiters/wake-0123456789abcdef.sock' };
+    expect(parseWaiterRecord(JSON.stringify(record({ contact })), file)).toEqual({ ok: true, record: record({ contact }) });
+  });
+
+  it('keeps nothing but the kind of a contact that has none', () => {
+    const parsed = parseWaiterRecord(JSON.stringify(record({ contact: { kind: 'none', path: '/x' } as never })), file);
+    expect(parsed).toEqual({ ok: true, record: record({ contact: { kind: 'none' } }) });
   });
 });
 
 describe('validateWaiterInput', () => {
   const input = { name: 'a.b', events: ['onX'], whens: [] as string[], label: '', since: '2026-11-08T10:00:00.000Z', cwd: '/p' };
+
+  it('refuses a pipe contact with no path', () => {
+    expect(validateWaiterInput({ ...input, contact: { kind: 'pipe', path: '' } })).toMatch(/contact/);
+  });
 
   it('accepts a normal input', () => {
     expect(validateWaiterInput(input)).toBeUndefined();

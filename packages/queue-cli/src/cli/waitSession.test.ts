@@ -323,3 +323,101 @@ describe('anonymousWaitName', () => {
     expect(anonymousWaitName('a.b', 4242)).toBe('a.b');
   });
 });
+
+describe('runRegisteredWait: the wake pipe', () => {
+  const wakeBase = { outcomeOf: eventOutcomeOf };
+  const harnessWith = (wake: Parameters<typeof fakeWaitSession>[1], registry: WaitSessionDeps['registry'] = registryFor(100)): Harness => fakeWaitSession(registry, wake);
+  const contactDuringRun = (): unknown => listLiveWaiters(configDir, { now: () => clock.ms, isAlive: (pid) => alive.has(pid) }).waiters[0]?.contact;
+
+  it('sweeps the left-over sockets, opens the pipe for the validated name BEFORE it registers, and the record carries the contact', async () => {
+    const registry = registryFor(100);
+    const order: string[] = [];
+    let h: Harness;
+    const wrapped: WaitSessionDeps['registry'] = {
+      sweepStale: () => registry.sweepStale(),
+      register: (value) => { order.push(h.wakeCalls.join('|')); return registry.register(value); },
+      heartbeat: (value) => registry.heartbeat(value),
+      deregister: (value, end) => registry.deregister(value, end),
+    };
+    h = harnessWith({}, wrapped);
+    let seen: unknown;
+    const code = await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run: async () => { seen = contactDuringRun(); return 0; } });
+    expect(code).toBe(0);
+    expect(order).toEqual([`sweep|open ${input.name}`]);
+    expect(seen).toEqual({ kind: 'pipe', path: `/fake/wake-${input.name}.sock` });
+  });
+
+  it('closes the pipe when the wait ends: matched, timeout and an exception', async () => {
+    for (const run of [async () => 0, async () => 2, async () => { throw new Error('boom'); }]) {
+      const h = harnessWith({});
+      await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run }).catch(() => undefined);
+      expect(h.wakeCalls.filter((call) => call === 'close')).toHaveLength(1);
+    }
+  });
+
+  it('closes the pipe on a signal and on the exit event', async () => {
+    const bySignal = harnessWith({});
+    await runRegisteredWait({ ...wakeBase, input, deps: bySignal.deps, run: async () => { bySignal.signalHandlers.get('SIGINT')!('SIGINT'); return 0; } });
+    expect(bySignal.wakeCalls.filter((call) => call === 'close')).toHaveLength(1);
+    const byExit = harnessWith({});
+    await runRegisteredWait({ ...wakeBase, input, deps: byExit.deps, run: async () => { byExit.exitHandlers[0]!(); return 0; } });
+    expect(byExit.wakeCalls.filter((call) => call === 'close')).toHaveLength(1);
+  });
+
+  it('closes the pipe when the registration is refused (the name is taken): no listener is left behind', async () => {
+    registryFor(200).register(input);
+    const h = harnessWith({});
+    expect(await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run: async () => 0 })).toBe(4);
+    expect(h.wakeCalls).toEqual(['sweep', `open ${input.name}`, 'close']);
+  });
+
+  it('never opens a pipe for a name that is not valid (no address is built from it); the registration is refused as usual', async () => {
+    const h = harnessWith({});
+    const code = await runRegisteredWait({ ...wakeBase, input: { ...input, name: '../evil' }, deps: h.deps, run: async () => 0 });
+    expect(code).toBe(4);
+    expect(h.wakeCalls.filter((call) => call.startsWith('open'))).toEqual([]);
+  });
+
+  it('a pipe that could not be opened: one [warn] line with the reason, the wait is registered as polling only and runs', async () => {
+    const h = harnessWith({ warning: 'could not listen on /x (EACCES)' });
+    let contact: unknown;
+    const code = await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run: async () => { contact = contactDuringRun(); return 0; } });
+    expect(code).toBe(0);
+    expect(contact).toEqual({ kind: 'none' });
+    const lines = warnings(h);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('could not listen on /x (EACCES)');
+    expect(lines[0]).toMatch(/polls the history/);
+  });
+
+  it('a pipe that throws is a warning too, never a failed wait', async () => {
+    const h = harnessWith({ throws: new Error('unexpected') });
+    expect(await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run: async () => 0 })).toBe(0);
+    expect(warnings(h).join('\n')).toContain('unexpected');
+  });
+
+  it('a sweep of left-over sockets that fails is said and the wait goes on', async () => {
+    const h = harnessWith({ sweepThrows: new Error('EPERM') });
+    expect(await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run: async () => 0 })).toBe(0);
+    expect(warnings(h).join('\n')).toContain('EPERM');
+    expect(h.wakeCalls).toContain(`open ${input.name}`);
+  });
+
+  it('a wake from the pipe ends the sleep of the wait at once', async () => {
+    const h = harnessWith({});
+    const code = await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run: async (session) => {
+      const slept = session.sleep(500, () => new Promise<void>(() => undefined));
+      h.wakeHandlers[0]!({ event: 'onTaskDone', eventId: 'e1' });
+      await slept;
+      return 0;
+    } });
+    expect(code).toBe(0);
+  });
+
+  it('without a wake pipe (older callers) the sleep is the plain one', async () => {
+    const h = harness();
+    let slept = 0;
+    await runRegisteredWait({ ...wakeBase, input, deps: h.deps, run: async (session) => { await session.sleep(500, async () => { slept++; }); return 0; } });
+    expect(slept).toBe(1);
+  });
+});

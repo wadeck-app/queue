@@ -91,11 +91,10 @@ describe('waiters-page.yaml', () => {
     expect(String(historyTable['emptyMessage'])).toMatch(/No wait/);
   });
 
-  it('shows what the routes warn about (files that could not be read) and what the sweep recorded', () => {
+  it('shows what the routes warn about (files that could not be read); the routes sweep nothing, so there is nothing to report about a sweep', () => {
     const badges = sections.filter((section) => section['$type'] === 'Badge');
     expect(badges.map((badge) => [badge['$if'], badge['variant']])).toEqual([
       ['$sources.waiters.warningText', 'warning'],
-      ['$sources.waiters.sweptText', 'info'],
       ['$sources.history.warningText', 'warning'],
     ]);
   });

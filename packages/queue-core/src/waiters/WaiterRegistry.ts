@@ -142,7 +142,7 @@ export class WaiterRegistry {
       events: [...input.events],
       whens: [...input.whens],
       label: input.label,
-      contact: { kind: 'none' },
+      contact: input.contact ?? { kind: 'none' },
       pid: this.pid,
       cwd: input.cwd,
       since: input.since,

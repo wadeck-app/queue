@@ -24,11 +24,7 @@ sections:
     $if: $sources.waiters.warningText
     label: $sources.waiters.warningText
     variant: warning
-  - $type: Badge
-    $if: $sources.waiters.sweptText
-    label: $sources.waiters.sweptText
-    variant: info
-  # The working directory of a wait is the tooltip of its name. Wake: how the daemon can reach the wait (polling only until the pipe release).
+  # The working directory of a wait is the tooltip of its name. Wake: pipe = the daemon wakes the wait when an event is pushed; polling only = the wait reads the history on its own.
   - $type: DataTable
     rows: $sources.waiters.waiters
     emptyMessage: Nobody is waiting. A wait is listed here while queue wait runs.

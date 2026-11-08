@@ -176,7 +176,8 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
             ? reader.read({ sinceMs }).filter((entry) => entry.event !== ORPHAN_EVENT_NAME && EventMatcher.matches(event, entry.event))
             : reader.read({ event, sinceMs }),
         now,
-        sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+        // A wake from the daemon ends this sleep early; the history is read again and decides (deps.sleep replaces the timer in tests)
+        sleep: (ms) => report.sleep(ms, deps.sleep),
         io: { stdout: process.stdout, stderr: process.stderr },
         beforeFirstWait,
         onMatched: (entry) => { report.matched({ eventId: entry.eventId, event: entry.event }); },
@@ -315,7 +316,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     deps: deps.session ?? defaultWaitSessionDeps(configDir),
     outcomeOf: ciOutcomeOf,
     input: { name, events: [CI_EVENT], whens: [], label: sha, since: new Date(now() - options.lookbackMs).toISOString(), cwd: process.cwd() },
-    run: async () => {
+    run: async (report) => {
       const onDemand = relayOnDemandFor(configDir, startRelay);
       onDemand.begin();
 
@@ -340,7 +341,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
           return { running: true, connected };
         },
         now,
-        sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+        sleep: (ms) => report.sleep(ms, deps.sleep),
         io: { stdout: process.stdout, stderr: process.stderr },
       });
     },

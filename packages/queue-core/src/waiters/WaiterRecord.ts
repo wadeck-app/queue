@@ -12,11 +12,42 @@ export const WAITER_LIMITS = {
   /** One event pattern or one `--when` expression. */
   maxTextChars: 500,
   maxLabelChars: 200,
+  /** The path of a pipe contact (a Windows pipe name is 256 characters at most). */
+  maxContactPathChars: 300,
 } as const;
 
-/** How the daemon can wake the waiter: `none` = it only polls the history. `pipe` is written by a later release. */
-export interface WaiterContact {
-  kind: 'none' | 'pipe';
+/**
+ * How the daemon can wake the waiter. `pipe`: the wait listens on a named pipe (Windows) or a unix socket (POSIX) at `path`. `none`: it only polls the history.
+ * The path is what the wait says it listens on; the daemon never connects to it as written, it recomputes the address from the name (see WaiterWake.ts) and compares.
+ */
+export type WaiterContact = { kind: 'none' } | { kind: 'pipe'; path: string };
+
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+function contactProblem(contact: WaiterContact): string | undefined {
+  if (contact.kind === 'none') {
+    return undefined;
+  }
+  if (typeof contact.path !== 'string' || contact.path === '' || contact.path.length > WAITER_LIMITS.maxContactPathChars || CONTROL.test(contact.path)) {
+    return 'a pipe contact needs a path of 1 to ' + WAITER_LIMITS.maxContactPathChars + ' printable characters';
+  }
+  return undefined;
+}
+
+/** The contact in a record, or undefined when it is not one. */
+export function parseWaiterContact(value: unknown): WaiterContact | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (value['kind'] === 'none') {
+    return { kind: 'none' };
+  }
+  if (value['kind'] === 'pipe') {
+    const contact: WaiterContact = { kind: 'pipe', path: value['path'] as string };
+    return contactProblem(contact) === undefined ? contact : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -89,12 +120,13 @@ export function parseWaiterRecord(text: string, fileName: string): ParsedWaiterR
   if (!stringList(events, WAITER_LIMITS.maxEvents) || events.length === 0) return bad('events list');
   if (!stringList(whens, WAITER_LIMITS.maxWhens)) return bad('whens list');
   if (typeof label !== 'string' || label.length > WAITER_LIMITS.maxLabelChars) return bad('label');
-  if (!isRecord(contact) || (contact['kind'] !== 'none' && contact['kind'] !== 'pipe')) return bad('contact');
+  const parsedContact = parseWaiterContact(contact);
+  if (parsedContact === undefined) return bad('contact');
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return bad('pid');
   if (typeof cwd !== 'string') return bad('cwd');
   if (!isIsoDate(since)) return bad('since');
   if (!isIsoDate(startedAt)) return bad('startedAt');
-  return { ok: true, record: { v: WAITER_RECORD_VERSION, id, name, events, whens, label, contact: { kind: contact['kind'] }, pid, cwd, since, startedAt } };
+  return { ok: true, record: { v: WAITER_RECORD_VERSION, id, name, events, whens, label, contact: parsedContact, pid, cwd, since, startedAt } };
 }
 
 export interface WaiterInput {
@@ -104,6 +136,8 @@ export interface WaiterInput {
   label: string;
   since: string;
   cwd: string;
+  /** The pipe the wait listens on. Default: none (it polls only). */
+  contact?: WaiterContact;
 }
 
 /** Why a registration is refused (what to fix included), undefined when the input can be registered. */
@@ -135,6 +169,10 @@ export function validateWaiterInput(input: WaiterInput): string | undefined {
   }
   if (input.label.length > WAITER_LIMITS.maxLabelChars) {
     return `the label is over ${WAITER_LIMITS.maxLabelChars} characters.`;
+  }
+  const contact = input.contact === undefined ? undefined : contactProblem(input.contact);
+  if (contact !== undefined) {
+    return `the contact is not valid: ${contact}.`;
   }
   return undefined;
 }

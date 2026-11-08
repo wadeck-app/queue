@@ -1,11 +1,8 @@
 /** How the waits are shown in a terminal and in `--json`: `queue waiters`, `queue waiters --history`, and the "Waiting now" section of the subscriber lists. */
 
-import { WAITER_HEARTBEAT_MS, type LiveWaiter, type WaitRow } from '@wadeck-app/queue-core';
+import { WAITER_STALE_AFTER_MS, type LiveWaiter, type WaitRow } from '@wadeck-app/queue-core';
 import { isAnonymousWaitName } from './waitSession.js';
 import { formatUptime } from './relayStatusView.js';
-
-/** A heartbeat later than this (two periods) is shown as stale: the wait may be stalled, it is dropped from the list after the TTL. */
-export const STALE_AFTER_MS = 2 * WAITER_HEARTBEAT_MS;
 
 // Names, filters, labels and paths come from files another process wrote: no control character may reach a terminal
 // eslint-disable-next-line no-control-regex
@@ -14,7 +11,7 @@ export function printable(text: string): string {
   return text.replace(CONTROL, '');
 }
 
-/** What `queue waiters --json` prints for a live wait (an array of these). The wake contact is `none` (polling only) until the pipe release. */
+/** What `queue waiters --json` prints for a live wait (an array of these). The wake contact: `pipe` (the daemon wakes the wait) or `none` (polling only). */
 export interface LiveWaiterView {
   id: string;
   name: string;
@@ -48,7 +45,7 @@ export function liveWaiterView(waiter: LiveWaiter, nowMs: number): LiveWaiterVie
     since: waiter.since,
     startedAt: waiter.startedAt,
     lastSeen: new Date(waiter.lastSeenMs).toISOString(),
-    stale: nowMs - waiter.lastSeenMs > STALE_AFTER_MS,
+    stale: nowMs - waiter.lastSeenMs > WAITER_STALE_AFTER_MS,
   };
 }
 

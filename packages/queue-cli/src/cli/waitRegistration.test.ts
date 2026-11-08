@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WaiterRegistry, listLiveWaiters, readWaiterHistory, waitersDir, type HistoryEntry } from '@wadeck-app/queue-core';
 import { queueWaitCommand, registeredWhens, type QueueWaitDeps } from './waitCli.js';
-import { fakeWaitSession, type FakeWaitSession } from '../testing/fakeWaitSession.js';
+import { fakeWaitSession, type FakeWaitSession, type FakeWakeOptions } from '../testing/fakeWaitSession.js';
 import type { GitPort } from './ciGit.js';
 
 let configDir: string;
@@ -45,15 +45,18 @@ interface Run {
 }
 
 /** Runs `queue wait ...args` in this process. `entries` is what the history holds (the wait reads it with the event it asks for). */
-function runWait(args: string[], entries: () => HistoryEntry[] = () => [], extra: QueueWaitDeps = {}): Run {
+function runWait(args: string[], entries: () => HistoryEntry[] = () => [], extra: QueueWaitDeps = {}, wake?: FakeWakeOptions): Run {
   const order: string[] = [];
   const registry = new WaiterRegistry(configDir);
-  const session = fakeWaitSession({
+  const session = fakeWaitSession(
+    {
     sweepStale: () => registry.sweepStale(),
     register: (input) => { order.push('register'); return registry.register(input); },
     heartbeat: (registration) => registry.heartbeat(registration),
     deregister: (registration, end) => registry.deregister(registration, end),
-  });
+    },
+    wake,
+  );
   const startTimer = session.deps.startTimer;
   session.deps.startTimer = (tick, ms) => { order.push('timer'); return startTimer(tick, ms); };
   const code = queueWaitCommand(configDir, args, relayCannotStart, {
@@ -180,6 +183,91 @@ describe('queue wait <event> without --name (release A)', () => {
   it('a named wait does not warn', async () => {
     await runWait(['onTaskDone', '--name', 'a.b', '--timeout', '1s']).code;
     expect(stderr).not.toContain('no --name');
+  });
+});
+
+describe('queue wait --name: the wake is a hint, the history decides', () => {
+  const NEVER = (): Promise<void> => new Promise<void>(() => undefined);
+
+  it('a wake ends the sleep and the wait reads the history again at once: it finishes without a poll tick ever ending a sleep', async () => {
+    let history: HistoryEntry[] = [];
+    let fireWake: () => void = () => undefined;
+    const run = runWait(['onTaskDone', '--name', 'a.wake', '--timeout', '30m'], () => history, {
+      // The poll sleep never ends; the only way out of it is the wake, fired by the "daemon" once the event is in the history
+      sleep: () => {
+        history = [entry('onTaskDone', clock.ms + 1)];
+        fireWake();
+        return NEVER();
+      },
+    }, {});
+    fireWake = () => { run.session.wakeHandlers[0]!({ event: 'onTaskDone', eventId: 'evt' }); };
+    expect(await run.code).toBe(0);
+    expect(run.session.wakeCalls).toEqual(['sweep', 'open a.wake', 'close']);
+    expect(rows()[0]).toMatchObject({ name: 'a.wake', outcome: 'matched' });
+  });
+
+  it('the contact in the record is the pipe the wait listens on', async () => {
+    let contact: unknown;
+    const run = runWait(['onTaskDone', '--name', 'a.wake', '--timeout', '1s'], () => { contact = live()[0]?.contact; return []; }, {}, {});
+    await run.code;
+    expect(contact).toEqual({ kind: 'pipe', path: '/fake/wake-a.wake.sock' });
+  });
+
+  it('a wake for something the history does not hold changes nothing: the wait reads, finds nothing and sleeps again until its timeout', async () => {
+    let reads = 0;
+    let sleeps = 0;
+    let fireWake: () => void = () => undefined;
+    const run = runWait(['onTaskDone', '--name', 'a.wake', '--timeout', '10s'], () => { reads++; return []; }, {
+      sleep: async (ms) => {
+        sleeps++;
+        if (sleeps === 1) {
+          // A forged or early wake, first: nothing is in the history
+          fireWake();
+          return NEVER();
+        }
+        clock.ms += ms + 20_000;
+      },
+    }, {});
+    fireWake = () => { run.session.wakeHandlers[0]!({ event: 'onTaskDone', eventId: 'forged' }); };
+    expect(await run.code).toBe(2);
+    // first read, the read after the wake, the read after the timeout poll
+    expect(reads).toBeGreaterThanOrEqual(3);
+    expect(rows()[0]).toMatchObject({ outcome: 'timeout' });
+  });
+
+  it('a lost wake costs one poll: the event is found when the poll sleep ends, with no wake ever fired', async () => {
+    let history: HistoryEntry[] = [];
+    const run = runWait(['onTaskDone', '--name', 'a.wake', '--timeout', '30m'], () => history, {
+      sleep: async (ms) => { clock.ms += ms; history = [entry('onTaskDone', clock.ms)]; },
+    }, {});
+    expect(await run.code).toBe(0);
+  });
+
+  it('a wait whose pipe could not be opened still finds the event by polling', async () => {
+    let history: HistoryEntry[] = [];
+    const run = runWait(['onTaskDone', '--name', 'a.wake', '--timeout', '30m'], () => history, {
+      sleep: async (ms) => { clock.ms += ms; history = [entry('onTaskDone', clock.ms)]; },
+    }, { warning: 'could not listen' });
+    expect(await run.code).toBe(0);
+    expect(run.session.stderr.join('')).toContain('not woken by');
+  });
+
+  it('--since still finds an event recorded before the wait started, with a pipe open', async () => {
+    const run = runWait(['onTaskDone', '--name', 'a.wake', '--since', '10m', '--timeout', '30m'], () => [entry('onTaskDone', clock.ms - 60_000)], {}, {});
+    expect(await run.code).toBe(0);
+  });
+});
+
+describe('queue wait ci --name: the wake', () => {
+  const SHA = 'b'.repeat(40);
+  const git: GitPort = { read: (args) => (args.join(' ') === 'remote get-url origin' ? 'git@github.com:o/r.git' : null), succeeds: () => true };
+
+  it('registers with the pipe it listens on and closes it on the way out', async () => {
+    let contact: unknown;
+    const run = runWait(['ci', SHA, '--no-infer', '--repo', 'o/r', '--name', 'a.ciwake'], () => { contact = live()[0]?.contact; return []; }, { git }, {});
+    await run.code;
+    expect(contact).toEqual({ kind: 'pipe', path: '/fake/wake-a.ciwake.sock' });
+    expect(run.session.wakeCalls).toEqual(['sweep', 'open a.ciwake', 'close']);
   });
 });
 

@@ -36,6 +36,7 @@ import { listLiveWaiters, WaiterScanCache, type WaiterScan, type WaiterScanOptio
 import { WaiterRegistry } from '../waiters/WaiterRegistry.js';
 import { waitersDir } from '../waiters/WaiterHistory.js';
 import { toEnvelope } from '../waiters/WaiterMatch.js';
+import { createWaiterNotifier, type WakeSender } from '../waiters/WaiterNotifier.js';
 import type {
   QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse,
   ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse,
@@ -62,6 +63,8 @@ export interface QueueServiceOptions {
 export interface QueueServiceWaiterOptions extends Pick<WaiterScanOptions, 'now' | 'isAlive' | 'fs' | 'clock' | 'maxFiles' | 'timeBoxMs' | 'ttlMs'> {
   /** Replaces the scan of the waiter files. */
   scan?: (configDir: string, options: WaiterScanOptions) => WaiterScan;
+  /** The wake of the waits that listen on a pipe. Tests replace the connection. */
+  wake?: { send?: WakeSender };
 }
 
 /** The answer of a push names this many waiters at most (`waiterCount` is the real number). */
@@ -107,6 +110,11 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   let announceRetryRunning = false;
   // What was parsed from the waiter files, kept between pushes (a heartbeat does not change it)
   const waiterCache = new WaiterScanCache();
+  // The wake of the waits that listen (a hint after the history write; see waiters/WaiterWake.ts). Each cause is said once per daemon run.
+  const waiterNotifier = createWaiterNotifier(configDir, {
+    ...(options.waiters?.wake?.send !== undefined && { send: options.waiters.wake.send }),
+    onProblem: (_cause, message) => { sayOnce('QueueDaemon.wake', message); },
+  });
   const projectResolver = options.registryDir === undefined ? undefined : new ProjectResolver(options.registryDir);
 
   /**
@@ -152,6 +160,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       for (const problem of scan.problems) {
         sayOnce('QueueDaemon.waiters', problem);
       }
+      // Fire and forget: the answer of the push never waits for a wait
+      waiterNotifier.notify(scan.waiters, { event: envelope.event, eventId: envelope.id });
       return { waiterCount: scan.waiters.length, waiters: scan.waiters.slice(0, MAX_REPORTED_WAITERS).map((waiter) => waiter.name) };
     } catch (err) {
       sayOnce('QueueDaemon.waiters', `could not look for the waiters in ${waitersDir(configDir)}: ${getErrorMessage(err)}. The push is not affected; its answer carries no waiterCount, so "queue push" cannot say who waits. Fix: check that the folder is readable.`);

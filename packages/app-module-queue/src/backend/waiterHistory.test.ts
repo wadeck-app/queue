@@ -3,7 +3,7 @@ import { appendFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { waitersDir, type WaitRowOutcome } from '@wadeck-app/queue-core';
 import { listWaiterHistory } from './waiterHistory.js';
-import { registerFixtureWait, registryAt } from './waitersFixture.testUtil.js';
+import { registerFixtureWait, registryAt, snapshotTree } from './waitersFixture.testUtil.js';
 import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 const T0 = Date.parse('2026-11-08T09:00:00.000Z');
@@ -95,11 +95,21 @@ describe('listWaiterHistory: who waited, from when to when, how it ended', () =>
     expect(entry).not.toHaveProperty('to');
   });
 
-  it('a stale record is swept first: the wait is lost, ends at its last heartbeat, and the answer says it was swept', () => {
+  it('a stale record is not swept by the GET: the wait is shown lost and ends at its last heartbeat, and nothing is written', () => {
     registerFixtureWait(configDir, { name: 'silent.one', at: T0 });
+    const before = snapshotTree(configDir);
     const page = list();
     expect(page.entries[0]).toMatchObject({ name: 'silent.one', outcome: 'lost', to: new Date(T0).toISOString(), durationText: '0s' });
-    expect(page.sweptText).toContain('silent.one');
+    expect(page).not.toHaveProperty('sweptText');
+    expect(list()).toEqual(page);
+    expect(snapshotTree(configDir)).toEqual(before);
+  });
+
+  it('a waiters folder that cannot be listed is an error that names it and what to do, never a history that calls every running wait lost', () => {
+    registerFixtureWait(configDir, { name: 'run.one', at: T0 });
+    const denied = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    const readdir = (dir: string): string[] => { if (dir.endsWith('waiters')) throw denied; return []; };
+    expect(() => listWaiterHistory(configDir, { filter: {}, pagination: {} }, { now: () => NOW, isAlive: () => true, fs: { readdir } })).toThrow(/EACCES.*Fix:/);
   });
 
   it('newest first, and the event is absent (not empty) for a wait that did not match', () => {
