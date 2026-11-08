@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { goBuildEnv } from '../testing/goBuildEnv.js';
 
 const CI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'ci');
 
@@ -66,7 +67,7 @@ describe('Go launcher: config dir resolution (go test)', () => {
       copyFileSync(join(sdkDir, 'go.sum'), join(dir, 'go.sum'));
       // The real environment on purpose: the Go module cache lives under the real home (an isolated home would make go download the modules). The Go tests set
       // their own HOME / XDG_CONFIG_HOME to throwaway directories.
-      const result = spawnSync('go', ['test', './...'], { cwd: dir, encoding: 'utf8', timeout: 300_000, windowsHide: true, env: { ...process.env, TMPDIR: realTmp, TEMP: realTmp, TMP: realTmp } });
+      const result = spawnSync('go', ['test', './...'], { cwd: dir, encoding: 'utf8', timeout: 300_000, windowsHide: true, env: goBuildEnv(process.env, process.env['QUEUE_TEST_REAL_TMPDIR']) });
       if (result.error) {
         throw new Error(`Cannot run \`go test\` (${result.error.message}). Fix: install Go and put it in PATH (the CI workflow installs it with actions/setup-go).`);
       }

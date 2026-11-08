@@ -15,6 +15,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { goBuildEnv } from '../testing/goBuildEnv.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 
 const PACKAGE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -47,15 +48,6 @@ function launcherFiles(configDir: string): string[] {
   return out;
 }
 
-/**
- * The Go build runs in the REAL temp dir, not in the private root of the leak guard: build.sh puts a go.mod in a folder it creates with mktemp, and go ignores a go.mod
- * below the redirected temp root ("go: warning: ignoring go.mod in system temp root", seen on the Linux CI runner). Outside the guard (no variable) nothing changes.
- */
-function realTmpEnv(): NodeJS.ProcessEnv {
-  const real = process.env['QUEUE_TEST_REAL_TMPDIR'];
-  return real === undefined ? {} : { TMPDIR: real, TEMP: real, TMP: real };
-}
-
 describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
   let iso: IsolatedCliEnv;
   let launcherExe: string;
@@ -69,7 +61,7 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
       // Same entry point as CI: ci/scripts/build-launcher.mjs, but host platform only (build.sh has no linux target) into a throwaway dir, via bash + the same build.sh.
       execFileSync('node', [join(PACKAGE_DIR, 'ci', 'scripts', 'build-launcher.mjs')], {
         stdio: 'pipe', encoding: 'utf8', timeout: 240_000, windowsHide: true,
-        env: { ...process.env, QUEUE_LAUNCHER_OUT_DIR: outDir, QUEUE_LAUNCHER_HOST_ONLY: '1', ...realTmpEnv() },
+        env: { ...goBuildEnv(process.env, process.env['QUEUE_TEST_REAL_TMPDIR']), QUEUE_LAUNCHER_OUT_DIR: outDir, QUEUE_LAUNCHER_HOST_ONLY: '1' },
       });
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message: string };
