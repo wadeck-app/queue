@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Wal } from './Wal.js';
 import { DlqStore } from './DlqStore.js';
+import { dlqEntry, walEntry } from '../queueEntries.testUtil.js';
 
 /**
  * Several PROCESSES write the WAL / DLQ at once, as the daemon and app-core's queue module can. Before the file lock,
@@ -27,13 +28,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-function walEntry(id: string) {
-  return { id, timestamp: new Date().toISOString(), event: 'onRace', payload: { id }, meta: { cwd: '/', projectName: 'p' }, subscriberId: 's', status: 'pending' as const, attempts: 0 };
-}
 
-function dlqEntry(id: string) {
-  return { id, event: 'onRace', payload: { id }, meta: { cwd: '/', projectName: 'p' }, subscriberId: 's', attempts: 3, lastError: 'boom', movedAt: new Date().toISOString() };
-}
 
 /** Runs the same script in WRITERS node processes (through tsx, straight from src) and returns their exit codes and stderr. */
 async function runWriters(scriptBody: string): Promise<{ codes: number[]; stderr: string }> {

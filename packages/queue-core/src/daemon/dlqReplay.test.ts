@@ -11,6 +11,7 @@ import { DlqStore, type DlqEntry } from '../storage/DlqStore.js';
 import { HistoryReader, type HistoryEntry } from '../storage/HistoryReader.js';
 import { clearDlqEntriesReturning, listDlqEntries } from '../operations.js';
 import { waitFor } from '../waitFor.testUtil.js';
+import { seededDlqEntry } from '../queueEntries.testUtil.js';
 
 // dlq-replay: the subscriber is resolved BEFORE the row is touched. A replay that cannot run answers an error that says what to fix and leaves the DLQ as it was.
 
@@ -54,19 +55,7 @@ function markerCli(name: string, marker: string, exitCode = 0): string {
   return ['subscribers:', '  onSeed:', '    - type: cli', `      name: ${name}`, `      command: ${JSON.stringify(`"${process.execPath}" "${script}"`)}`, '      retries: 0', ''].join('\n');
 }
 
-function dlqRow(id: string, overrides: Partial<DlqEntry> = {}): DlqEntry {
-  return {
-    id,
-    event: 'onSeed',
-    payload: { secret: `payload-of-${id}` },
-    meta: { cwd: projectDir, projectId, eventId: `evt-${id}` },
-    subscriberId: `${projectId}/ok`,
-    attempts: 3,
-    lastError: 'seeded',
-    movedAt: '2026-11-07T10:00:00.000Z',
-    ...overrides,
-  };
-}
+const dlqRow = (id: string, overrides: Partial<DlqEntry> = {}): DlqEntry => seededDlqEntry({ cwd: projectDir, projectId }, id, { attempts: 3, subscriberId: `${projectId}/ok`, ...overrides });
 
 function seedRowAndWal(id: string, rowOverrides: Partial<DlqEntry> = {}): DlqEntry {
   const row = dlqRow(id, rowOverrides);

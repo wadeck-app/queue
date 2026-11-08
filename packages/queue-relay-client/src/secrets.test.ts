@@ -3,6 +3,7 @@ import { parseDotEnv, resolveRelayToken } from './secrets.js';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
+import { readFileSync } from 'node:fs';
 
 describe('secrets', () => {
   describe('parseDotEnv', () => {
@@ -204,23 +205,25 @@ describe('secrets', () => {
       }
     });
 
-    it('error message does not contain token value', async () => {
-      const fn = () =>
-        resolveRelayToken({
-          configDir: tmpDir,
-          relayYmlToken: undefined,
-          env: {},
-        });
+    it('the no-token error never contains a secret that was read on the way (secrets file, environment, blank relay.yml token)', async () => {
+      const secretsDir = path.join(tmpDir, '_secrets_');
+      await fs.mkdir(secretsDir, { recursive: true });
+      await fs.writeFile(path.join(secretsDir, '.env.local'), 'OTHER_SECRET=file-secret-value\nQUEUE_RELAY_TOKEN=\n');
+      const readFile = vi.fn((file: string, encoding: BufferEncoding) => readFileSync(file, encoding));
 
-      expect(fn).toThrow();
+      let message = '';
       try {
-        fn();
+        resolveRelayToken({ configDir: tmpDir, relayYmlToken: '   ', env: { QUEUE_RELAY_TOKEN: '  ', GITHUB_TOKEN: 'env-secret-value' }, readFile });
       } catch (err) {
-        const msg = (err as Error).message;
-        // Ensure no actual token value is in the message (a real token would look like a long string)
-        // The message should contain placeholder "<token>" not an actual token
-        expect(msg).toContain('<token>');
+        message = (err as Error).message;
       }
+
+      // the file really was read (it holds a secret), and the message still names the placeholder only
+      expect(readFile).toHaveBeenCalledTimes(1);
+      expect(message).toContain('No relay token found');
+      expect(message).toContain('<token>');
+      expect(message).not.toContain('file-secret-value');
+      expect(message).not.toContain('env-secret-value');
     });
 
     it('detects legacy .env.local next to _secrets_/ and throws', async () => {
@@ -242,13 +245,16 @@ describe('secrets', () => {
       const legacyPath = path.join(tmpDir, '.env.local');
       await fs.writeFile(legacyPath, 'QUEUE_RELAY_TOKEN=legacy-token\n');
 
-      expect(() =>
-        resolveRelayToken({
-          configDir: tmpDir,
-          relayYmlToken: undefined,
-          env: {},
-        })
-      ).toThrow(legacyPath);
+      let message = '';
+      try {
+        resolveRelayToken({ configDir: tmpDir, relayYmlToken: 'yml-secret-value', env: {} });
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toContain(legacyPath);
+      // neither the token of the legacy file nor the one of relay.yml may be echoed
+      expect(message).not.toContain('legacy-token');
+      expect(message).not.toContain('yml-secret-value');
     });
 
     it('ignores legacy error if secrets file exists', async () => {
@@ -326,21 +332,19 @@ describe('secrets', () => {
         throw err;
       });
 
-      const fn = () =>
-        resolveRelayToken({
-          configDir: tmpDir,
-          relayYmlToken: undefined,
-          env: {},
-          readFile: mockReadFile,
-        });
-
-      expect(fn).toThrow();
+      let msg = '';
       try {
-        fn();
+        resolveRelayToken({ configDir: tmpDir, relayYmlToken: 'yml-secret-value', env: {}, readFile: mockReadFile });
       } catch (err) {
-        const msg = (err as Error).message;
-        expect(msg).not.toContain('super-secret-token-value');
+        msg = (err as Error).message;
       }
+
+      // the unreadable file was attempted, the error names it and its cause, and no token (file or relay.yml) is in it
+      expect(mockReadFile).toHaveBeenCalledWith(envFile, 'utf8');
+      expect(msg).toContain(envFile);
+      expect(msg).toContain('EACCES');
+      expect(msg).not.toContain('super-secret-token-value');
+      expect(msg).not.toContain('yml-secret-value');
     });
   });
 });

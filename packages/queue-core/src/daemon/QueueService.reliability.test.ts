@@ -289,6 +289,18 @@ describe('crash recovery reschedules the pending entries', () => {
     expect(schedule.mock.calls.map((c) => [(c[0] as WalEntry).id, c[1] ?? false])).toEqual([['a', false], ['b', false]]);
   });
 
+  it('onStart: orch refusing the job later (asynchronous failure) marks the entry failed with the cause and the command to run by hand', async () => {
+    const service = start(SUBSCRIBERS_ONE, gate());
+    walFile().append(pending('a'));
+    vi.spyOn(RetryScheduler, 'scheduleRetry').mockImplementation((_entry, _sync, options) => { options?.onError?.(new Error('orch exited with code 4: --command is required')); });
+
+    service.onStart();
+
+    await waitFor('the entry to be marked', () => entries()[0]?.status === 'failed');
+    expect(entries()[0]!.lastError).toContain('--command is required');
+    expect(entries()[0]!.lastError).toContain('queue retry --event a');
+  });
+
   it('onShutdown schedules each pending entry synchronously (the process is about to exit)', () => {
     const service = start(SUBSCRIBERS_ONE, gate());
     walFile().appendMany([pending('a'), pending('c', 'acked')]);

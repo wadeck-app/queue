@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DlqStore, type DlqEntry } from './DlqStore.js';
 import type { StorageDiagnostic } from './StorageDiagnostics.js';
+import { dlqEntry as baseDlqEntry } from '../queueEntries.testUtil.js';
 
-function dlqEntry(id: string): DlqEntry {
-  return { id, event: 'test.event', payload: { x: 1 }, meta: { cwd: '/tmp' }, subscriberId: 'sub-1', attempts: 3, lastError: 'boom', movedAt: '2026-10-19T10:00:00.000Z' };
-}
+const dlqEntry = (id: string): DlqEntry => baseDlqEntry(id, { event: 'test.event', attempts: 3, movedAt: '2026-10-19T10:00:00.000Z' });
+
 
 const CORRUPT = '{"id":"torn","event":"onT';
 

@@ -21,6 +21,8 @@ const SPECIAL = { authBlockedMs: 333_000, tryAgainMs: 222_000, abuseMs: 111_000 
 type FakeRelay =
   | { kind: 'ws-close'; code: number }
   | { kind: 'ws-drop' }
+  /** The nth connection ends as the nth step says (a close code, or a dropped socket); the last step repeats. */
+  | { kind: 'ws-script'; steps: Array<number | 'drop'> }
   | { kind: 'http'; status: number };
 
 interface Started {
@@ -43,11 +45,16 @@ async function startFakeRelay(behaviour: FakeRelay): Promise<Started> {
     return { port: address.port, close: () => new Promise<void>((resolve) => { server.close(() => resolve()); }) };
   }
   const wss = new WebSocketServer({ port: 0 });
+  let connections = 0;
   wss.on('connection', (ws) => {
+    const step = behaviour.kind === 'ws-script' ? behaviour.steps[Math.min(connections, behaviour.steps.length - 1)] : undefined;
+    connections += 1;
     ws.on('message', () => {
       // The first message is the auth: answer with the scripted end of the connection
       if (behaviour.kind === 'ws-close') {
         ws.close(behaviour.code);
+      } else if (typeof step === 'number') {
+        ws.close(step);
       } else {
         ws.terminate();
       }
@@ -70,6 +77,11 @@ describe('RelayConnection reconnect backoff (delays read from an injected sleep)
 
   /** Runs the loop against a scripted relay until it asked for `count` waits, and returns them in order. */
   async function delaysAsked(behaviour: FakeRelay, count: number, reconnect: RelayConnectionOptions['reconnect']): Promise<number[]> {
+    return (await scenario(behaviour, count, reconnect)).asked;
+  }
+
+  /** Same, and also what the connection reports as its last error once the waits were asked. */
+  async function scenario(behaviour: FakeRelay, count: number, reconnect: RelayConnectionOptions['reconnect']): Promise<{ asked: number[]; lastError: string | null }> {
     tmpDir = join(tmpdir(), `queue-relay-backoff-test-${crypto.randomUUID()}`);
     mkdirSync(tmpDir, { recursive: true });
     const relay = await startFakeRelay(behaviour);
@@ -96,7 +108,7 @@ describe('RelayConnection reconnect backoff (delays read from an injected sleep)
     } finally {
       await relay.close();
     }
-    return asked;
+    return { asked, lastError: connection.getDiagnostics().lastError };
   }
 
   it('grows exponentially from minMs and stops growing at maxMs', async () => {
@@ -124,6 +136,25 @@ describe('RelayConnection reconnect backoff (delays read from an injected sleep)
   ])('%s -> the dedicated delay, exactly, on every attempt (no jitter, no exponential growth)', async (_name, behaviour, expected) => {
     const asked = await delaysAsked(behaviour, 3, { random: () => 0.9 });
     expect(asked).toEqual([expected, expected, expected]);
+  });
+
+  it.each([
+    ['4400', 4400],
+    ['1013', 1013],
+    ['4429', 4429],
+  ])('after a %s the dedicated delay is used once: the next ordinary drop is back on the exponential backoff', async (_name, code) => {
+    const asked = await delaysAsked({ kind: 'ws-script', steps: [code, 'drop'] }, 4, { random: () => 0.5 });
+    const dedicated = { 4400: SPECIAL.abuseMs, 1013: SPECIAL.tryAgainMs, 4429: SPECIAL.authBlockedMs }[code];
+    expect(asked).toEqual([dedicated, 1_000, 2_000, 4_000]);
+  });
+
+  it.each([
+    ['4400', 4400, { abuseMs: 90_000 }, 'protocol error (4400); backing off 2 min'],
+    ['1013', 1013, { tryAgainMs: 1_500 }, 'temporarily unavailable (1013); backing off 2s'],
+    ['4429', 4429, { authBlockedMs: 90_000 }, '(4429): backing off 2 min'],
+  ])('the %s message rounds the delay up (a delay of 1.5 units says 2, never 1)', async (_name, code, reconnect, expected) => {
+    const { lastError } = await scenario({ kind: 'ws-close', code }, 1, reconnect);
+    expect(lastError).toContain(expected);
   });
 
   it('HTTP 503 on the upgrade uses the normal exponential backoff, not the 429 delay', async () => {

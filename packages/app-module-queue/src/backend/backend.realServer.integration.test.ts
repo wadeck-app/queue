@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync, utimesSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync, utimesSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
 import { addProject, removeProject } from '@wadeck-app/project-sdk';
 import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import { createQueueService } from '@wadeck-app/queue-core';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
@@ -159,7 +159,7 @@ function startServer(builtModule: string): Promise<string> {
 
 describe('the packaged module through a real app-core server', () => {
   beforeAll(async () => {
-    workDir = mkdtempSync(join(tmpdir(), 'app-module-queue-real-server-'));
+    workDir = makeTempDir('app-module-queue-real-server-');
     configDir = join(workDir, 'queue-config');
     const builtModule = join(workDir, 'module');
     writeHistory();
@@ -190,7 +190,7 @@ describe('the packaged module through a real app-core server', () => {
       child.kill();
       await exited;
     }
-    rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTempDir(workDir);
   });
 
   async function call(method: string, path: string, init: { headers?: Record<string, string>; body?: unknown } = {}): Promise<{ status: number; body: Record<string, unknown> }> {

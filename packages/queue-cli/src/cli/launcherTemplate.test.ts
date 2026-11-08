@@ -369,7 +369,13 @@ describe('launcherTemplate buildInstallCommand', () => {
     expect(() => load().buildInstallCommand('@wadeck-app/queue-cli-win32-x64', v)).toThrow(/valid version/);
   });
 
-  it('never emits an unversioned install in the template', () => {
-    expect(tpl).not.toMatch(/npm install -g ${pkgName}`/);
+  it('builds the install command in one place, version-pinned, and runs only that command', () => {
+    // The one string literal that starts an install is followed by the package name AND the version
+    expect(tpl.match(/'npm install -g '/g)).toHaveLength(1);
+    expect(tpl).toContain("'npm install -g ' + pkgName + '@' + version");
+    // The only thing handed to execSync is the command built by buildInstallCommand (an unversioned literal at the call site is refused)
+    const execCalls = tpl.split(/\r?\n/).filter((l) => l.includes('execSync(')).map((l) => l.slice(l.indexOf('execSync(')));
+    expect(execCalls.filter((c) => !c.startsWith('execSync(installCmd,'))).toEqual([]);
+    expect(execCalls.filter((c) => c.startsWith('execSync(installCmd,'))).toHaveLength(1);
   });
 });

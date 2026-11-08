@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CliTransport } from './CliTransport.js';
+import { CliTransport, type TransportTimers } from './CliTransport.js';
+import { waitFor } from '../waitFor.testUtil.js';
 import type { DispatchResult } from './DispatchResult.js';
 import type { EventEnvelope } from '../types.js';
 
@@ -33,6 +34,52 @@ function received(result: DispatchResult): { argv: string[]; stdin: string } {
 }
 
 const transport = new CliTransport();
+
+/** Timers that remember what was asked of them. The ones `hold` selects only fire when the test calls `fire`; the others are real timers. */
+class ManualTimers implements TransportTimers {
+  readonly scheduled: Array<{ callback: () => void; delayMs: number; held: boolean; cancelled: boolean; fired: boolean; real?: NodeJS.Timeout }> = [];
+
+  constructor(private readonly hold: (delayMs: number) => boolean) {}
+
+  set(callback: () => void, delayMs: number): unknown {
+    const timer: (typeof this.scheduled)[number] = { callback, delayMs, held: this.hold(delayMs), cancelled: false, fired: false };
+    if (!timer.held) {
+      timer.real = setTimeout(callback, delayMs);
+    }
+    this.scheduled.push(timer);
+    return timer;
+  }
+
+  clear(handle: unknown): void {
+    const timer = handle as (typeof this.scheduled)[number];
+    timer.cancelled = true;
+    clearTimeout(timer.real);
+  }
+
+  /** Fires the timer scheduled at `index` (in the order they were asked for) unless it was cancelled or already fired. */
+  fire(index: number): void {
+    const timer = this.scheduled[index];
+    if (timer === undefined || timer.cancelled || timer.fired) {
+      return;
+    }
+    timer.fired = true;
+    timer.callback();
+  }
+
+  delays(): number[] {
+    return this.scheduled.map((timer) => timer.delayMs);
+  }
+}
+
+/** True while the process exists (EPERM means it exists but is not ours). */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 function run(command: string, payload: unknown, cwd: string = workDir): Promise<DispatchResult> {
   return transport.dispatch(command, envelope(payload), 30_000, cwd, undefined, 'notify');
@@ -286,11 +333,11 @@ describe('CliTransport - exit code and output reach the result', () => {
     beforeAll(() => {
       treeDir = join(workDir, 'tree');
       mkdirSync(treeDir);
-      // The grandchild inherits the stdio pipes of the child and would write the marker after 4 s unless it is killed
-      writeFileSync(join(treeDir, 'grandchild.js'), `setTimeout(() => require('node:fs').writeFileSync(process.argv[2], 'alive'), 4000);`);
+      // The grandchild inherits the stdio pipes of the child. It records its pid, then writes the marker after 15 s unless it is killed (15 s only bounds a run where the kill does not work)
+      writeFileSync(join(treeDir, 'grandchild.js'), `require('node:fs').writeFileSync(process.argv[3], String(process.pid)); setTimeout(() => require('node:fs').writeFileSync(process.argv[2], 'alive'), 15000);`);
       writeFileSync(join(treeDir, 'parent.js'), `
         const { spawn } = require('node:child_process');
-        spawn(process.execPath, [require('node:path').join(__dirname, 'grandchild.js'), process.argv[2]], { stdio: 'inherit' });
+        spawn(process.execPath, [require('node:path').join(__dirname, 'grandchild.js'), process.argv[2], process.argv[3]], { stdio: 'inherit' });
         setTimeout(() => {}, 9000);
       `);
       // Exits at once and leaves a grandchild that keeps the pipes open for 7 s
@@ -303,26 +350,42 @@ describe('CliTransport - exit code and output reach the result', () => {
     });
 
     it.each([
-      ['with placeholders (no shell)', (marker: string) => `"${NODE}" "${join(treeDir, 'parent.js')}" "${marker}" {{ v }}`],
-      ['without placeholders (shell)', (marker: string) => `"${NODE}" "${join(treeDir, 'parent.js')}" "${marker}"`],
-    ])('%s: resolves about at the timeout and the grandchild is gone', async (label, build) => {
-      const marker = join(treeDir, `marker-${label.startsWith('with ') ? 'a' : 'b'}.txt`);
-      const result = await transport.dispatch(build(marker), envelope({ v: 'x' }), 1000, workDir, undefined, 'notify');
+      ['with placeholders (no shell)', (marker: string, pidFile: string) => `"${NODE}" "${join(treeDir, 'parent.js')}" "${marker}" "${pidFile}" {{ v }}`],
+      ['without placeholders (shell)', (marker: string, pidFile: string) => `"${NODE}" "${join(treeDir, 'parent.js')}" "${marker}" "${pidFile}"`],
+    ])('%s: the timeout kills the whole tree, the grandchild included', async (label, build) => {
+      const suffix = label.startsWith('with ') ? 'a' : 'b';
+      const marker = join(treeDir, `marker-${suffix}.txt`);
+      const pidFile = join(treeDir, `pid-${suffix}.txt`);
+      // Only the timeout of the dispatch (1000 ms) is held back: the test fires it once the grandchild is known to run, so no race with a slow start
+      const timers = new ManualTimers((delayMs) => delayMs === 1000);
+      const pending = new CliTransport(timers).dispatch(build(marker, pidFile), envelope({ v: 'x' }), 1000, workDir, undefined, 'notify');
+      await waitFor('the grandchild wrote its pid', () => existsSync(pidFile) && /^\d+$/.test(readFileSync(pidFile, 'utf8')));
+      const grandchildPid = Number(readFileSync(pidFile, 'utf8'));
+      expect(isAlive(grandchildPid)).toBe(true);
+      timers.fire(0);
+      const result = await pending;
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/timeout after 1s/);
-      expect(result.durationMs).toBeLessThan(4000);
-      // The grandchild would have written the marker at 4 s
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      // The dispatch ends at the latest 5 s after the kill even if the process never reports its end
+      expect(timers.delays()).toContain(5000);
+      // The grandchild is gone. If it survived, it would write the marker after 15 s: the marker is the proof, not a sleep
+      await waitFor('the grandchild process to be gone', () => !isAlive(grandchildPid));
       expect(existsSync(marker)).toBe(false);
-    }, 20_000);
+    });
 
-    it('a program that exits while a grandchild keeps the pipes open resolves shortly after the exit, with what it printed and its exit code', async () => {
-      const result = await transport.dispatch(`"${NODE}" "${join(treeDir, 'daemonizer.js')}" {{ v }}`, envelope({ v: 'x' }), 30_000, workDir, undefined, 'notify');
+    it('a program that exits while a grandchild keeps the pipes open resolves once the grace period after the exit is over, with what it printed and its exit code', async () => {
+      // Every timer is held: the test fires the grace timer itself (when the pipes closed on their own first, the dispatch is already settled and firing it is a no-op)
+      const timers = new ManualTimers(() => true);
+      const pending = new CliTransport(timers).dispatch(`"${NODE}" "${join(treeDir, 'daemonizer.js')}" {{ v }}`, envelope({ v: 'x' }), 600_000, workDir, undefined, 'notify');
+      // timer 0 is the timeout of the dispatch; the grace period is scheduled when the process exits
+      await waitFor('the process exited and the grace timer was scheduled', () => timers.scheduled.length >= 2);
+      expect(timers.scheduled[1]!.delayMs).toBe(3000);
+      timers.fire(1);
+      const result = await pending;
       expect(result.success).toBe(true);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe('parent-done');
-      expect(result.durationMs).toBeLessThan(6000);
-    }, 20_000);
+    });
   });
 
   it('a timeout carries no exitCode', async () => {

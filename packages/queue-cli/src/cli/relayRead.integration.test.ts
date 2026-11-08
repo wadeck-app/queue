@@ -3,7 +3,7 @@
  * Runs the bundled CLI against a fake relay REST server.
  *
  * This test:
- * 1. Builds the CLI bundle (if not already built)
+ * 1. Uses the CLI bundle built once per run by vitest.globalSetup.ts
  * 2. Starts a fake relay REST server on an ephemeral port
  * 3. Writes a relay.yml with the fake relay URL
  * 4. Runs the bundled CLI with various webhook commands
@@ -12,11 +12,11 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createServer, Server, IncomingMessage, ServerResponse } from 'node:http';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { runQueueCliAsync, type CliResult } from '../testing/runCli.js';
 import { testBundleFile } from '../testing/testBundle.js';
 
 
@@ -188,39 +188,17 @@ describe('relayRead integration', () => {
     }
   });
 
-  // Asynchronous on purpose: the fake relay runs in THIS process, so a blocking spawnSync would freeze it
+  // Asynchronous on purpose (runQueueCliAsync): the fake relay runs in THIS process, so a blocking spawnSync would freeze it
   // and the CLI would wait for an answer that can never come
-  function runCli(args: string[], env: Record<string, string> = {}): Promise<{
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-  }> {
-    const fullEnv: NodeJS.ProcessEnv = {
-      // Isolated home / npm / registry; only the config dir is per test
-      ...iso.env,
-      QUEUE_CONFIG_DIR: tempDir,
-      QUEUE_RELAY_TOKEN: 'test-relay-token',
-      ...env,
-    };
-
-    // Remove NODE_OPTIONS to avoid interference from test harness
-    delete fullEnv['NODE_OPTIONS'];
-
-    // No shell: arguments are passed as an array, and both output streams are always returned
-    return new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [bundlePath, ...args], { cwd: tempDir, env: fullEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error(`CLI did not finish within 300s (hung?): ${args.join(' ')}`)); }, 300_000);
-      child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-      child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-      child.on('error', (err) => { clearTimeout(timer); reject(err); });
-      child.on('close', (code) => { clearTimeout(timer); resolve({ stdout, stderr, exitCode: code ?? -1 }); });
-    });
+  function runCli(args: string[], env: Record<string, string> = {}): Promise<CliResult> {
+    // Isolated home / npm / registry; only the config dir is per test
+    return runQueueCliAsync(iso.env, args, { cwd: tempDir, extraEnv: { QUEUE_CONFIG_DIR: tempDir, QUEUE_RELAY_TOKEN: 'test-relay-token', ...env } });
   }
 
-  it('builds the CLI bundle successfully', async () => {
-    expect(existsSync(bundlePath)).toBe(true);
+  it('the test bundle runs: --version answers with the version the global setup stamped', async () => {
+    const result = await runCli(['--version']);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout + result.stderr).toContain('0.0.0-test-integration');
   });
 
   it('`queue relay webhook list` returns table with correct Authorization header', async () => {

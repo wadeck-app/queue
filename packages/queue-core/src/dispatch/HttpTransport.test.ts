@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { HttpTransport, MAX_HTTP_RESPONSE_BYTES } from './HttpTransport.js';
@@ -49,6 +49,19 @@ describe('HttpTransport timeout message', () => {
     const result = await new HttpTransport().dispatch(`${base}/`, 'POST', undefined, envelope, 200);
     expect(result.success).toBe(false);
     expect(result.error).toBe('timeout after 200ms');
+  });
+});
+
+describe('HttpTransport timer', () => {
+  it('arms the timeout of the subscriber and releases the timer once the exchange is over, whatever its outcome', async () => {
+    const armed = vi.spyOn(globalThis, 'setTimeout');
+    const released = vi.spyOn(globalThis, 'clearTimeout');
+    handler = (_req, res) => { res.writeHead(200); res.end('ok'); };
+    // An unusual value, so that no timer of the runtime can be taken for ours
+    await new HttpTransport().dispatch(`${base}/`, 'POST', undefined, envelope, 4321);
+    const index = armed.mock.calls.findIndex((call) => call[1] === 4321);
+    expect(index, 'no timer was armed with the timeout of the subscriber').toBeGreaterThanOrEqual(0);
+    expect(released).toHaveBeenCalledWith(armed.mock.results[index]!.value);
   });
 });
 
@@ -107,6 +120,18 @@ describe('HttpTransport response body', () => {
     expect((result.stdout ?? '').length).toBeLessThanOrEqual(MAX_HTTP_RESPONSE_BYTES);
   });
 
+  it('the limit is the 1 MiB the error message and the docs announce', () => {
+    expect(MAX_HTTP_RESPONSE_BYTES).toBe(1024 * 1024);
+  });
+
+  it('refuses a body one byte above the limit', async () => {
+    handler = (_req, res) => { res.writeHead(200); res.end('x'.repeat(MAX_HTTP_RESPONSE_BYTES + 1)); };
+    const result = await new HttpTransport().dispatch(`${base}/`, 'POST', undefined, envelope, 10_000);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('1 MiB');
+    expect(result.stdout).toHaveLength(MAX_HTTP_RESPONSE_BYTES);
+  });
+
   it('accepts a body of exactly the limit', async () => {
     handler = (_req, res) => { res.writeHead(200); res.end('x'.repeat(MAX_HTTP_RESPONSE_BYTES)); };
     const result = await new HttpTransport().dispatch(`${base}/`, 'POST', undefined, envelope, 10_000);
@@ -131,7 +156,8 @@ describe('HttpTransport redirects: custom headers and the envelope must never be
     await new Promise<void>((done) => other.close(() => done()));
   });
 
-  it.each([301, 302, 307, 308])('%i is a failure naming the origin of the Location, and the target is never called', async (status) => {
+  // 300 and 399 are the edges of the 3xx range, 299 and 400 (tested above) the first statuses outside it
+  it.each([300, 301, 302, 303, 307, 308, 399])('%i is a failure naming the origin of the Location, and the target is never called', async (status) => {
     otherSeen = 0;
     handler = (_req, res) => { res.writeHead(status, { Location: `${otherBase}/steal?token=SECRETQUERY` }); res.end(); };
     const result = await new HttpTransport().dispatch(`${base}/`, 'POST', { Authorization: 'Bearer SECRETHEADER' }, envelope, 5_000);

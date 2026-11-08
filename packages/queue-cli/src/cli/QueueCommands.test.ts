@@ -81,17 +81,16 @@ async function run(args: string[]): Promise<{ stdout: string; stderr: string; ex
 
 beforeEach(() => {
 	tmpDir = mkdtempSync(join(tmpdir(), 'queue-cmd-test-'));
-	process.env['QUEUE_CONFIG_DIR'] = tmpDir;
-	process.env['LAUNCHER_BUNDLE_OVERRIDE'] = join(tmpDir, 'queue.cjs');
+	vi.stubEnv('QUEUE_CONFIG_DIR', tmpDir);
+	vi.stubEnv('LAUNCHER_BUNDLE_OVERRIDE', join(tmpDir, 'queue.cjs'));
 	vi.clearAllMocks();
 	mockIsRunning.mockResolvedValue(true);
 	mockSend.mockResolvedValue({ status: 'ok' });
 });
 
 afterEach(() => {
-	delete process.env['QUEUE_CONFIG_DIR'];
-	delete process.env['XDG_CONFIG_HOME'];
-	delete process.env['LAUNCHER_BUNDLE_OVERRIDE'];
+	// Puts back what each test stubbed (the real values, or unset), never deletes a variable the developer's shell had
+	vi.unstubAllEnvs();
 	rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -184,7 +183,7 @@ describe('queue status', () => {
 	it('counts one project only with --project, from the queue files, and says which project', async () => {
 		const configDir = process.env['QUEUE_CONFIG_DIR'] as string;
 		// the registry the CLI reads is the one under XDG_CONFIG_HOME
-		process.env['XDG_CONFIG_HOME'] = join(tmpDir, 'xdg');
+		vi.stubEnv('XDG_CONFIG_HOME', join(tmpDir, 'xdg'));
 		const project = await addProject(join(tmpDir, 'xdg', 'project'), { name: 'app', path: tmpDir });
 		const entry = (id: string, projectId: string) => ({ id, timestamp: new Date().toISOString(), event: 'onFoo', payload: {}, meta: { cwd: '/p', projectId }, subscriberId: 's', status: 'pending' as const, attempts: 0 });
 		writeFileSync(join(configDir, 'wal.ndjson'), [entry('a', project.id), entry('b', 'other')].map((line) => JSON.stringify(line)).join('\n') + '\n');
@@ -197,7 +196,7 @@ describe('queue status', () => {
 	});
 
 	it('refuses a --project that is not registered, with the reason, instead of counting nothing', async () => {
-		process.env['XDG_CONFIG_HOME'] = join(tmpDir, 'xdg');
+		vi.stubEnv('XDG_CONFIG_HOME', join(tmpDir, 'xdg'));
 		const { stderr, exitCode } = await run(['status', '--project', 'no-such-project-zzz']);
 		expect(exitCode).toBe(1);
 		expect(stderr).toContain('no-such-project-zzz');

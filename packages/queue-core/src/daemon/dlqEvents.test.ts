@@ -14,6 +14,7 @@ import { HistoryReader, type HistoryEntry } from '../storage/HistoryReader.js';
 import { listDlqEntries } from '../operations.js';
 import { waitFor } from '../waitFor.testUtil.js';
 import type { EventEnvelope } from '../types.js';
+import { seededDlqEntry } from '../queueEntries.testUtil.js';
 
 // The queue.dlq.added / queue.dlq.removed events, emitted by the daemon, against a real QueueService on temp dirs (real WAL, DLQ, history, child processes).
 
@@ -87,19 +88,7 @@ function failingCli(event: string, name = 'f', extra: string[] = ['      retries
 
 const YAML = (...blocks: string[][]): string => ['subscribers:', ...blocks.flat(), ''].join('\n');
 
-function dlqEntry(id: string, overrides: Partial<DlqEntry> = {}, meta: Partial<DlqEntry['meta']> = {}): DlqEntry {
-  return {
-    id,
-    event: 'onSeed',
-    payload: { seeded: id },
-    meta: { cwd: projectDir, projectId, eventId: `evt-${id}`, ...meta },
-    subscriberId: `${projectId}/old`,
-    attempts: 1,
-    lastError: 'seeded',
-    movedAt: '2026-11-07T10:00:00.000Z',
-    ...overrides,
-  };
-}
+const dlqEntry = (id: string, overrides: Partial<DlqEntry> = {}, meta: Partial<DlqEntry['meta']> = {}): DlqEntry => seededDlqEntry({ cwd: projectDir, projectId }, id, overrides, meta);
 
 /** Writes the DLQ file directly (the store itself rewrites the file on each append: too slow for a thousand). */
 function seedDlq(entries: DlqEntry[]): void {
@@ -292,12 +281,15 @@ describe('queue.dlq.added', () => {
 
   it('shutdown while a failing cli subscriber is in flight does not throw, and the entry still ends in the DLQ with its event', async () => {
     const slow = join(projectDir, 'slow-fail.js');
-    writeFileSync(slow, 'setTimeout(() => process.exit(1), 400);');
+    // Fails only when the test releases it: it is certainly still running when the shutdown happens
+    const gate = join(projectDir, 'release-slow');
+    writeFileSync(slow, `const fs = require('node:fs'); const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(gate)})) { clearInterval(timer); process.exit(1); } }, 10);`);
     const command = `"${process.execPath}" "${slow}"`;
     await projectWith(['subscribers:', '  onFoo:', '    - type: cli', '      name: slow', `      command: ${JSON.stringify(command)}`, '      retries: 0', ''].join('\n'));
     const svc = service();
     await svc.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
     expect(() => svc.onShutdown()).not.toThrow();
+    writeFileSync(gate, 'go');
     await waitFor('the entry and its event', () => svc.isIdle() && added().length === 1);
     expect(listDlqEntries(configDir)).toHaveLength(1);
   });

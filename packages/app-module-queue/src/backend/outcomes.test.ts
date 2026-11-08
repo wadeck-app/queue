@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { getOutcomes } from './outcomes.js';
+import { makeTempDir, removeTempDir, writeHistoryDay } from './tempDir.testUtil.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -12,16 +12,16 @@ const NOW = Date.parse('2026-01-02T12:00:00.000Z') + 150_000;
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-outcomes-'));
+  configDir = makeTempDir('app-module-outcomes-');
   mkdirSync(join(configDir, 'history'));
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 function writeDay(date: string, records: object[]): void {
-  writeFileSync(join(configDir, 'history', `${date}.ndjson`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  writeHistoryDay(configDir, date, records);
 }
 
 const outcome = (atMs: number, status: string) => ({ ts: new Date(atMs).toISOString(), type: 'outcome', eventId: 'e', event: 'onFoo', subscriberId: 'onFoo[0]', status });

@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TEST_BUNDLE_DIR_ENV } from './src/testing/testBundle.js';
 import { acquireBuildLock, releaseBuildLock } from './src/testing/buildLock.js';
+import { sweepStaleTestDirs } from './src/testing/staleSweep.js';
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const LOCK_DIR = join(tmpdir(), 'queue-cli-tests-bundle.lock');
@@ -20,6 +21,8 @@ function removeTree(path: string): void {
 }
 
 export default async function setup(): Promise<() => void> {
+  // The teardown below does not run when vitest is killed: remove what such runs left in the temp dir (only this tool's directories, older than a day)
+  sweepStaleTestDirs({ root: tmpdir() });
   // The lock first: a run that gives up waiting for it (hang guard) must not leave a directory of its own behind
   await acquireBuildLock({ lockDir: LOCK_DIR });
   let locked = true;

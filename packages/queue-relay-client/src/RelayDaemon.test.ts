@@ -418,72 +418,38 @@ plugins:
     expect(clientConnections.length).toBe(beforeLoopEnd);
   });
 
-  it('safety timeout is armed and can force exit', async () => {
-    const timeouts: Array<{ fn: () => void; ms: number; unref: boolean; timer: NodeJS.Timeout }> = [];
-    const exits: Array<number> = [];
+  it('stop arms an unref-ed 3 s safety timer; when it fires it logs and exits with 0', async () => {
+    const armed: Array<{ fn: () => void; ms: number; unrefCalls: number }> = [];
+    const exits: number[] = [];
+    const logs: string[] = [];
+    daemonHandle = await startRelayDaemon(
+      tmpConfigDir,
+      {
+        setTimeout: (fn, ms) => {
+          const entry = { fn, ms, unrefCalls: 0 };
+          armed.push(entry);
+          return { unref: () => { entry.unrefCalls += 1; } };
+        },
+        exit: (code) => { exits.push(code); },
+        log: (line) => { logs.push(line); },
+      },
+      { port: 0 },
+    );
+    await waitFor(() => authMessagesReceived > 0, 'the daemon to connect and send its auth message');
 
-    // Mock setTimeout to capture the safety timeout
-    const origSetTimeout = global.setTimeout;
-    const mockSetTimeout = vi.fn((fn: () => void, ms: number) => {
-      const timer = origSetTimeout(fn, ms);
-      timeouts.push({ fn, ms, unref: false, timer });
-      const realUnref = timer.unref.bind(timer);
-      timer.unref = () => {
-        timeouts[timeouts.length - 1].unref = true;
-        return realUnref();
-      };
-      return timer;
-    });
-    vi.stubGlobal('setTimeout', mockSetTimeout);
+    await daemonHandle.stop('command');
+    daemonHandle = null;
 
-    const mockExit = vi.fn((code: number) => {
-      exits.push(code);
-    });
+    // armed once, for 3 s, and never keeps the process alive
+    expect(armed).toHaveLength(1);
+    expect(armed[0].ms).toBe(3000);
+    expect(armed[0].unrefCalls).toBe(1);
+    // nothing forces an exit before the timer fires
+    expect(exits).toEqual([]);
 
-    try {
-      // This test builds its own config dir: the one the beforeEach made would be forgotten (the afterEach removes only the current one)
-      rmSync(tmpConfigDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-      tmpConfigDir = makeTmpDir();
-      const pluginPath = join(tmpConfigDir, 'plugin.js');
-      writeFileSync(
-        pluginPath,
-        `export default {
-  source: 'test',
-  mapEvent: (e) => ({ event: 'test', payload: e.payload })
-};`
-      );
-
-      writeFileSync(
-        join(tmpConfigDir, 'relay.yml'),
-        `relayUrl: ws://127.0.0.1:${serverPort}/relay
-token: test-token
-plugins:
-  - module: ${pluginPath}
-    subscriptions:
-      - eventType: [test]
-`
-      );
-
-      daemonHandle = await startRelayDaemon(tmpConfigDir, undefined, { port: 0 });
-
-      // Wait for connection
-      await waitFor(() => authMessagesReceived > 0, 'the daemon to connect and send its auth message');
-
-      // Stop via command (stopped here, so afterEach must not stop it again and arm another real forced exit)
-      const stoppingHandle = daemonHandle;
-      daemonHandle = null;
-      await stoppingHandle.stop('command');
-
-      // Verify a timeout was set with an unref()
-      const shutdownTimeouts = timeouts.filter((t) => t.ms >= 2500 && t.ms <= 3500);
-      expect(shutdownTimeouts.length).toBeGreaterThan(0);
-      expect(shutdownTimeouts[0].unref).toBe(true);
-    } finally {
-      vi.unstubAllGlobals();
-      // The real forced process.exit this test armed must never fire in the test worker
-      for (const t of timeouts) {
-        clearTimeout(t.timer);
-      }
-    }
+    // the timer firing is what forces the exit, with 0 (a requested stop is not a crash), after saying so
+    armed[0].fn();
+    expect(exits).toEqual([0]);
+    expect(logs).toContain('[relay] forced exit after shutdown timeout');
   });
 });

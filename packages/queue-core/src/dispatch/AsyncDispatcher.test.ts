@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 import { AsyncDispatcher } from './AsyncDispatcher.js';
 import { CliTransport } from './CliTransport.js';
 import { HttpTransport } from './HttpTransport.js';
@@ -64,12 +64,15 @@ describe('AsyncDispatcher', () => {
   let logger: QueueLogWriter;
   let historyLog: HistoryWriter;
   let dispatcher: AsyncDispatcher;
+  let scheduler: MockInstance<typeof RetryScheduler.scheduleRetry>;
 
   beforeEach(() => {
     walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
     dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
     logger = makeLogger();
     historyLog = makeHistoryLog();
+    // A failed delivery with retries left asks the scheduler for an orch job: never the real one (it would schedule a job in the orchestrator of whoever runs the tests)
+    scheduler = vi.spyOn(RetryScheduler, 'scheduleRetry').mockImplementation(() => undefined);
     dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger, historyLog);
   });
 
@@ -130,6 +133,7 @@ describe('AsyncDispatcher', () => {
     await dispatcher.dispatch([sub], makeEnvelope(), walEntries);
 
     expect(dlqMover).not.toHaveBeenCalled();
+    expect(scheduler).toHaveBeenCalledTimes(1);
   });
 
   it('retries=2: dlqMover called when attempts reach retries', async () => {
@@ -157,12 +161,15 @@ describe('AsyncDispatcher - diagnosability', () => {
   let logger: QueueLogWriter;
   let historyLog: HistoryWriter;
   let dispatcher: AsyncDispatcher;
+  let scheduler: MockInstance<typeof RetryScheduler.scheduleRetry>;
 
   beforeEach(() => {
     walUpdater = vi.fn() as unknown as (id: string, updates: Partial<WalEntry>) => void;
     dlqMover = vi.fn() as unknown as (entry: WalEntry, lastError: string) => void;
     logger = makeLogger();
     historyLog = makeHistoryLog();
+    // A failed delivery with retries left asks the scheduler for an orch job: never the real one (it would schedule a job in the orchestrator of whoever runs the tests)
+    scheduler = vi.spyOn(RetryScheduler, 'scheduleRetry').mockImplementation(() => undefined);
     dispatcher = new AsyncDispatcher(walUpdater, dlqMover, logger, historyLog);
   });
 

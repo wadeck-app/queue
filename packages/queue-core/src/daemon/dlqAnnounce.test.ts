@@ -12,6 +12,7 @@ import { DlqStore, type DlqEntry } from '../storage/DlqStore.js';
 import { HistoryReader, type HistoryEntry } from '../storage/HistoryReader.js';
 import { listDlqEntries } from '../operations.js';
 import { waitFor } from '../waitFor.testUtil.js';
+import { seededDlqEntry } from '../queueEntries.testUtil.js';
 
 // queue.dlq.added is never lost: when the emit does not succeed the row is still written, marked announce 'pending', and the daemon emits it later.
 
@@ -53,38 +54,40 @@ function service(...plugins: ActionPlugin[]): QueueService {
   return createQueueService(configDir, { registryDir, actions: createActionRegistry(plugins) });
 }
 
-/** A cli subscriber that fails with exit code 3 after `delayMs`: the time to break the configuration between the push and the move to the DLQ. */
-function failingCli(event: string, delayMs = 0): string[] {
-  const script = join(projectDir, 'fail.js');
-  writeFileSync(script, `setTimeout(() => process.exit(3), ${delayMs});`);
+/** The file a `gated` failing subscriber waits for before it fails. */
+const gateFile = (): string => join(projectDir, 'release-subscriber');
+
+/** Lets the gated subscribers fail now. */
+function releaseSubscribers(): void {
+  writeFileSync(gateFile(), 'go');
+}
+
+/**
+ * A cli subscriber that fails with exit code 3. `gated`: it fails only once the test calls releaseSubscribers(), which leaves the time to break the configuration
+ * between the push and the move to the DLQ (no guess about how long that takes).
+ */
+function failingCli(event: string, gated = false): string[] {
+  const script = join(projectDir, gated ? 'gated-fail.js' : 'fail.js');
+  writeFileSync(script, gated
+    ? `const fs = require('node:fs'); const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(gateFile())})) { clearInterval(timer); process.exit(3); } }, 10);`
+    : 'process.exit(3);');
   const command = `"${process.execPath}" "${script}"`;
   return [`  ${event}:`, '    - type: cli', '      name: f', `      command: ${JSON.stringify(command)}`, '      retries: 0'];
 }
 
 const YAML = (...blocks: string[][]): string => ['subscribers:', ...blocks.flat(), ''].join('\n');
 
-function dlqRow(id: string, overrides: Partial<DlqEntry> = {}): DlqEntry {
-  return {
-    id,
-    event: 'onSeed',
-    payload: { seeded: id },
-    meta: { cwd: projectDir, projectId, eventId: `evt-${id}` },
-    subscriberId: `${projectId}/old`,
-    attempts: 1,
-    lastError: 'seeded',
-    movedAt: '2026-11-07T10:00:00.000Z',
-    ...overrides,
-  };
-}
+const dlqRow = (id: string, overrides: Partial<DlqEntry> = {}): DlqEntry => seededDlqEntry({ cwd: projectDir, projectId }, id, overrides);
 
 describe('an invalid subscribers.yml at the moment of the move', () => {
   it('the row is written with the pending mark and NO event exists; after the file is fixed, the next successful push emits it exactly once and clears the mark', async () => {
-    await projectWith(YAML(failingCli('onFoo', 500)));
+    await projectWith(YAML(failingCli('onFoo', true)));
     const svc = service();
     const lines = vi.spyOn(svc.eventLogger, 'logDiagnostic');
     await svc.commands.push({ event: 'onFoo', payload: { taskId: 'T-1' }, cwd: projectDir });
     // the configuration breaks while the subscriber runs
     writeFileSync(ymlPath, 'subscribers: [unclosed\n');
+    releaseSubscribers();
     await waitFor('the row', () => listDlqEntries(configDir).length === 1 && svc.isIdle());
 
     const [row] = listDlqEntries(configDir);
@@ -111,10 +114,11 @@ describe('an invalid subscribers.yml at the moment of the move', () => {
   });
 
   it('a restart emits it: onStart finds the pending row once the file is valid', async () => {
-    await projectWith(YAML(failingCli('onFoo', 500)));
+    await projectWith(YAML(failingCli('onFoo', true)));
     const first = service();
     await first.commands.push({ event: 'onFoo', payload: {}, cwd: projectDir });
     writeFileSync(ymlPath, 'subscribers: [unclosed\n');
+    releaseSubscribers();
     await waitFor('the row', () => listDlqEntries(configDir).length === 1 && first.isIdle());
     expect(listDlqEntries(configDir)[0]!.announce).toBe('pending');
 

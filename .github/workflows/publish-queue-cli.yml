@@ -19,6 +19,14 @@ permissions:
     contents: read
     packages: write
 
+# One run per ref at a time, in push order: two quick pushes to main must not publish out of order.
+# A run is never cancelled on main (a half-finished publish would leave the registry inconsistent);
+# GitHub keeps only the newest waiting run, so an older waiting run is reported "cancelled" (it is superseded by the newer commit).
+# Pull request runs are cancelled by a newer push to the same pull request.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
     build-and-test:
         runs-on: ubuntu-latest
@@ -32,6 +40,7 @@ jobs:
                   node-version: '24'
                   registry-url: 'https://npm.pkg.github.com'
                   scope: '@wadeck-app'
+                  cache: npm
 
             # The launcher regression test (launcherConfigDir.integration.test.ts) builds the Go launcher
             - uses: actions/setup-go@v5
@@ -39,7 +48,7 @@ jobs:
                   go-version: '1.26'
 
             - name: Install dependencies
-              run: npm install --prefer-offline
+              run: npm ci --prefer-offline
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -64,9 +73,10 @@ jobs:
                   node-version: '24'
                   registry-url: 'https://npm.pkg.github.com'
                   scope: '@wadeck-app'
+                  cache: npm
 
             - name: Install dependencies
-              run: npm install --prefer-offline
+              run: npm ci --prefer-offline
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -86,6 +96,7 @@ jobs:
                   node-version: '24'
                   registry-url: 'https://npm.pkg.github.com'
                   scope: '@wadeck-app'
+                  cache: npm
 
             # queue-cli's globalSetup builds the bundle, and the launcher regression test builds the Go launcher
             - uses: actions/setup-go@v5
@@ -93,7 +104,7 @@ jobs:
                   go-version: '1.26'
 
             - name: Install dependencies
-              run: npm install --prefer-offline
+              run: npm ci --prefer-offline
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -106,9 +117,51 @@ jobs:
             - name: Test queue-cli
               run: npm test --workspace=packages/queue-cli
 
+    # The other packages (relay client, the three plugins, the dashboard module) also touch paths, processes and line endings
+    # (Windows is the developer platform): their tests run on Windows and macOS too. queue-core is rebuilt by their pretest scripts.
+    packages-cross-platform:
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [windows-latest, macos-latest]
+        runs-on: ${{ matrix.os }}
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci --prefer-offline
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build TypeScript
+              run: npm run build
+
+            - name: Test queue-relay-client
+              run: npm test --workspace=packages/queue-relay-client
+
+            - name: Test plugin-github
+              run: npm test --workspace=packages/plugin-github
+
+            - name: Test plugin-gitlab
+              run: npm test --workspace=packages/plugin-gitlab
+
+            - name: Test plugin-agent-wake
+              run: npm test --workspace=packages/plugin-agent-wake
+
+            - name: Test app-module-queue
+              run: npm test --workspace=packages/app-module-queue
+
     publish:
-        needs: [build-and-test, sdk-cross-platform, core-cli-windows]
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+        needs: [build-and-test, sdk-cross-platform, core-cli-windows, packages-cross-platform]
+        # Only main publishes, whether the run comes from a push or a manual dispatch (a dispatch on a branch or a tag must not publish)
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
@@ -120,13 +173,14 @@ jobs:
                   node-version: '24'
                   registry-url: 'https://npm.pkg.github.com'
                   scope: '@wadeck-app'
+                  cache: npm
 
             - uses: actions/setup-go@v5
               with:
                   go-version: '1.26'
 
             - name: Install dependencies
-              run: npm install --prefer-offline
+              run: npm ci --prefer-offline
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -136,6 +190,8 @@ jobs:
             - name: Build Go launchers
               run: npm run build-launcher
 
+            # Unpinned on purpose, for now: wadeck-app/ci-templates has no tag (checked: the tag list is empty) and no release,
+            # so there is no ref other than a commit sha to pin to. Its breaking-input handling needed two fixes (see .claude/lessons-learned.md). Pin to a sha or a tag once ci-templates publishes one.
             - name: Compute version
               id: version
               uses: wadeck-app/ci-templates/.github/actions/compute-version@main
@@ -179,7 +235,11 @@ jobs:
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            # Same registry, token and version as the CLI; built by "Build TypeScript" above (dist/esm, dist/cjs)
+            # Same registry, token and version as the CLI; built by "Build TypeScript" above (dist/esm, dist/cjs).
+            # Published after the CLI on purpose: the CLI is what users self-update, so a failure of this (leaf) package must not withhold it.
+            # The cost: if this step fails the CLI is already published at this version, and re-running the job cannot publish it again
+            # (the registry refuses a version twice) unless the version computed by the run differs. The SDK negotiates the push protocol with the daemon,
+            # so an SDK older than the installed CLI keeps working until that new version is published.
             - name: Publish queue-sdk
               working-directory: packages/queue-sdk
               run: |

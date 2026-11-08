@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 const mockSend = vi.fn();
 const mockIsRunning = vi.fn();
@@ -12,13 +11,14 @@ vi.mock('./client.js', () => ({
 
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { DaemonUnreachableError } from './errors.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let configDir: string;
 
 const dlqLine = (id: string) => JSON.stringify({ id, event: 'onFoo', payload: {}, meta: { cwd: '/p', projectName: 'p' }, subscriberId: 's', attempts: 3, lastError: 'x', movedAt: '2026-10-18T12:00:00.000Z' });
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-dlq-'));
+  configDir = makeTempDir('app-module-dlq-');
   mockSend.mockReset();
   mockIsRunning.mockReset();
   // no daemon unless a test starts one
@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 describe('dlq reads work on the queue files directly', () => {

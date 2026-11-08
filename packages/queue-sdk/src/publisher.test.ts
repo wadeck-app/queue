@@ -246,6 +246,26 @@ describe('failures of a running daemon', () => {
     expect(JSON.stringify([result, h.failures])).not.toContain(h.fake!.token);
   });
 
+  it('never repeats the token a 401 body echoes, nor the one a 500 body echoes (reason, failure report and warnings)', async () => {
+    const h = await setup();
+    const token = h.fake!.token;
+    h.fake!.acceptedToken = 'z'.repeat(32);
+    const refused = await h.publisher.publishAndWait('a', {});
+    // the fake daemon really echoed the credential it was shown (otherwise this test would prove nothing)
+    expect(h.fake!.pushes()).toHaveLength(2);
+    expect(refused.status).toBe('dropped');
+    expect(refused.reason).toContain('HTTP 401');
+
+    const accepting = await setup();
+    accepting.fake!.script.push({ kind: 'http', status: 500, body: JSON.stringify({ error: 'boom', received: `Bearer ${accepting.fake!.token}` }) });
+    const failed = await accepting.publisher.publishAndWait('a', {});
+    expect(failed.reason).toContain('HTTP 500');
+    expect(failed.reason).toContain('***');
+
+    expect(JSON.stringify([refused, h.failures, h.warnings])).not.toContain(token);
+    expect(JSON.stringify([failed, accepting.failures, accepting.warnings])).not.toContain(accepting.fake!.token);
+  });
+
   it('drops on a 500 with the daemon message and no retry', async () => {
     const h = await setup();
     h.fake!.script.push({ kind: 'http', status: 500, body: '{"error":"Command failed: invalid subscribers.yml"}' });
@@ -671,6 +691,8 @@ describe('the QUEUE_SDK_OFF environment variable (trying a program in developmen
     const h = await setup({ deps: { env } });
     await expect(h.publisher.publishAndWait('app.thing', {})).resolves.toMatchObject({ status: 'queued' });
     expect(h.warnings).toEqual([]);
+    // 0 and empty are valid values, not mistakes: nothing is reported as an invalid argument
+    expect(h.failures).toEqual([]);
   });
 
   it('refuses to guess: any other value is reported as a mistake and the publisher stays ACTIVE (events are not lost by a typo)', async () => {
@@ -991,6 +1013,24 @@ describe('publishing on behalf of a project (push protocol 1.2.0)', () => {
     expect(bodies.map((body) => body.project)).toEqual([ID, 'deadbeef']);
   });
 
+  it.each([
+    ['one character too many', `${ID}0`],
+    ['one character too few', ID.slice(1)],
+    ['a prefix before an id', `xx${ID}`],
+    ['a suffix after an id', `${ID}xx`],
+    ['a trailing newline', `${ID}\n`],
+    ['upper case hexadecimal', ID.toUpperCase()],
+    ['a non-hexadecimal character', '569c412g'],
+    ['an empty string', ''],
+  ])('refuses a project id with %s, sending nothing', async (_name, project) => {
+    const h = await setup({ daemon: current });
+    const result = await h.publisher.publishAndWait('app.thing', {}, { project });
+    expect(result.status).toBe('dropped');
+    expect(h.failures.map((failure) => failure.kind)).toEqual(['invalid-argument']);
+    expect(h.failures[0]?.message).toContain('8 hexadecimal characters');
+    expect(h.fake!.pushes()).toEqual([]);
+  });
+
   it('sends no project field when none was given: the daemon derives it from the cwd', async () => {
     const h = await setup();
     await h.publisher.publishAndWait('app.thing', {});
@@ -1105,5 +1145,48 @@ describe('publishing on behalf of a project (push protocol 1.2.0)', () => {
     expect(result.status).toBe('dropped');
     expect(h.failures[0]?.message).toContain('project list');
     expect(h.failures[0]?.message).not.toContain('update @wadeck-app/queue-sdk');
+  });
+});
+
+describe('never throws, never rejects: an unexpected error inside the SDK (not only an input the validators refuse)', () => {
+  // The transport itself blows up (a bug, a platform quirk): every way out of the publisher must still resolve
+  const exploding = (thrown: unknown): PublisherDeps => ({
+    request: (call) => {
+      if (call.method === 'POST') {
+        throw thrown;
+      }
+      return loopbackRequest(call);
+    },
+  });
+
+  it.each([
+    ['an Error', new Error('transport blew up')],
+    ['a thrown string', 'transport blew up'],
+  ])('publishAndWait and registerEvents resolve to dropped when the transport throws %s, and flush resolves', async (_name, thrown) => {
+    const h = await setupCatalog({ deps: exploding(thrown) });
+
+    const pushed = await h.publisher.publishAndWait('app.thing', {});
+    expect(pushed).toMatchObject({ status: 'dropped' });
+    expect(pushed.reason).toContain('unexpected error in @wadeck-app/queue-sdk');
+    expect(pushed.reason).toContain('transport blew up');
+
+    const registered = await h.publisher.registerEvents('demo', DECLARED);
+    expect(registered).toMatchObject({ status: 'dropped' });
+    expect(registered.reason).toContain('unexpected error in @wadeck-app/queue-sdk');
+
+    h.publisher.publish('app.thing', {});
+    await expect(h.publisher.flush()).resolves.toBeUndefined();
+
+    expect(h.failures.map((failure) => failure.kind)).toEqual(['unexpected', 'unexpected', 'unexpected']);
+    expect(h.failures[1]?.operation).toBe('register-events');
+  });
+
+  it('the failed push does not stay counted as in flight (maxPending is not exhausted by failures)', async () => {
+    const h = await setup({ deps: exploding(new Error('transport blew up')), publisher: { maxPending: 1 } });
+    await h.publisher.publishAndWait('app.thing', {});
+    await h.publisher.flush();
+    const second = await h.publisher.publishAndWait('app.thing', {});
+    expect(second.reason).toContain('unexpected error');
+    expect(second.reason).not.toContain('maxPending');
   });
 });

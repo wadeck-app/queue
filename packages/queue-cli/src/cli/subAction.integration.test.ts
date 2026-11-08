@@ -3,7 +3,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { runQueueCli, type CliResult } from '../testing/runCli.js';
+import { createCliRunner } from '../testing/runCli.js';
 
 // The bundled CLI against a throwaway config dir: `queue sub add|edit|list` with type action. No daemon is needed (the --scope flag reads the file).
 
@@ -24,9 +24,7 @@ beforeEach(() => {
   rmSync(subscribersFile, { force: true });
 });
 
-function runCli(args: string[]): CliResult {
-  return runQueueCli(iso.env, args);
-}
+const runCli = createCliRunner(() => iso.env);
 
 function readSubscribers(): Record<string, Array<Record<string, unknown>>> {
   return (yamlLoad(readFileSync(subscribersFile, 'utf-8')) as { subscribers: Record<string, Array<Record<string, unknown>>> }).subscribers;

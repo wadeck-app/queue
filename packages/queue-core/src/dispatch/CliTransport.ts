@@ -190,7 +190,20 @@ function killProcessTree(child: ChildProcess, signal: 'SIGTERM' | 'SIGKILL', rep
   }
 }
 
+/** Where the transport gets its timers: a test replaces them to fire a timeout or the end of a grace period by hand, instead of waiting for it. */
+export interface TransportTimers {
+  set(callback: () => void, delayMs: number): unknown;
+  clear(handle: unknown): void;
+}
+
+const REAL_TIMERS: TransportTimers = {
+  set: (callback, delayMs) => setTimeout(callback, delayMs),
+  clear: (handle) => clearTimeout(handle as NodeJS.Timeout),
+};
+
 export class CliTransport {
+  constructor(private readonly timers: TransportTimers = REAL_TIMERS) {}
+
   /**
    * Runs a `cli` subscriber command and feeds the event envelope to its stdin.
    * Without `{{ }}` the command goes to a shell as written (it comes from the trusted subscribers.yml). With `{{ }}` it is split into arguments first and
@@ -237,7 +250,8 @@ export class CliTransport {
       let timedOut = false;
       let killProblem: string | undefined;
       let settled = false;
-      const pending: NodeJS.Timeout[] = [];
+      const pending: unknown[] = [];
+      const timers = this.timers;
 
       // One resolution only; it releases the pipes so that a grandchild that keeps them open cannot keep this dispatch (and the daemon) alive
       const settle = (result: DispatchResult): void => {
@@ -245,7 +259,7 @@ export class CliTransport {
           return;
         }
         settled = true;
-        pending.forEach(clearTimeout);
+        pending.forEach((handle) => timers.clear(handle));
         child.stdout?.destroy();
         child.stderr?.destroy();
         resolvePromise(result);
@@ -269,15 +283,15 @@ export class CliTransport {
         }
       };
 
-      pending.push(setTimeout(() => {
+      pending.push(timers.set(() => {
         timedOut = true;
         // The shell (cmd.exe, sh) is only the root of the tree: killing it alone leaves its children running and holding the pipes
         killProcessTree(child, 'SIGTERM', (problem) => { killProblem = problem; });
         if (process.platform !== 'win32') {
-          pending.push(setTimeout(() => killProcessTree(child, 'SIGKILL', (problem) => { killProblem = problem; }), KILL_ESCALATION_MS));
+          pending.push(timers.set(() => killProcessTree(child, 'SIGKILL', (problem) => { killProblem = problem; }), KILL_ESCALATION_MS));
         }
         // Neither exit nor close may come if the kill failed: the dispatch must still end
-        pending.push(setTimeout(() => settleWithCode(null), KILL_DEADLINE_MS));
+        pending.push(timers.set(() => settleWithCode(null), KILL_DEADLINE_MS));
       }, timeoutMs));
 
       child.stdout?.on('data', (chunk: Buffer) => { stdoutBuffer.push(chunk); });
@@ -285,7 +299,7 @@ export class CliTransport {
 
       // 'close' comes once the pipes are closed, which a grandchild that inherited them can delay for as long as it lives: after 'exit', wait for it only a bounded time
       child.on('exit', (code) => {
-        pending.push(setTimeout(() => settleWithCode(code), EXIT_CLOSE_GRACE_MS));
+        pending.push(timers.set(() => settleWithCode(code), EXIT_CLOSE_GRACE_MS));
       });
 
       child.on('close', (code) => {

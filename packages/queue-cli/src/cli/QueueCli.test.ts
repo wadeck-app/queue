@@ -100,14 +100,14 @@ async function run(args: string[]): Promise<{ stdout: string; stderr: string; ex
 
 beforeEach(() => {
 	tmpDir = mkdtempSync(join(tmpdir(), 'queue-test-'));
-	process.env['QUEUE_CONFIG_DIR'] = tmpDir;
-	process.env['LAUNCHER_BUNDLE_OVERRIDE'] = join(tmpDir, 'queue.cjs');
+	vi.stubEnv('QUEUE_CONFIG_DIR', tmpDir);
+	vi.stubEnv('LAUNCHER_BUNDLE_OVERRIDE', join(tmpDir, 'queue.cjs'));
 	vi.clearAllMocks();
 });
 
 afterEach(() => {
-	delete process.env['QUEUE_CONFIG_DIR'];
-	delete process.env['LAUNCHER_BUNDLE_OVERRIDE'];
+	// Puts back what each test stubbed (the real values, or unset), never deletes a variable the developer's shell had
+	vi.unstubAllEnvs();
 	rmSync(tmpDir, { recursive: true, force: true });
 	// A daemon spawn writes a queue-spawn-<ms>-<random>.vbs that the (mocked) wscript never runs, so nobody deletes it: remove exactly the ones this
 	// test handed to the mocked wscript. Never "everything newer than my start" in the shared temp dir: a REAL daemon started at the same time by another
@@ -207,7 +207,7 @@ describe('queue cli update', () => {
 		const { writeFileSync } = await import('node:fs');
 		const updaterPath = join(tmpDir, 'queue-updater.cjs');
 		writeFileSync(updaterPath, '');
-		process.env['LAUNCHER_BUNDLE_OVERRIDE'] = join(tmpDir, 'queue.cjs');
+		vi.stubEnv('LAUNCHER_BUNDLE_OVERRIDE', join(tmpDir, 'queue.cjs'));
 
 		const { cliUpdateCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
 		await run(['cli', 'update']);
@@ -218,7 +218,7 @@ describe('queue cli update', () => {
 		const { writeFileSync } = await import('node:fs');
 		const updaterPath = join(tmpDir, 'queue-updater.cjs');
 		writeFileSync(updaterPath, '');
-		process.env['LAUNCHER_BUNDLE_OVERRIDE'] = join(tmpDir, 'queue.cjs');
+		vi.stubEnv('LAUNCHER_BUNDLE_OVERRIDE', join(tmpDir, 'queue.cjs'));
 
 		const { cliUpdateCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
 		await run(['cli', 'update', '--force']);

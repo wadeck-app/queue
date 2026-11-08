@@ -39,6 +39,8 @@ export type { ResolvedSubscriber } from './types.js';
 export { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, clearDlqEntriesReturning, listQueueSubscribers, abandonInFlightEntry, abandonInFlightEntryDetailed, abandonStuckEntries, abandonStuckEntriesDetailed, countStuckEntries, STUCK_AFTER_MS } from './operations.js';
 export type { AbandonResult, AbandonDetailed, DlqChanges } from './operations.js';
 export type { QueueCounts } from './operations.js';
+// Wal: the one way to write the WAL under its lock; a test that needs an in-flight entry must not append to wal.ndjson itself (the daemon rewrites the file whole)
+export { Wal } from './storage/Wal.js';
 export type { WalEntry } from './storage/Wal.js';
 export { LogFormatter } from './storage/LogFormatter.js';
 export { readLogTail, logFilePath, isLogDate, readDispatchDurations } from './storage/LogReader.js';

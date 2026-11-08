@@ -7,6 +7,7 @@ import type { WalEntry } from './storage/Wal.js';
 import { DlqStore } from './storage/DlqStore.js';
 import type { DlqEntry } from './storage/DlqStore.js';
 import { abandonInFlightEntryDetailed, abandonStuckEntriesDetailed, clearDlqEntries, clearDlqEntriesReturning, listDlqEntries, pruneOrphanedDlqWalEntries, removeDlqEntries } from './operations.js';
+import { dlqEntry as baseDlqEntry, walEntry as baseWalEntry } from './queueEntries.testUtil.js';
 
 // Item 4: the give-up is a compare-and-set on the WAL (no acked -> dlq with a row in the DLQ). Item 5: the WAL does not keep the payload of a row that left the DLQ.
 
@@ -25,13 +26,9 @@ const meta = { cwd: '/p', projectName: 'p' };
 const wal = (): Wal => new Wal(join(configDir, 'wal.ndjson'));
 const dlq = (): DlqStore => new DlqStore(join(configDir, 'dlq.ndjson'));
 
-function walEntry(id: string, status: WalEntry['status'], overrides: Partial<WalEntry> = {}): WalEntry {
-  return { id, timestamp: new Date().toISOString(), event: 'onFoo', payload: { secret: `S3CRET-${id}` }, meta, subscriberId: 's', status, attempts: 1, ...overrides };
-}
+const walEntry = (id: string, status: WalEntry['status'], overrides: Partial<WalEntry> = {}): WalEntry => baseWalEntry(id, { event: 'onFoo', payload: { secret: `S3CRET-${id}` }, meta, status, attempts: 1, ...overrides });
 
-function dlqEntry(id: string, overrides: Partial<DlqEntry> = {}): DlqEntry {
-  return { id, event: 'onFoo', payload: { secret: `S3CRET-${id}` }, meta, subscriberId: 's', attempts: 3, lastError: 'boom', movedAt: new Date().toISOString(), ...overrides };
-}
+const dlqEntry = (id: string, overrides: Partial<DlqEntry> = {}): DlqEntry => baseDlqEntry(id, { event: 'onFoo', payload: { secret: `S3CRET-${id}` }, meta, attempts: 3, ...overrides });
 
 const walFileText = (): string => (existsSync(join(configDir, 'wal.ndjson')) ? readFileSync(join(configDir, 'wal.ndjson'), 'utf8') : '');
 

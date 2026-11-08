@@ -6,6 +6,7 @@ import { Wal, type WalEntry } from './Wal.js';
 import { DlqStore, type DlqEntry } from './DlqStore.js';
 import { writeFileDurably } from './AtomicRename.js';
 import { writeSourceDeclaration } from '../catalog/EventCatalog.js';
+import { dlqEntry, walEntry } from '../queueEntries.testUtil.js';
 
 // A power loss between the rename and the disk flush can leave the renamed file empty or truncated: the temp file is flushed (fsync) BEFORE it replaces the data file
 const calls: string[] = [];
@@ -18,8 +19,6 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-const walEntry = (id: string): WalEntry => ({ id, timestamp: new Date().toISOString(), event: 'onX', payload: {}, meta: {}, subscriberId: 's', status: 'pending', attempts: 0 });
-const dlqEntry = (id: string): DlqEntry => ({ id, event: 'onX', payload: {}, meta: {}, subscriberId: 's', attempts: 1, lastError: 'x', movedAt: new Date().toISOString() });
 
 describe('data files are flushed before they replace the previous version', () => {
   let dir: string;

@@ -13,6 +13,8 @@ export interface BuildLockOptions {
   isAlive?: (pid: number) => boolean;
   /** Test seam: the pid written as owner. */
   pid?: number;
+  /** Test seam: the clock of the hang guard (milliseconds). */
+  now?: () => number;
   /** Test seam: the pause between two attempts. */
   sleep?: (ms: number) => Promise<void>;
   /** Test seam: called when this contender has just read the owner of the lock (before it decides anything). */
@@ -76,7 +78,8 @@ export async function acquireBuildLock(options: BuildLockOptions): Promise<void>
   const { lockDir } = options;
   const isAlive = options.isAlive ?? isProcessAlive;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const now = options.now ?? Date.now;
+  const deadline = now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       mkdirSync(lockDir);
@@ -93,7 +96,7 @@ export async function acquireBuildLock(options: BuildLockOptions): Promise<void>
     if (owner !== undefined && !isAlive(owner) && removeStaleLock(lockDir, isAlive, options.pid ?? process.pid)) {
       continue;
     }
-    if (Date.now() > deadline) {
+    if (now() > deadline) {
       throw new Error(`Another test run (pid ${owner ?? 'unknown'}) has been building the test bundle for more than ${LOCK_WAIT_MS / 1000} s (lock: ${lockDir}). Fix: stop that run, or delete the lock directory if its owner is gone.`);
     }
     await sleep(POLL_MS);

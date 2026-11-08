@@ -23,17 +23,22 @@ const STRIPPED = /^(UPDATER_|LAUNCHER_|CLI_SELF_CHECK|NPM_CONFIG_|XDG_CONFIG_HOM
 const MIN_PORT_GAP = 20;
 const MAX_ALLOCATION_ATTEMPTS = 20;
 
+function runFreePorts(script: string): string {
+  return execFileSync(process.execPath, [script, '2'], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+}
+
 /**
  * Two distinct free TCP ports, taken from the OS (bind to port 0, read, close). Synchronous because createIsolatedCliEnv is: a child process
  * does the binding (freePorts.mjs). Another process can in theory take a port between this call and the daemon's bind; the daemon then walks
  * to the next free port (and writes the one it got to config.port, which every client reads), it never fails for that.
+ * @param runScript test seam: runs freePorts.mjs and returns its output (the two ports, separated by a space).
  */
-export function allocateFreePorts(): { daemonPort: number; relayPort: number } {
+export function allocateFreePorts(runScript: (script: string) => string = runFreePorts): { daemonPort: number; relayPort: number } {
   const script = fileURLToPath(new URL('./freePorts.mjs', import.meta.url));
   for (let attempt = 0; attempt < MAX_ALLOCATION_ATTEMPTS; attempt++) {
     let output: string;
     try {
-      output = execFileSync(process.execPath, [script, '2'], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+      output = runScript(script);
     } catch (err) {
       throw new Error(`Cannot allocate free ports for the isolated test environment (${script}): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -112,7 +117,7 @@ update-notifier=false
   writeFileSync(npmUserConfig, npmConfig);
   writeFileSync(npmGlobalConfig, npmConfig);
 
-  const { daemonPort, relayPort } = (opts.allocatePorts ?? allocateFreePorts)(root);
+  const { daemonPort, relayPort } = (opts.allocatePorts ?? (() => allocateFreePorts()))(root);
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (!STRIPPED.test(k)) {

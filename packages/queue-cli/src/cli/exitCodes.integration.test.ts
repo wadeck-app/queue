@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { runQueueCli, type CliResult } from '../testing/runCli.js';
+import { createCliRunner } from '../testing/runCli.js';
 import { testBundleFile } from '../testing/testBundle.js';
 import { COMMAND_EXIT_CODES, documentedCodes } from './exitCodes.js';
 
@@ -23,9 +23,7 @@ afterAll(() => {
   iso.cleanup();
 });
 
-function runCli(args: string[], extraEnv: Record<string, string> = {}): CliResult {
-  return runQueueCli(iso.env, args, { extraEnv });
-}
+const runCli = createCliRunner(() => iso.env);
 
 interface Row {
   /** The entry of COMMAND_EXIT_CODES this row exercises. */
@@ -100,11 +98,13 @@ const UNREACHED: Record<string, string> = {
   'cli:0': 'covered by QueueIndex.integration.test.ts (self-check)',
 };
 
+// The rows run once, in order (the later ones need the daemon the earlier ones started); every test below reads this result,
+// none depends on another test having run (each passes when run alone)
 const reached = new Set<string>();
+const failures: string[] = [];
 
 describe('the exit codes the help documents are the ones the CLI returns', () => {
-  it('runs every row with the expected code, a code the command documents, and a reason on stderr/stdout', () => {
-    const failures: string[] = [];
+  beforeAll(() => {
     for (const row of ROWS) {
       const documented = documentedCodes(row.command);
       const label = `queue ${row.args.join(' ')}`;
@@ -123,6 +123,9 @@ describe('the exit codes the help documents are the ones the CLI returns', () =>
       }
       reached.add(`${row.command}:${row.expected}`);
     }
+  });
+
+  it('runs every row with the expected code, a code the command documents, and a reason on stderr/stdout', () => {
     expect(failures, failures.join('\n')).toEqual([]);
   });
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { createIsolatedCliEnv, UNREACHABLE_REGISTRY, type IsolatedCliEnv } from './isolatedCliEnv.js';
+import { join } from 'node:path';
+import { allocateFreePorts, createIsolatedCliEnv, UNREACHABLE_REGISTRY, type IsolatedCliEnv } from './isolatedCliEnv.js';
 
 describe('createIsolatedCliEnv', () => {
   let iso: IsolatedCliEnv | undefined;
@@ -75,5 +76,53 @@ describe('createIsolatedCliEnv', () => {
     })).toThrow('no free port');
     expect(root).not.toBe('');
     expect(existsSync(root)).toBe(false);
+  });
+  it('strips every npm and self-check variable of the parent shell, keeps the others, and lets `extra` win', () => {
+    vi.stubEnv('NPM_CONFIG_AUTHTOKEN', 'real-token');
+    vi.stubEnv('NPM_CONFIG_PROXY', 'http://real-proxy.example');
+    vi.stubEnv('CLI_SELF_CHECK_SKIP', '1');
+    vi.stubEnv('CLI_SELF_CHECK', '1');
+    vi.stubEnv('QUEUE_S4_KEPT', 'kept');
+    iso = createIsolatedCliEnv({ extra: { UPDATER_FORCE: 'from-extra' } });
+    const names = Object.keys(iso.env);
+    expect(names.filter((k) => /^NPM_CONFIG_(AUTHTOKEN|PROXY)$/i.test(k))).toEqual([]);
+    expect(names.filter((k) => /^CLI_SELF_CHECK/i.test(k))).toEqual([]);
+    expect(JSON.stringify(iso.env)).not.toContain('real-token');
+    expect(iso.env['QUEUE_S4_KEPT']).toBe('kept');
+    expect(iso.env['UPDATER_FORCE']).toBe('from-extra');
+  });
+
+  it('gives the environment its own app-core directory and registry override for the @wadeck-app scope', () => {
+    vi.stubEnv('APP_CORE_CONFIG_DIR', '/real/app-core');
+    vi.stubEnv('npm_config_@wadeck-app:registry', 'https://npm.pkg.github.com');
+    iso = createIsolatedCliEnv({ registry: 'http://127.0.0.1:1234' });
+    expect(iso.env['APP_CORE_CONFIG_DIR']).toBe(join(iso.root, 'app-core'));
+    expect(iso.env['APP_CORE_PORT']).toBe('1');
+    expect(iso.env['npm_config_@wadeck-app:registry']).toBe('http://127.0.0.1:1234');
+    expect(iso.env['NPM_CONFIG_REGISTRY']).toBe('http://127.0.0.1:1234');
+  });
+});
+
+describe('allocateFreePorts', () => {
+  it('asks again until the two ports are more than 20 apart', () => {
+    const outputs = ['5000 5005\n', '5000 5020\n', '5000 5021\n'];
+    const run = vi.fn(() => outputs.shift() as string);
+    expect(allocateFreePorts(run)).toEqual({ daemonPort: 5000, relayPort: 5021 });
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it('accepts a relay port below the daemon port when far enough', () => {
+    expect(allocateFreePorts(() => '6000 5000')).toEqual({ daemonPort: 6000, relayPort: 5000 });
+  });
+
+  it('gives up with an actionable error after 20 attempts that stay too close', () => {
+    const run = vi.fn(() => '5000 5001');
+    expect(() => allocateFreePorts(run)).toThrow(/more than 20 apart in 20 attempts/);
+    expect(run).toHaveBeenCalledTimes(20);
+  });
+
+  it('names the script when it prints something else than two ports, and when it fails', () => {
+    expect(() => allocateFreePorts(() => 'oops')).toThrow(/freePorts\.mjs printed something else/);
+    expect(() => allocateFreePorts(() => { throw new Error('boom'); })).toThrow(/Cannot allocate free ports.*boom/);
   });
 });

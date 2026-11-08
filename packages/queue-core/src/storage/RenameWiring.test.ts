@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { Wal, type WalEntry } from './Wal.js';
 import { DlqStore, type DlqEntry } from './DlqStore.js';
 import { readCatalog, writeSourceDeclaration } from '../catalog/EventCatalog.js';
+import { dlqEntry, walEntry } from '../queueEntries.testUtil.js';
 
 // The wiring of the transient-EPERM retry: Wal and DlqStore must replace their file through renameReplacing. A direct renameSync in either would
 // fail the whole operation on the first EPERM a scanner causes (the intermittent failure the retry was added for), and nothing else proved it.
@@ -19,13 +20,7 @@ function eperm(): Error {
   return Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
 }
 
-function walEntry(id: string, overrides: Partial<WalEntry> = {}): WalEntry {
-  return { id, timestamp: new Date().toISOString(), event: 'test.event', payload: { x: 1 }, meta: { cwd: '/tmp' }, subscriberId: 'sub-1', status: 'pending', attempts: 0, ...overrides };
-}
 
-function dlqEntry(id: string): DlqEntry {
-  return { id, event: 'test.event', payload: { x: 1 }, meta: { cwd: '/tmp' }, subscriberId: 'sub-1', attempts: 3, lastError: 'boom', movedAt: new Date().toISOString() };
-}
 
 describe('Wal, DlqStore and the event catalog replace their file through the transient-EPERM retry', () => {
   let dir: string;

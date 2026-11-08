@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { listHistory } from './history.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 // A torn line in a day file (a write cut short by a crash) must not make the dashboard history fail or hide the lines around it, and must be visible
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-queue-history-malformed-'));
+  configDir = makeTempDir('app-module-queue-history-malformed-');
   mkdirSync(join(configDir, 'history'));
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 const TORN = '{"ts":"2026-01-01T00:00:30.000Z","type":"trigger","eventId":"torn","event":"onTorn","matchedCount":1,"tot';

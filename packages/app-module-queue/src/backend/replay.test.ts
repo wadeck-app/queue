@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -13,18 +13,19 @@ vi.mock('./client.js', () => ({
 import { replayEvent } from './replay.js';
 import { DaemonUnreachableError, ReplayError, ReplayNotFoundError } from './errors.js';
 import { getErrorMessage } from '@wadeck-app/queue-core';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-queue-replay-'));
+  configDir = makeTempDir('app-module-queue-replay-');
   mkdirSync(join(configDir, 'history'));
   mockSend.mockReset();
   mockIsRunning.mockReset();
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 function writeTrigger(eventId: string, event: string, payload?: unknown, cwd?: string): void {
@@ -61,18 +62,18 @@ describe('replayEvent', () => {
   });
 
   it('throws DaemonUnreachableError when the daemon is not running', async () => {
-    const projectDir = mkdtempSync(join(tmpdir(), 'replay-project-'));
+    const projectDir = makeTempDir('replay-project-');
     try {
       writeTrigger('e1', 'onFoo', { a: 1 }, projectDir);
       mockIsRunning.mockResolvedValue(false);
       await expect(replayEvent(configDir, 'e1')).rejects.toThrow(DaemonUnreachableError);
     } finally {
-      rmSync(projectDir, { recursive: true, force: true });
+      removeTempDir(projectDir);
     }
   });
 
   it('pushes the recorded payload tagged with replayOf', async () => {
-    const projectDir = mkdtempSync(join(tmpdir(), 'replay-project-'));
+    const projectDir = makeTempDir('replay-project-');
     try {
       writeTrigger('e1', 'onFoo', { a: 1 }, projectDir);
       mockIsRunning.mockResolvedValue(true);
@@ -83,7 +84,7 @@ describe('replayEvent', () => {
       expect(response).toEqual({ status: 'queued', eventId: 'e2' });
       expect(mockSend).toHaveBeenCalledWith('push', expect.objectContaining({ event: 'onFoo', payload: { a: 1 }, replayOf: 'e1', cwd: projectDir }));
     } finally {
-      rmSync(projectDir, { recursive: true, force: true });
+      removeTempDir(projectDir);
     }
   });
 
@@ -130,7 +131,7 @@ describe('replayEvent', () => {
   });
 
   it('uses entry.cwd when recorded and directory exists', async () => {
-    const projectDir = mkdtempSync(join(tmpdir(), 'replay-project-'));
+    const projectDir = makeTempDir('replay-project-');
     try {
       const record: Record<string, unknown> = {
         type: 'trigger',
@@ -151,7 +152,7 @@ describe('replayEvent', () => {
       expect(response).toEqual({ status: 'queued', eventId: 'e2' });
       expect(mockSend).toHaveBeenCalledWith('push', expect.objectContaining({ cwd: projectDir, replayOf: 'e1' }));
     } finally {
-      rmSync(projectDir, { recursive: true, force: true });
+      removeTempDir(projectDir);
     }
   });
 

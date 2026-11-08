@@ -40,6 +40,16 @@ func hasExplicitConfig(args []string) bool {
 	return len(first) >= 3 && first[1] == ':' && (first[2] == '\\' || first[2] == '/')
 }
 
+// configArgs is the argument list handed to launcher.ResolveConfigDir: QUEUE_CONFIG_DIR (envConfigDir) becomes a leading "--config <dir>" unless the
+// arguments already name a config dir. Feeding it through "--config" reuses the SDK's handling (~ expansion, removal of the flag from the arguments
+// node receives) and skips the legacy ~/.queue migration, which must never touch the real home when a custom dir is requested.
+func configArgs(rawArgs []string, envConfigDir string) []string {
+	if envConfigDir != "" && !hasExplicitConfig(rawArgs) {
+		return append([]string{"--config", envConfigDir}, rawArgs...)
+	}
+	return rawArgs
+}
+
 func main() {
 	exe, _ := os.Executable()
 	// Resolve symlinks so exeDir points to the real binary directory, not the symlink's directory.
@@ -48,13 +58,7 @@ func main() {
 	}
 	exeDir := filepath.Dir(exe)
 
-	rawArgs := os.Args[1:]
-	// Feeding QUEUE_CONFIG_DIR through "--config" reuses the SDK's handling (~ expansion, removal of
-	// the flag from the arguments node receives) and skips the legacy ~/.queue migration, which
-	// must never touch the real home when a custom dir is requested.
-	if env := os.Getenv("QUEUE_CONFIG_DIR"); env != "" && !hasExplicitConfig(rawArgs) {
-		rawArgs = append([]string{"--config", env}, rawArgs...)
-	}
+	rawArgs := configArgs(os.Args[1:], os.Getenv("QUEUE_CONFIG_DIR"))
 	configDir, args := launcher.ResolveConfigDir("{{.DefaultConfigDir}}", rawArgs)
 
 	launcher.Run(launcher.Config{

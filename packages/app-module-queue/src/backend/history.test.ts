@@ -1,23 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { listHistory, getHistoryEntry } from './history.js';
+import { makeTempDir, removeTempDir, writeHistoryDay } from './tempDir.testUtil.js';
 
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-queue-history-'));
+  configDir = makeTempDir('app-module-queue-history-');
   mkdirSync(join(configDir, 'history'));
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 function writeDay(date: string, records: Record<string, unknown>[]): void {
-  const lines = records.map(r => JSON.stringify(r)).join('\n') + '\n';
-  writeFileSync(join(configDir, 'history', `${date}.ndjson`), lines);
+  writeHistoryDay(configDir, date, records);
 }
 
 describe('listHistory', () => {

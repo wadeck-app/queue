@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { getActivity, getActivitySeries } from './activity.js';
+import { makeTempDir, removeTempDir, writeHistoryDay } from './tempDir.testUtil.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -11,18 +11,17 @@ const NOW = Date.parse('2026-01-02T12:00:00.000Z');
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-activity-'));
+  configDir = makeTempDir('app-module-activity-');
   mkdirSync(join(configDir, 'history'));
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 function writeDay(date: string, atMs: number[]): void {
-  const lines = atMs.map((ms, i) => JSON.stringify({ ts: new Date(ms).toISOString(), type: 'trigger', eventId: `${date}-${i}`, event: 'onFoo', matchedCount: 0, totalCount: 0 }));
-  writeFileSync(join(configDir, 'history', `${date}.ndjson`), lines.join('\n') + '\n');
+  writeHistoryDay(configDir, date, atMs.map((ms, i) => ({ ts: new Date(ms).toISOString(), type: 'trigger', eventId: `${date}-${i}`, event: 'onFoo', matchedCount: 0, totalCount: 0 })));
 }
 
 describe('getActivity', () => {

@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { writeSourceDeclaration } from '@wadeck-app/queue-core';
 
 const mockPushEvent = vi.hoisted(() => vi.fn());
@@ -9,6 +8,7 @@ vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 
 import { getEvents, getEventPage, pushTestEvent, validateEventPayload, excerptOf } from './events.js';
 import { InvalidPayloadError, InvalidQueryError, SchemaUnusableError, TestPayloadNotFoundError } from './errors.js';
+import { makeTempDir, removeTempDir, writeHistoryDay } from './tempDir.testUtil.js';
 
 const MINUTE = 60_000;
 const NOW = Date.parse('2026-10-24T12:00:00.000Z');
@@ -17,11 +17,11 @@ let configDir: string;
 
 beforeEach(() => {
   mockPushEvent.mockReset();
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-events-'));
+  configDir = makeTempDir('app-module-events-');
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  removeTempDir(configDir);
 });
 
 function declare(source: string, events: Array<Record<string, unknown>>): void {
@@ -29,9 +29,7 @@ function declare(source: string, events: Array<Record<string, unknown>>): void {
 }
 
 function pushes(events: Array<[string, number]>): void {
-  mkdirSync(join(configDir, 'history'), { recursive: true });
-  const lines = events.map(([event, atMs], i) => JSON.stringify({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId: `e${i}`, event, matchedCount: 0, totalCount: 0 }));
-  writeFileSync(join(configDir, 'history', '2026-10-24.ndjson'), lines.join('\n') + '\n');
+  writeHistoryDay(configDir, '2026-10-24', events.map(([event, atMs], i) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId: `e${i}`, event, matchedCount: 0, totalCount: 0 })));
 }
 
 const names = (query: Record<string, string | string[]>): string[] => getEvents(configDir, query, NOW).events.map((row) => row.name);

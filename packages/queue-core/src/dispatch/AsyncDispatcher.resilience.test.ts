@@ -7,6 +7,7 @@ import type { WalEntry } from '../storage/Wal.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
 import type { HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
+import { walEntry as baseWalEntry } from '../queueEntries.testUtil.js';
 
 const envelope: EventEnvelope = { id: 'env', timestamp: '2026-01-01T00:00:00.000Z', event: 'onX', payload: {}, meta: { cwd: '/tmp' } };
 
@@ -14,9 +15,7 @@ function sub(overrides: Partial<ResolvedSubscriber> = {}): ResolvedSubscriber {
   return { subscriberId: 's1', name: 's1', file: 'subscribers.yml', scope: 'global', event: 'onX', type: 'cli', command: 'echo ok', retries: 3, timeoutMs: 5000, backoff: 'exponential', ...overrides };
 }
 
-function walEntry(id = crypto.randomUUID()): WalEntry {
-  return { id, timestamp: new Date().toISOString(), event: 'onX', payload: {}, meta: { cwd: '/tmp' }, subscriberId: 's1', status: 'pending', attempts: 0 };
-}
+const walEntry = (id = crypto.randomUUID()): WalEntry => baseWalEntry(id, { subscriberId: 's1' });
 
 const diskLocked = (): never => { throw new Error('EBUSY: resource busy or locked, open the day file'); };
 

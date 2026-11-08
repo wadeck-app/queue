@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Wal } from '@wadeck-app/queue-core';
 import { createQueueClient } from './QueueClient.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 import { runQueueCli, type CliResult } from '../testing/runCli.js';
@@ -152,8 +153,9 @@ describe('queue.dlq.* against a real daemon (integration)', () => {
     expect(await receivedArgs(4)).toEqual(expect.arrayContaining([['removed', entryId, 'cleared']]));
 
     // the dashboard gives up a stuck entry: the daemon runs the move ITSELF (the request carries the id and nothing else) and emits the event from the row it moved
-    // (a WAL line, as the daemon writes it: Wal itself is not part of the public API of queue-core)
-    appendFileSync(join(env().configDir, 'wal.ndjson'), JSON.stringify({
+    // (written through Wal, which takes the WAL lock: the daemon rewrites wal.ndjson whole to acknowledge a delivery, and a line appended to the file by hand while it does is lost.
+    // That was the intermittent 'not-found': the append landed between the daemon's read and its rename)
+    new Wal(join(env().configDir, 'wal.ndjson')).append({
       id: 'stuck-1',
       timestamp: '2026-01-01T00:00:00.000Z',
       event: 'demo.fail',
@@ -162,7 +164,7 @@ describe('queue.dlq.* against a real daemon (integration)', () => {
       subscriberId: 'failing',
       status: 'pending',
       attempts: 0,
-    }) + '\n');
+    });
     const client = createQueueClient(env().configDir);
     // a forged body: the entries, the reason and the project it names are ignored, only the id counts
     const moved = await client.send('give-up', { id: 'stuck-1', kind: 'added', reason: 'retries-exhausted', entries: [{ entry: { id: 'forged', event: 'onForged', subscriberId: 'evil', meta: { cwd: '/elsewhere' } }, reason: 'given-up' }] });

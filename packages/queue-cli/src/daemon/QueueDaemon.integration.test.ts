@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
@@ -49,10 +49,11 @@ function call(port: number, method: string, path: string, options: { token?: str
 const RELEASE = '2026.10.24-test-1';
 
 describe('queue daemon over HTTP', () => {
-  let configDir: string;
-  let projectDir: string;
+  let configDir: string | undefined;
+  let projectDir: string | undefined;
   let port: number;
-  let token: string;
+  // Empty until the daemon answered: afterAll must not call a daemon that never started (that error would hide the one of beforeAll)
+  let token = '';
 
   beforeAll(async () => {
     configDir = mkdtempSync(join(tmpdir(), 'queue-daemon-it-config-'));
@@ -63,11 +64,20 @@ describe('queue daemon over HTTP', () => {
   });
 
   afterAll(async () => {
-    await call(port, 'POST', '/quit', { token });
-    // the daemon removes its port file on a clean stop: wait for it before deleting the directory
-    await waitFor(() => !existsSync(join(configDir, 'config.port')), 'the daemon to remove its port file after /quit');
-    rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    try {
+      if (token !== '' && configDir !== undefined) {
+        await call(port, 'POST', '/quit', { token });
+        // the daemon removes its port file on a clean stop: wait for it before deleting the directory
+        const portFile = join(configDir, 'config.port');
+        await waitFor(() => !existsSync(portFile), 'the daemon to remove its port file after /quit');
+      }
+    } finally {
+      for (const dir of [configDir, projectDir]) {
+        if (dir !== undefined) {
+          rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        }
+      }
+    }
   });
 
   it('advertises its push protocol in GET /version, without a token', async () => {
@@ -106,21 +116,21 @@ describe('queue daemon over HTTP', () => {
 });
 
 describe('queue daemon: a type: action subscriber emits an event (end to end over HTTP)', () => {
+  // Typed as set (the tests use them), but unset at runtime when beforeAll failed early: afterAll checks before using them
   let configDir: string;
   let projectDir: string;
   let xdgDir: string;
-  let previousXdg: string | undefined;
   let projectId: string;
   let port: number;
-  let token: string;
+  // Empty until the daemon answered: afterAll must not call a daemon that never started (that error would hide the one of beforeAll)
+  let token = '';
 
   beforeAll(async () => {
     configDir = mkdtempSync(join(tmpdir(), 'queue-daemon-action-config-'));
     projectDir = mkdtempSync(join(tmpdir(), 'queue-daemon-action-project-'));
     // The daemon reads the project registry from XDG_CONFIG_HOME: a throwaway one, so the test sees (and touches) nothing of the machine
     xdgDir = mkdtempSync(join(tmpdir(), 'queue-daemon-action-xdg-'));
-    previousXdg = process.env['XDG_CONFIG_HOME'];
-    process.env['XDG_CONFIG_HOME'] = xdgDir;
+    vi.stubEnv('XDG_CONFIG_HOME', xdgDir);
     const registryDir = join(xdgDir, 'project');
     const project = await addProject(registryDir, { name: 'action-app', path: projectDir });
     projectId = project.id;
@@ -154,17 +164,23 @@ describe('queue daemon: a type: action subscriber emits an event (end to end ove
   });
 
   afterAll(async () => {
-    await call(port, 'POST', '/quit', { token });
-    await waitFor(() => !existsSync(join(configDir, 'config.port')), 'the daemon to remove its port file after /quit');
-    if (previousXdg === undefined) {
-      delete process.env['XDG_CONFIG_HOME'];
-    } else {
-      process.env['XDG_CONFIG_HOME'] = previousXdg;
-    }
-    for (const dir of [configDir, projectDir, xdgDir]) {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    try {
+      if (token !== '') {
+        await call(port, 'POST', '/quit', { token });
+        const portFile = join(configDir, 'config.port');
+        await waitFor(() => !existsSync(portFile), 'the daemon to remove its port file after /quit');
+      }
+    } finally {
+      // Puts back the XDG_CONFIG_HOME the developer's shell had (or unsets it), whatever happened above
+      vi.unstubAllEnvs();
+      for (const dir of [configDir, projectDir, xdgDir] as Array<string | undefined>) {
+        if (dir !== undefined) {
+          rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        }
+      }
     }
   });
+
 
   it('runs the builtin emit action in the daemon, files the emitted events under the project of the source event and chains a second hop', async () => {
     const answer = await call(port, 'POST', '/push', { token, body: { event: 'it.source', payload: { text: 'hello' }, cwd: projectDir } });

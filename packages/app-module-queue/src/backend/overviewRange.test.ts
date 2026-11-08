@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { getOverviewRange, OVERVIEW_RANGES, DEFAULT_OVERVIEW_RANGE } from './overviewRange.js';
 import { InvalidQueryError } from './errors.js';
+import { makeTempDir, removeTempDir, writeHistoryDay } from './tempDir.testUtil.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -12,16 +12,16 @@ const NOW = Date.parse('2026-01-08T12:00:00.000Z');
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-overview-'));
+  configDir = makeTempDir('app-module-overview-');
   mkdirSync(join(configDir, 'history'));
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 function writeRecords(date: string, records: Array<Record<string, unknown>>): void {
-  writeFileSync(join(configDir, 'history', `${date}.ndjson`), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+  writeHistoryDay(configDir, date, records);
 }
 
 const trigger = (atMs: number, id: string) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId: id, event: 'onFoo', matchedCount: 0, totalCount: 0 });

@@ -1,23 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { addProject, removeProject } from '@wadeck-app/project-sdk';
 import { resolveProjectCwd } from './projectCwd.js';
 import { InvalidQueryError, UnknownProjectError } from './errors.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let registryDir: string;
 let foldersDir: string;
 
 beforeEach(() => {
-  registryDir = mkdtempSync(join(tmpdir(), 'app-module-cwd-'));
-  foldersDir = mkdtempSync(join(tmpdir(), 'app-module-cwd-folders-'));
+  registryDir = makeTempDir('app-module-cwd-');
+  foldersDir = makeTempDir('app-module-cwd-folders-');
   mkdirSync(join(foldersDir, 'app'));
 });
 
 afterEach(() => {
-  rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  rmSync(foldersDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  removeTempDir(registryDir);
+  removeTempDir(foldersDir);
 });
 
 describe('resolveProjectCwd', () => {

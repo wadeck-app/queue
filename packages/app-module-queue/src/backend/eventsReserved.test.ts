@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { DLQ_EVENT_DECLARATIONS, writeSourceDeclaration } from '@wadeck-app/queue-core';
 
 const mockPushEvent = vi.hoisted(() => vi.fn());
@@ -9,6 +6,7 @@ vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 
 import { getEvents, getEventPage, pushTestEvent, reservedPushProblem } from './events.js';
 import { ReservedEventError } from './errors.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 // The queue. namespace is the daemon's own: the events page must not offer a test push of queue.dlq.* (the daemon would refuse it), and says why.
 
@@ -16,14 +14,14 @@ let configDir: string;
 
 beforeEach(() => {
   mockPushEvent.mockReset();
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-events-reserved-'));
+  configDir = makeTempDir('app-module-events-reserved-');
   // exactly what the daemon declares at start, examples included
   writeSourceDeclaration(configDir, { source: 'queue', events: DLQ_EVENT_DECLARATIONS });
   writeSourceDeclaration(configDir, { source: 'mine', events: [{ name: 'job.started', description: 'A job.', example: { jobId: 'x' } }] });
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  removeTempDir(configDir);
 });
 
 describe('events of the reserved queue. namespace on the events page', () => {

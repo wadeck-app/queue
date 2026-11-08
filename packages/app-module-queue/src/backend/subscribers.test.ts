@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
 import { InvalidQueryError } from './errors.js';
 import { listSubscribers } from './subscribers.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let configDir: string;
 let registryDir: string;
@@ -12,15 +12,15 @@ let projectDir: string;
 let projectId: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-subs-config-'));
-  registryDir = mkdtempSync(join(tmpdir(), 'app-module-subs-registry-'));
-  projectDir = mkdtempSync(join(tmpdir(), 'app-module-subs-project-'));
+  configDir = makeTempDir('app-module-subs-config-');
+  registryDir = makeTempDir('app-module-subs-registry-');
+  projectDir = makeTempDir('app-module-subs-project-');
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
-  rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  rmSync(projectDir, { recursive: true, force: true });
+  removeTempDir(configDir);
+  removeTempDir(registryDir);
+  removeTempDir(projectDir);
 });
 
 /** Registers the project folder and keeps this subscribers.yml in the config folder of the project. */
@@ -153,14 +153,14 @@ describe('listSubscribers: the working directory', () => {
 
   it('refuses a folder outside every registered project with the registered paths as the fix, and reads nothing there', async () => {
     await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
-    const other = mkdtempSync(join(tmpdir(), 'app-module-subs-other-'));
+    const other = makeTempDir('app-module-subs-other-');
     try {
       mkdirSync(join(other, '.queue'));
       writeFileSync(join(other, '.queue', 'subscribers.yml'), 'subscribers: [broken\n');
       expect(() => listSubscribers(configDir, other, undefined, registryDir)).toThrow(InvalidQueryError);
       expect(() => listSubscribers(configDir, other, undefined, registryDir)).toThrow(/not inside a registered project[\s\S]*queue project list/);
     } finally {
-      rmSync(other, { recursive: true, force: true });
+      removeTempDir(other);
     }
   });
 

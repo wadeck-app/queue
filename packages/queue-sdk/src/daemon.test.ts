@@ -36,6 +36,11 @@ describe('locateDaemon', () => {
     expect(locateDaemon(dir)).toMatchObject({ state: 'found', file: { port: 43210, pid: 123 } });
   });
 
+  it.each([[1], [65535]])('accepts the boundary port %i and pid 1', (port) => {
+    writePortFile(JSON.stringify({ port, pid: 1 }));
+    expect(locateDaemon(dir)).toMatchObject({ state: 'found', file: { port, pid: 1 } });
+  });
+
   it('tolerates a trailing newline and a BOM', () => {
     writePortFile(`\uFEFF${JSON.stringify({ port: 1, pid: 2 })}\r\n`);
     expect(locateDaemon(dir).state).toBe('found');
@@ -49,6 +54,11 @@ describe('locateDaemon', () => {
     ['a missing pid', JSON.stringify({ port: 1 })],
     ['a string port', JSON.stringify({ port: '1', pid: 1 })],
     ['a port out of range', JSON.stringify({ port: 70000, pid: 1 })],
+    ['port 65536, one above the last', JSON.stringify({ port: 65536, pid: 1 })],
+    ['port 0', JSON.stringify({ port: 0, pid: 1 })],
+    ['a negative port', JSON.stringify({ port: -1, pid: 1 })],
+    ['pid 0', JSON.stringify({ port: 1, pid: 0 })],
+    ['a negative pid', JSON.stringify({ port: 1, pid: -5 })],
     ['a non-integer pid', JSON.stringify({ port: 1, pid: 1.5 })],
   ])('reports %s as corrupt with the file path', (_name, content) => {
     writePortFile(content);

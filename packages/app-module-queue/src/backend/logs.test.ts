@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { getLogs, DEFAULT_LOG_LINES, MAX_LOG_LINES } from './logs.js';
 import { InvalidQueryError } from './errors.js';
+import { makeTempDir, removeTempDir, writeLogDay } from './tempDir.testUtil.js';
 
 let configDir: string;
 
 function writeRecords(date: string, records: object[]): void {
-  mkdirSync(join(configDir, 'logs'), { recursive: true });
-  writeFileSync(join(configDir, 'logs', `${date}.ndjson`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  writeLogDay(configDir, date, records);
 }
 
 const diagnostics = (date: string, count: number): object[] =>
@@ -33,12 +30,12 @@ const miss = (date: string, second: number, subscriberId: string): object => ({
 });
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-logs-'));
+  configDir = makeTempDir('app-module-logs-');
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 describe('getLogs', () => {

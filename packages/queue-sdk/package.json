@@ -42,6 +42,7 @@
   },
   "scripts": {
     "build": "tsc --build tsconfig.json && node ci/build-cjs.mjs",
+    "pretest": "npm run build",
     "test": "vitest run --bail=1",
     "test:watch": "vitest",
     "clean": "rimraf dist"

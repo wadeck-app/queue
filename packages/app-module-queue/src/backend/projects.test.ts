@@ -1,24 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { addProject } from '@wadeck-app/project-sdk';
 import { listProjectOptions } from './projects.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let registryDir: string;
 // The folders of the registered projects, in one temp dir removed with the rest
 let foldersDir: string;
 
 beforeEach(() => {
-  registryDir = mkdtempSync(join(tmpdir(), 'app-module-projects-'));
-  foldersDir = mkdtempSync(join(tmpdir(), 'app-module-projects-folders-'));
+  registryDir = makeTempDir('app-module-projects-');
+  foldersDir = makeTempDir('app-module-projects-folders-');
   mkdirSync(join(foldersDir, 'zed'));
   mkdirSync(join(foldersDir, 'app'));
 });
 
 afterEach(() => {
-  rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  rmSync(foldersDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  removeTempDir(registryDir);
+  removeTempDir(foldersDir);
 });
 
 describe('listProjectOptions', () => {

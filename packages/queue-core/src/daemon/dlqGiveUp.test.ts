@@ -13,6 +13,7 @@ import { HistoryReader, type HistoryEntry } from '../storage/HistoryReader.js';
 import { listDlqEntries } from '../operations.js';
 import { waitFor } from '../waitFor.testUtil.js';
 import type { EventEnvelope } from '../types.js';
+import { seededDlqEntry, seededWalEntry } from '../queueEntries.testUtil.js';
 
 // The loss window (emit BEFORE the DLQ row) and the daemon RPCs `give-up` / `give-up-stuck`, which run the operation themselves and emit the events from what they moved.
 // No client can supply the data an event is built from: the RPCs take an id (or nothing) and the daemon reads everything else from its own files.
@@ -64,33 +65,9 @@ function failingCli(event: string, name = 'f'): string[] {
 
 const YAML = (...blocks: string[][]): string => ['subscribers:', ...blocks.flat(), ''].join('\n');
 
-function walEntry(id: string, overrides: Partial<WalEntry> = {}, meta: Partial<WalEntry['meta']> = {}): WalEntry {
-  return {
-    id,
-    timestamp: '2026-11-07T10:00:00.000Z',
-    event: 'onSeed',
-    payload: { secret: `payload-of-${id}` },
-    meta: { cwd: projectDir, projectId, eventId: `evt-${id}`, ...meta },
-    subscriberId: `${projectId}/old`,
-    status: 'pending',
-    attempts: 0,
-    ...overrides,
-  };
-}
+const walEntry = (id: string, overrides: Partial<WalEntry> = {}, meta: Partial<WalEntry['meta']> = {}): WalEntry => seededWalEntry({ cwd: projectDir, projectId }, id, overrides, meta);
 
-function dlqEntry(id: string, overrides: Partial<DlqEntry> = {}, meta: Partial<DlqEntry['meta']> = {}): DlqEntry {
-  return {
-    id,
-    event: 'onSeed',
-    payload: { secret: `payload-of-${id}` },
-    meta: { cwd: projectDir, projectId, eventId: `evt-${id}`, ...meta },
-    subscriberId: `${projectId}/old`,
-    attempts: 1,
-    lastError: 'seeded',
-    movedAt: '2026-11-07T10:00:00.000Z',
-    ...overrides,
-  };
-}
+const dlqEntry = (id: string, overrides: Partial<DlqEntry> = {}, meta: Partial<DlqEntry['meta']> = {}): DlqEntry => seededDlqEntry({ cwd: projectDir, projectId }, id, overrides, meta);
 
 function sinkPlugin(): { plugin: ActionPlugin; seen: EventEnvelope[] } {
   const seen: EventEnvelope[] = [];

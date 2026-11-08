@@ -16,6 +16,11 @@ interface ContractCase {
 const cases = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../contract/protocol-1.json'), 'utf8')) as ContractCase[];
 
 describe('push protocol 1.x contract (recorded)', () => {
+  // an empty case list would make the it.each below pass vacuously
+  it('has recorded cases', () => {
+    expect(cases.length).toBeGreaterThanOrEqual(8);
+  });
+
   it.each(cases.map((contractCase) => [contractCase.name, contractCase] as const))('the SDK can send and read: %s', (_name, contractCase) => {
     // the placeholder stands for the id of a project the harness of the daemon registers
     const isPlaceholder = contractCase.request.project === '<registered-project>' || contractCase.request.project === '<virtual-project>';
@@ -23,8 +28,13 @@ describe('push protocol 1.x contract (recorded)', () => {
     // a case may send no working directory (a project without folder, or nothing at all)
     const sendsNoCwd = contractCase.request.project === '<virtual-project>' || contractCase.request.cwd === '<none>';
     const { cwd: _marker, ...rest } = contractCase.request;
-    const serialized = serializePushRequest({ ...rest, ...(project !== undefined && { project }), ...(!sendsNoCwd && { cwd: '/project' }) });
+    const sent = { ...rest, ...(project !== undefined && { project }), ...(!sendsNoCwd && { cwd: '/project' }) };
+    const serialized = serializePushRequest(sent);
     expect(serialized.ok).toBe(true);
+    // every field of the case reaches the wire, and nothing else is added
+    if (serialized.ok) {
+      expect(JSON.parse(serialized.body)).toEqual(sent);
+    }
 
     const answer = parsePushAnswer({
       ok: true,
@@ -38,6 +48,7 @@ describe('push protocol 1.x contract (recorded)', () => {
     if (answer.ok) {
       expect(answer.response.status).toBe(contractCase.response.status);
       expect(answer.response.supported).toBe(contractCase.response.supported);
+      expect(answer.response.eventId).toBe(contractCase.response.eventId === 'present' ? 'e-1' : undefined);
     }
   });
 });

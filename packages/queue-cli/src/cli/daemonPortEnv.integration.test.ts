@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { runQueueCli, type CliResult } from '../testing/runCli.js';
+import { createCliRunner } from '../testing/runCli.js';
 import { startDaemon } from '../daemon/QueueDaemon.js';
 import { waitForPortFree } from '../testWaitFor.js';
 
@@ -29,9 +29,7 @@ function env(): IsolatedCliEnv {
   return iso;
 }
 
-function runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): CliResult {
-  return runQueueCli(env().env, args, { extraEnv });
-}
+const runCli = createCliRunner(() => env().env);
 
 function boundPort(configDir: string): number {
   const file = join(configDir, 'config.port');

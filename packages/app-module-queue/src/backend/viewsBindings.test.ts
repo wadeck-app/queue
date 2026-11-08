@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import { getBreakdown } from './breakdown.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 type Node = Record<string, unknown>;
 
@@ -76,11 +76,11 @@ describe('the tables of the Webhooks and Subscribers pages read the source that 
 
   it('subscribers-page: the subscriber table from subscribers, the activity table from the breakdown (which answers a `subscribers` list)', () => {
     expect(rowsOf('subscribers-page.yaml')).toEqual(['subscribers.subscribers', 'breakdown.subscribers']);
-    const configDir = mkdtempSync(join(tmpdir(), 'app-module-views-bindings-'));
+    const configDir = makeTempDir('app-module-views-bindings-');
     try {
       expect(Array.isArray((getBreakdown(configDir) as unknown as Node)['subscribers'])).toBe(true);
     } finally {
-      rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      removeTempDir(configDir);
     }
   });
 });

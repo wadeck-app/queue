@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { spawnOwned, waitFor, removeDirWhenFree, withHangGuard } from '../testWaitFor.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { runQueueCli, type CliResult } from '../testing/runCli.js';
+import { createCliRunner } from '../testing/runCli.js';
 import { testBundleFile } from '../testing/testBundle.js';
 
 const bundlePath = testBundleFile('queue.cjs');
@@ -31,9 +31,7 @@ function isolatedEnv(): NodeJS.ProcessEnv {
   return iso.env;
 }
 
-function runCli(args: string[], extraEnv: Record<string, string> = {}): CliResult {
-  return runQueueCli(isolatedEnv(), args, { extraEnv });
-}
+const runCli = createCliRunner(() => isolatedEnv());
 
 interface HistoryPageEntry {
   eventId: string;

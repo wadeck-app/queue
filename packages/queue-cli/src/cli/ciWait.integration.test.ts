@@ -6,8 +6,8 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { runQueueCliAsync, type CliResult } from '../testing/runCli.js';
 import { testBundleFile } from '../testing/testBundle.js';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,21 +57,10 @@ describe('queue wait ci (bundled CLI)', () => {
     writeFileSync(join(historyDir, `${ts.slice(0, 10)}.ndjson`), JSON.stringify(record) + '\n', { flag: 'a' });
   }
 
-  // Asynchronous spawn with a hang guard only (never a performance limit): a hang must fail the test, not freeze the suite
-  function run(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  // Asynchronous with a hang guard only (runQueueCliAsync): a hang must fail the test, not freeze the suite
+  function run(args: string[]): Promise<CliResult> {
     // Isolated home / npm / registry; only the config dir is per test
-    const env: NodeJS.ProcessEnv = { ...iso.env, QUEUE_CONFIG_DIR: configDir };
-    delete env['NODE_OPTIONS'];
-    return new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [bundlePath, ...args], { cwd: configDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error(`CLI did not finish within 300s (hung?): ${args.join(' ')}\n${stderr}`)); }, 300_000);
-      child.stdout.on('data', (c) => { stdout += String(c); });
-      child.stderr.on('data', (c) => { stderr += String(c); });
-      child.on('error', (err) => { clearTimeout(timer); reject(err); });
-      child.on('close', (code) => { clearTimeout(timer); resolve({ stdout, stderr, exitCode: code ?? -1 }); });
-    });
+    return runQueueCliAsync(iso.env, args, { cwd: configDir, extraEnv: { QUEUE_CONFIG_DIR: configDir } });
   }
 
   it('exits 0 and lists the runs when the CI finished before the command started', async () => {

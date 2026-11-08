@@ -5,9 +5,8 @@ import { tmpdir } from 'node:os';
 import { Wal, type WalEntry } from './Wal.js';
 import { DlqStore, type DlqEntry } from './DlqStore.js';
 import type { StorageDiagnostic } from './StorageDiagnostics.js';
+import { dlqEntry, walEntry } from '../queueEntries.testUtil.js';
 
-const walEntry = (id: string, overrides: Partial<WalEntry> = {}): WalEntry => ({ id, timestamp: new Date().toISOString(), event: 'onX', payload: {}, meta: { cwd: '/tmp' }, subscriberId: 's', status: 'pending', attempts: 0, ...overrides });
-const dlqEntry = (id: string, overrides: Partial<DlqEntry> = {}): DlqEntry => ({ id, event: 'onX', payload: {}, meta: { cwd: '/tmp' }, subscriberId: 's', attempts: 1, lastError: 'boom', movedAt: new Date().toISOString(), ...overrides });
 
 // Valid JSON that is not an entry: every read and append used to crash on it ("Cannot read properties of null")
 const NOT_ENTRIES = ['null', '123', '"x"', '[1,2]', 'true', '{}', '{"id":"x"}', '{"id":7,"status":"pending"}'];

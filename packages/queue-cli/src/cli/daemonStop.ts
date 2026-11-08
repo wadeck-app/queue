@@ -24,10 +24,12 @@ const DAEMON_STOP_POLL_MS = 100;
 export async function daemonStop(
   client: StoppableDaemon,
   io: DaemonStopIO,
-  options: { waitMs?: number; pollMs?: number } = {},
+  options: { waitMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number } = {},
 ): Promise<number> {
   const waitMs = options.waitMs ?? DAEMON_STOP_WAIT_MS;
   const pollMs = options.pollMs ?? DAEMON_STOP_POLL_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = options.now ?? Date.now;
   if (!(await client.isRunning().catch(() => false))) {
     io.stderr.write('[ok] daemon was not running\n');
     return 0;
@@ -38,16 +40,16 @@ export async function daemonStop(
   } catch (err) {
     quitError = err;
   }
-  const deadline = Date.now() + waitMs;
+  const deadline = now() + waitMs;
   for (;;) {
     if (!(await client.isRunning().catch(() => false))) {
       io.stdout.write('[ok] daemon stopped\n');
       return 0;
     }
-    if (Date.now() >= deadline) {
+    if (now() >= deadline) {
       break;
     }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    await sleep(pollMs);
   }
   const why = quitError !== undefined ? `the quit request failed: ${getErrorMessage(quitError)}` : `it was still running after ${waitMs} ms`;
   io.stderr.write(`[fail] daemon did not stop: ${why}. Check 'queue logs' for the reason, then stop the process by hand (its pid is in 'queue status').\n`);

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
 import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, SchemaUnusableError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
@@ -101,42 +100,7 @@ vi.mock('./relay.js', () => ({ getRelayInfo: mockGetRelayInfo }));
 vi.mock('./relayWebhooks.js', () => ({ listWebhooks: mockListWebhooks, listDeliveries: mockListDeliveries }));
 
 import backend from './index.js';
-
-// backend.ts narrows req to just the shape it reads (params/query/body) via its own cast;
-// a real FastifyRequest has 25+ properties we don't need to fake for these unit tests.
-function fakeReq(partial: Record<string, unknown> = {}): Parameters<ModuleRouteHandler>[0] {
-  return partial as unknown as Parameters<ModuleRouteHandler>[0];
-}
-
-// Same rationale as fakeReq: backend.ts only calls reply.code(n).send(body).
-function fakeReply() {
-  const send = vi.fn((body: unknown) => body);
-  const code = vi.fn((_status: number) => ({ send }));
-  return { code, send };
-}
-
-function asReply(reply: ReturnType<typeof fakeReply>): Parameters<ModuleRouteHandler>[1] {
-  return reply as unknown as Parameters<ModuleRouteHandler>[1];
-}
-
-function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; ctx: ModuleContext } {
-  const routes = new Map<string, ModuleRouteHandler>();
-  const ctx: ModuleContext = {
-    dataDir: '/unused/data-dir',
-    setInterval: vi.fn(),
-    setTimeout: vi.fn(),
-    clearInterval: vi.fn(),
-    clearTimeout: vi.fn(),
-    on: vi.fn(),
-    off: vi.fn(),
-    emit: vi.fn(),
-    registerRoute: (method, subPath, handler) => routes.set(`${method} ${subPath}`, handler),
-    fileVersion: vi.fn(),
-    unchanged: vi.fn(),
-    dispose: vi.fn(),
-  };
-  return { routes, ctx };
-}
+import { asReply, collectRoutes, fakeReply, fakeReq } from './moduleContext.testUtil.js';
 
 beforeEach(() => {
   vi.clearAllMocks();

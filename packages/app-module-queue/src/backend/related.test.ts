@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { addProject, removeProject } from '@wadeck-app/project-sdk';
 import { getRelatedForProject, statusOf, RELATED_ITEMS_LIMIT } from './related.js';
 import { InvalidQueryError, UnknownProjectError } from './errors.js';
+import { makeTempDir, removeTempDir, writeHistoryDay } from './tempDir.testUtil.js';
 
 let configDir: string;
 let registryDir: string;
@@ -13,24 +13,23 @@ let foldersDir: string;
 const NOW = new Date('2026-10-31T12:00:00.000Z');
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-related-'));
-  registryDir = mkdtempSync(join(tmpdir(), 'app-module-related-registry-'));
-  foldersDir = mkdtempSync(join(tmpdir(), 'app-module-related-folders-'));
+  configDir = makeTempDir('app-module-related-');
+  registryDir = makeTempDir('app-module-related-registry-');
+  foldersDir = makeTempDir('app-module-related-folders-');
   mkdirSync(join(foldersDir, 'app'));
   mkdirSync(join(foldersDir, 'other'));
 });
 
 afterEach(() => {
   for (const dir of [configDir, registryDir, foldersDir]) {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTempDir(dir);
   }
 });
 
 type Rec = Record<string, unknown>;
 
 function writeHistory(day: string, records: Rec[]): void {
-  mkdirSync(join(configDir, 'history'), { recursive: true });
-  writeFileSync(join(configDir, 'history', `${day}.ndjson`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  writeHistoryDay(configDir, day, records);
 }
 
 const trigger = (eventId: string, ts: string, extra: Rec = {}): Rec => ({ type: 'trigger', ts, eventId, event: 'onPush', matchedCount: 1, totalCount: 1, ...extra });

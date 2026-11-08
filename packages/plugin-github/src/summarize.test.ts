@@ -58,6 +58,17 @@ describe('summarizeGithubPayload', () => {
     expect(summarizeGithubPayload(payload)).toBe('old | deleted');
   });
 
+  it('says deleted when GitHub sets `deleted` alone, and when `after` is all zeros alone', () => {
+    expect(summarizeGithubPayload({ ref: 'refs/heads/old', after: 'a'.repeat(40), deleted: true, commits: [] })).toBe('old | deleted');
+    expect(summarizeGithubPayload({ ref: 'refs/heads/old', after: '0'.repeat(40), commits: [] })).toBe('old | deleted');
+  });
+
+  it('an empty or partly zero `after` is not a deletion', () => {
+    expect(summarizeGithubPayload({ ref: 'refs/heads/new', after: '', commits: [] })).toBe('new | 0 commits');
+    expect(summarizeGithubPayload({ ref: 'refs/heads/new', after: '0000a', commits: [] })).toBe('new | 0 commits');
+    expect(summarizeGithubPayload({ ref: 'refs/heads/new', after: 'a'.repeat(40), deleted: false, commits: [] })).toBe('new | 0 commits');
+  });
+
   it('keeps 0 commits for a push that is not a deletion', () => {
     expect(summarizeGithubPayload({ ref: 'refs/heads/new', after: 'a'.repeat(40), commits: [] })).toBe('new | 0 commits');
   });

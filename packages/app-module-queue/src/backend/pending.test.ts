@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 const mockSend = vi.fn();
 const mockIsRunning = vi.fn();
 
@@ -11,11 +10,12 @@ vi.mock('./client.js', () => ({
 
 import { listPending, giveUpPending, giveUpStuck } from './pending.js';
 import { InvalidQueryError, PendingNotFoundError, NotInFlightError } from './errors.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-pending-'));
+  configDir = makeTempDir('app-module-pending-');
   mockSend.mockReset();
   mockIsRunning.mockReset();
   // no daemon unless a test starts one
@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 const walLine = (id: string, status: string, extra: object = {}) => JSON.stringify({
@@ -114,9 +114,13 @@ describe('giveUpPending, daemon not running: the move is done on the files and t
     await expect(giveUpPending(configDir, 'a1')).rejects.toThrow(NotInFlightError);
   });
 
-  it('is an InvalidQueryError-free API: a bad id is just not found', async () => {
-    await expect(giveUpPending(configDir, '')).rejects.toThrow(PendingNotFoundError);
-    expect(InvalidQueryError).toBeDefined();
+  it('is an InvalidQueryError-free API: a bad id is just not found (a 404 for the route, never a 400)', async () => {
+    for (const id of ['', ' ', '../x']) {
+      const error: unknown = await giveUpPending(configDir, id).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(PendingNotFoundError);
+      expect(error).not.toBeInstanceOf(InvalidQueryError);
+      expect((error as Error).message).toContain('only events still in the WAL can be given up');
+    }
   });
 });
 

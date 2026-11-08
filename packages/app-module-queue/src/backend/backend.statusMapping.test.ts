@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
+import type { ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 /**
  * The dashboard must not report success for what the daemon refused: the module used to answer HTTP 200 with whatever the daemon said, so the toast
@@ -29,33 +29,13 @@ vi.mock('@wadeck-app/queue-relay-client/dist/relayClient.js', () => ({
 }));
 
 import backend from './index.js';
-
-function fakeReq(partial: Record<string, unknown> = {}): Parameters<ModuleRouteHandler>[0] {
-  return partial as unknown as Parameters<ModuleRouteHandler>[0];
-}
-
-function fakeReply() {
-  const send = vi.fn((body: unknown) => body);
-  const code = vi.fn((_status: number) => ({ send }));
-  return { code, send };
-}
-
-function routes(): Map<string, ModuleRouteHandler> {
-  const map = new Map<string, ModuleRouteHandler>();
-  const ctx = {
-    dataDir: '/unused', setInterval: vi.fn(), setTimeout: vi.fn(), clearInterval: vi.fn(), clearTimeout: vi.fn(), on: vi.fn(), off: vi.fn(), emit: vi.fn(),
-    registerRoute: (method: string, subPath: string, handler: ModuleRouteHandler) => map.set(`${method} ${subPath}`, handler),
-    fileVersion: vi.fn(),
-    unchanged: vi.fn(),
-    dispose: vi.fn(),
-  } as unknown as ModuleContext;
-  backend(ctx);
-  return map;
-}
+import { collectRoutes, fakeReply, fakeReq } from './moduleContext.testUtil.js';
 
 async function call(route: string, req: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
   const reply = fakeReply();
-  await routes().get(route)!(fakeReq(req), reply as unknown as Parameters<ModuleRouteHandler>[1]);
+  const { routes, ctx } = collectRoutes();
+  backend(ctx);
+  await routes.get(route)!(fakeReq(req), reply as unknown as Parameters<ModuleRouteHandler>[1]);
   // The LAST code() call is the answer: a handler that calls code(200) before awaiting and code(500) in its catch has called it twice
   return { status: reply.code.mock.calls.at(-1)![0], body: reply.send.mock.calls.at(-1)![0] as Record<string, unknown> };
 }

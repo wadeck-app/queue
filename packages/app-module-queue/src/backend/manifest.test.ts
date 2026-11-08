@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registeredRoutes } from './registeredRoutes.testUtil.js';
 import { getStatus } from './status.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf8')) as {
@@ -61,7 +61,7 @@ describe('manifest.json figures next to menu entries (count)', () => {
 
   it('every count points at a GET route the backend registers and at a whole number that route answers', () => {
     const registered = registeredRoutes();
-    const dir = mkdtempSync(join(tmpdir(), 'queue-manifest-count-'));
+    const dir = makeTempDir('queue-manifest-count-');
     try {
       const answer = getStatus(dir) as unknown as Record<string, unknown>;
       const counted = pages.filter((page) => page.count !== undefined);
@@ -72,7 +72,7 @@ describe('manifest.json figures next to menu entries (count)', () => {
         expect(Number.isInteger(answer[count.field]), `${page.path}: /status field ${count.field}`).toBe(true);
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 });

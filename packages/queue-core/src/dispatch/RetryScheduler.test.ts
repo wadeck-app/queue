@@ -68,6 +68,17 @@ describe('RetryScheduler.scheduleRetry', () => {
     expect((async.mock.calls[0]![1] as string[])[2]).not.toBe((async.mock.calls[1]![1] as string[])[2]);
   });
 
+  it('an attempts count that is not a usable number cannot reach the job id or the delay', () => {
+    const { async } = fakeDeps();
+    for (const attempts of [Number.NaN, -3, 2.7]) {
+      RetryScheduler.scheduleRetry(entry({ id: 'x', attempts }));
+    }
+    const args = async.mock.calls.map((call) => call[1] as string[]);
+    // NaN and negative count as 0 (first try: 1m), 2.7 as 2 (4m); never "NaN" or "-3" in the id or the delay
+    expect(args.map((a) => a[2])).toEqual(['queue-retry-x-0-r4nd', 'queue-retry-x-0-r4nd', 'queue-retry-x-2-r4nd']);
+    expect(args.map((a) => a[4])).toEqual(['1m', '1m', '4m']);
+  });
+
   it('honours the backoff strategy of the subscriber', () => {
     const { async } = fakeDeps();
     RetryScheduler.scheduleRetry(entry({ attempts: 3 }), false, { backoff: 'linear' });
@@ -110,5 +121,12 @@ describe('RetryScheduler.scheduleRetry', () => {
     RetryScheduler.scheduleRetry(entry(), false, { onError });
     (async.mock.calls[0]![2] as (err: Error | null) => void)(null);
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+describe('computeBackoff with values that are not whole numbers', () => {
+  it.each([[Number.NaN, '1m'], [Number.POSITIVE_INFINITY, '1m'], [-5, '1m'], [2.9, '4m']])('attempts %s gives %s', (attempts, expected) => {
+    expect(computeBackoff(attempts)).toBe(expected);
+    expect(computeBackoff(attempts, 'linear')).toBe(Number.isFinite(attempts) ? `${Math.max(0, Math.floor(attempts)) + 1}m` : '1m');
   });
 });

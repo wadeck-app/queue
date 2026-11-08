@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { getBreakdown, TOP_EVENTS, TOP_SUBSCRIBERS } from './breakdown.js';
+import { makeTempDir, removeTempDir, writeHistoryDay, writeLogDay } from './tempDir.testUtil.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -11,21 +11,21 @@ const NOW = Date.parse('2026-01-02T12:00:00.000Z');
 let configDir: string;
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-breakdown-'));
+  configDir = makeTempDir('app-module-breakdown-');
   mkdirSync(join(configDir, 'history'));
   mkdirSync(join(configDir, 'logs'));
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 function writeHistory(date: string, records: object[]): void {
-  writeFileSync(join(configDir, 'history', `${date}.ndjson`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  writeHistoryDay(configDir, date, records);
 }
 
 function writeLog(date: string, records: object[]): void {
-  writeFileSync(join(configDir, 'logs', `${date}.ndjson`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  writeLogDay(configDir, date, records);
 }
 
 const trigger = (event: string, atMs = NOW - MINUTE) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId: crypto.randomUUID(), event, matchedCount: 0, totalCount: 0 });

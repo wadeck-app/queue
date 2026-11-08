@@ -3,9 +3,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
-import { Wal } from './storage/Wal.js';
-import { DlqStore } from './storage/DlqStore.js';
+import { Wal, type WalEntry } from './storage/Wal.js';
+import { DlqStore, type DlqEntry } from './storage/DlqStore.js';
 import { readQueueCounts, listInFlightEntries, listDlqEntries, clearDlqEntries, clearDlqEntriesReturning, listQueueSubscribers, abandonInFlightEntry, abandonStuckEntries, countStuckEntries } from './operations.js';
+import { dlqEntry as baseDlqEntry, walEntry as baseWalEntry } from './queueEntries.testUtil.js';
 
 let configDir: string;
 let projectDir: string;
@@ -22,13 +23,10 @@ afterEach(() => {
 
 const meta = { cwd: '/p', projectName: 'p' };
 
-function walEntry(id: string, status: 'pending' | 'acked' | 'failed' | 'dlq') {
-  return { id, timestamp: new Date().toISOString(), ackedAt: new Date().toISOString(), event: 'onFoo', payload: {}, meta, subscriberId: 's', status, attempts: 0 };
-}
+// An acked entry carries the time it was acknowledged
+const walEntry = (id: string, status: WalEntry['status']): WalEntry => baseWalEntry(id, { status, ackedAt: new Date().toISOString(), event: 'onFoo', meta });
 
-function dlqEntry(id: string) {
-  return { id, event: 'onFoo', payload: { id }, meta, subscriberId: 's', attempts: 3, lastError: 'boom', movedAt: new Date().toISOString() };
-}
+const dlqEntry = (id: string): DlqEntry => baseDlqEntry(id, { event: 'onFoo', payload: { id }, meta, attempts: 3 });
 
 describe('readQueueCounts', () => {
   it('is zero for a config dir that has no WAL or DLQ yet', () => {

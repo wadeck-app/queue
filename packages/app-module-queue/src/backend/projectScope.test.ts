@@ -1,22 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { addProject, removeProject } from '@wadeck-app/project-sdk';
 import { getProjectScope } from './projectScope.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let registryDir: string;
 let foldersDir: string;
 
 beforeEach(() => {
-  registryDir = mkdtempSync(join(tmpdir(), 'app-module-scope-'));
-  foldersDir = mkdtempSync(join(tmpdir(), 'app-module-scope-folders-'));
+  registryDir = makeTempDir('app-module-scope-');
+  foldersDir = makeTempDir('app-module-scope-folders-');
   mkdirSync(join(foldersDir, 'app'));
 });
 
 afterEach(() => {
-  rmSync(registryDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  rmSync(foldersDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  removeTempDir(registryDir);
+  removeTempDir(foldersDir);
 });
 
 describe('getProjectScope', () => {

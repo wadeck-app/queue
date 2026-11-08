@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import type { QueueLogWriter } from '@wadeck-app/queue-core';
 import { clearLastPrune, deleteLogFileEntry, formatBytes, getLogFiles, parseKind, pruneLogFiles } from './logFiles.js';
 import { InvalidQueryError, LogFileInUseError, LogFileNotFoundError } from './errors.js';
+import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const TODAY = '2026-10-19';
@@ -29,12 +29,12 @@ function put(kind: 'logs' | 'history', name: string, bytes = 10, ageMs = LONG_AG
 const names = (kind: 'logs' | 'history'): string[] => readdirSync(join(configDir, kind)).sort();
 
 beforeEach(() => {
-  configDir = mkdtempSync(join(tmpdir(), 'app-module-logfiles-'));
+  configDir = makeTempDir('app-module-logfiles-');
   clearLastPrune();
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  removeTempDir(configDir);
 });
 
 describe('formatBytes', () => {

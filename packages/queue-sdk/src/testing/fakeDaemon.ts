@@ -131,7 +131,8 @@ export async function startFakeDaemon(options: FakeDaemonOptions): Promise<FakeD
       if (isPush || isRegister) {
         if (!authorized) {
           daemon.onUnauthorized?.();
-          sendJson(res, 401, { error: 'Unauthorized' });
+          // Worst case on purpose: a daemon whose error body echoes the credential it was shown. The SDK must never repeat it.
+          sendJson(res, 401, { error: 'Unauthorized', received: authorization });
           return;
         }
         // A daemon older than protocol 1.1.0 does not know the command.
