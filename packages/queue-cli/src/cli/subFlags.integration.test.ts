@@ -66,18 +66,15 @@ describe('queue sub on a file with an event in the object form and a comment (bu
     expect((JSON.parse(list.stdout) as Array<{ subscriberId: string }>).map((s) => s.subscriberId)).toEqual(['hook', 'notify']);
   });
 
-  it('edit of that event is refused with --rewrite as the way out, then goes through without crashing', () => {
+  it('edit of that event goes through in place: comments and the unknown key stay, without --rewrite', () => {
     writeFileSync(subscribersFile, OBJECT_FORM);
-    const refused = runCli(['sub', 'edit', 'build.>', '--name', 'hook', '--timeout', '5s']);
-    expect(refused.exitCode).toBe(1);
-    expect(refused.stderr).toContain('--rewrite');
-    expect(refused.stderr).not.toContain('Fatal error');
-    expect(readFileSync(subscribersFile, 'utf-8')).toBe(OBJECT_FORM);
-    const done = runCli(['sub', 'edit', 'build.>', '--name', 'hook', '--timeout', '5s', '--rewrite']);
+    const done = runCli(['sub', 'edit', 'build.>', '--name', 'hook', '--timeout', '5s']);
     expect(done.exitCode, done.stderr).toBe(0);
+    expect(done.stderr).not.toContain('Fatal error');
     const text = readFileSync(subscribersFile, 'utf-8');
     expect(text).toContain('commands:');
     expect(text).toContain('timeout: 5s');
     expect(text).toContain('notes: keep me');
+    expect(text).toContain('#');
   });
 });

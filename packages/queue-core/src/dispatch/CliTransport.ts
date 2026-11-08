@@ -9,6 +9,10 @@ import type { DispatchResult } from './DispatchResult.js';
 import { resolveNpmShim } from './NpmShim.js';
 import { formatDuration } from './formatDuration.js';
 import { describePathEntryCount, envValue, findWindowsProgram } from './windowsProgram.js';
+import { BoundedOutput } from './BoundedOutput.js';
+
+export { MAX_CLI_OUTPUT_HEAD_BYTES, MAX_CLI_OUTPUT_TAIL_BYTES } from './BoundedOutput.js';
+
 
 type SpawnOptions = Parameters<typeof spawn>[2];
 
@@ -228,8 +232,8 @@ export class CliTransport {
         return;
       }
 
-      let stdout = '';
-      let stderr = '';
+      const stdoutBuffer = new BoundedOutput();
+      const stderrBuffer = new BoundedOutput();
       let timedOut = false;
       let killProblem: string | undefined;
       let settled = false;
@@ -249,6 +253,8 @@ export class CliTransport {
 
       const settleWithCode = (code: number | null): void => {
         const durationMs = Date.now() - start;
+        const stdout = stdoutBuffer.toString();
+        const stderr = stderrBuffer.toString();
 
         if (timedOut) {
           const detail = killProblem === undefined ? '' : ` (the process tree may still run: ${killProblem})`;
@@ -274,8 +280,8 @@ export class CliTransport {
         pending.push(setTimeout(() => settleWithCode(null), KILL_DEADLINE_MS));
       }, timeoutMs));
 
-      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.stdout?.on('data', (chunk: Buffer) => { stdoutBuffer.push(chunk); });
+      child.stderr?.on('data', (chunk: Buffer) => { stderrBuffer.push(chunk); });
 
       // 'close' comes once the pipes are closed, which a grandchild that inherited them can delay for as long as it lives: after 'exit', wait for it only a bounded time
       child.on('exit', (code) => {

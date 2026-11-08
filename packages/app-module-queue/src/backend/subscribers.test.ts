@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { addProject, projectToolDir } from '@wadeck-app/project-sdk';
+import { InvalidQueryError } from './errors.js';
 import { listSubscribers } from './subscribers.js';
 
 let configDir: string;
@@ -112,5 +113,59 @@ describe('listSubscribers: names', () => {
   it('throws on an unnamed subscriber, naming the event, the index and the fix, instead of listing it as "unnamed"', async () => {
     await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      command: echo a\n      name: notify\n    - type: cli\n      command: echo b\n');
     expect(() => listSubscribers(configDir, projectDir, undefined, registryDir)).toThrow(/Subscriber 'onFoo' index 1.*has no name[\s\S]*queue sub edit onFoo --index 1 --name <name> --scope project/);
+  });
+});
+
+describe('listSubscribers: secrets in url and command', () => {
+  it('masks the secret part of a webhook url and of a curl command, keeps the rest readable', async () => {
+    await writeProjectSubscribers(
+      [
+        'subscribers:',
+        '  onFoo:',
+        '    - type: http',
+        '      name: hook',
+        '      url: https://hooks.slack.com/services/T000/B000/SECRETPATH',
+        '    - type: cli',
+        '      name: call',
+        "      command: 'curl -H \"Authorization: Bearer secret-bearer\" https://example.test/x'",
+        '',
+      ].join('\n'),
+    );
+    const listed = listSubscribers(configDir, projectDir, undefined, registryDir);
+    expect(listed.find((s) => s.name === 'hook')?.url).toBe('https://hooks.slack.com/services/***');
+    expect(listed.find((s) => s.name === 'call')?.command).toBe('curl -H "Authorization: ***" https://example.test/x');
+    expect(JSON.stringify(listed)).not.toContain('SECRETPATH');
+    expect(JSON.stringify(listed)).not.toContain('secret-bearer');
+  });
+});
+
+describe('listSubscribers: the working directory', () => {
+  it('reads the daemon working directory when none is given', async () => {
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
+    expect(() => listSubscribers(configDir, undefined, undefined, registryDir)).not.toThrow();
+  });
+
+  it('accepts a folder inside a registered project', async () => {
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
+    const sub = join(projectDir, 'sub', 'dir');
+    expect(listSubscribers(configDir, sub, undefined, registryDir).map((s) => s.name)).toEqual(['a']);
+  });
+
+  it('refuses a folder outside every registered project with the registered paths as the fix, and reads nothing there', async () => {
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
+    const other = mkdtempSync(join(tmpdir(), 'app-module-subs-other-'));
+    try {
+      mkdirSync(join(other, '.queue'));
+      writeFileSync(join(other, '.queue', 'subscribers.yml'), 'subscribers: [broken\n');
+      expect(() => listSubscribers(configDir, other, undefined, registryDir)).toThrow(InvalidQueryError);
+      expect(() => listSubscribers(configDir, other, undefined, registryDir)).toThrow(/not inside a registered project[\s\S]*queue project list/);
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a sibling folder that merely shares the prefix of a registered path', async () => {
+    await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
+    expect(() => listSubscribers(configDir, `${projectDir}-evil`, undefined, registryDir)).toThrow(InvalidQueryError);
   });
 });

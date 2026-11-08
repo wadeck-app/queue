@@ -30,11 +30,11 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 - **Threat:** A `cli` subscriber may template event payload values (`{{ payload.x }}`, data from relay events or `queue push`) into its command. Audited: `CliTransport` used to paste the value into the command and run it with `spawn(command, [], { shell: true })`, so a value like `a; touch x` or `& calc` ran as code on POSIX and on Windows `cmd.exe`. Environment variables are no fix on `cmd.exe` (`%X%` is re-parsed).
 - **Mitigation:** A command with `{{ }}` runs without a shell: it is split into arguments first, then values are substituted inside each argument (`commandTemplate.ts`), so a value is always one argument. A standard npm-generated `.cmd` shim is run directly as `node.exe script.js args` (`NpmShim.ts`, strict whitelist of its lines, script inside its directory), so its values stay inert. Any other Windows `.cmd`/`.bat` target (which needs `cmd.exe`) refuses, as a permanent failure, any value holding `& | < > ^ % ! "`, a backtick or a line break, or ending with a backslash (cmd.exe cannot pass it faithfully: %~1 and a C-runtime %* disagree). At load time (`ConfigLoader`, `queue sub add|edit`) a command that mixes `{{ }}` with shell syntax, an unterminated quote or a placeholder as the program is rejected. See [docs/subscribers.md](../docs/subscribers.md).
 - **Unchanged:** a command without `{{ }}` still runs in a shell as written (trusted `subscribers.yml`, see the first threat).
-- **Guaranteed:** no shell and one argument per placeholder, whatever the value holds. **Best-effort, not guaranteed:** the load-time refusal of a placeholder that a known program would read as code, as an option or as the script (`INTERPRETER_RULES`: shells, cmd, PowerShell only as `-File <literal script> ...`, node/bun/deno, python, perl, ruby, php, lua, Rscript, osascript, npx/npm exec, matched by lowercase name, attached and bundled flags included).
+- **Guaranteed:** no shell and one argument per placeholder, whatever the value holds. **Best-effort, not guaranteed:** the load-time refusal of a placeholder that a known program would read as code, as an option or as the script (`INTERPRETER_RULES`: shells including `+x` options, cmd and mshta (no placeholder at all), PowerShell only as `-File <literal script> ...`, node/tsx/ts-node/bun/deno, python, perl, ruby, php, lua, Rscript, osascript, awk, wscript/cscript, npx/npm/pnpm/yarn (closed option list, install-like subcommands refused), env and busybox followed to the program behind them, matched by lowercase name without extension or trailing version, attached and bundled flags included).
 - **Option injection:** a placeholder that is the whole argument and renders as `-x`, `--x` or `@...` is refused permanently (negative numbers pass); `--name={{ x }}` is the safe form.
-- **Resolution (Windows):** a bare program name is looked up on `PATH` only, so a `tool.cmd` planted in the (often cloned) working directory does not run in place of the tool; a program written with a directory is resolved relative to the working directory. The not-found error carries only the count of PATH entries (it reaches the DLQ and `queue.dlq.added`); the list is in the daemon start log.
+- **Resolution (Windows):** a bare program name is looked up on `PATH` only, so a `tool.cmd` planted in the (often cloned) working directory does not run in place of the tool; a relative `PATH` entry (`.`, `bin`) is ignored (it would resolve against the working directory); a program written with a directory is resolved relative to the working directory. The not-found error carries only the count of PATH entries (it reaches the DLQ and `queue.dlq.added`); the list is in the daemon start log.
 - **Timeout:** the whole process tree is stopped, and a grandchild holding the pipes cannot keep a dispatch (and the daemon) busy more than 3 s after the program exited.
-- **Residual risk (not detected):** wrappers that start another program with the value (`env`, `sudo`, `xargs`, `ssh`, `docker exec`, `find -exec`), programs that take a program as argument (`awk`, `sed`, `jq`, ...), `deno run` on a URL, a renamed or script-wrapped interpreter, an interpreter option missing from the list; a batch file that re-expands its own arguments unsafely.
+- **Residual risk (not detected):** wrappers that start another program with the value (`sudo`, `xargs`, `ssh`, `docker exec`, `find -exec`, `nohup`, `timeout`; `env` and `busybox` are followed), variables set through `env NAME=value`, programs that take a program as argument (`sed`, `jq`, ...), `deno run` on a URL, a renamed or script-wrapped interpreter, an interpreter option missing from the list; a batch file that re-expands its own arguments unsafely.
 
 ### Local process calling daemon RPC (port 47910)
 
@@ -65,7 +65,7 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 ### Dashboard routes that would change what runs
 
 - **Threat:** An HTTP route of the app-core module that writes `subscribers.yml` (`queue sub add|edit|remove`) lets any web page the user visits, or any local process, register an arbitrary command that runs on the next matching event. A browser can reach `localhost` routes; the daemon's raw RPC port it cannot.
-- **Decision:** The module has no such route and no route that starts or stops a daemon. `GET /subscribers` masks the values of `headers` and `env` (tokens) and keeps their names. The mutating routes are `push`, `replay`, `retry`, `dlq/:id/replay` and `dlq/:id/clear`, which run or drop what is already configured (the log-file deletions are covered below).
+- **Decision:** The module has no such route and no route that starts or stops a daemon. `GET /subscribers` masks the values of `headers`, `env` and `with` (keys stay), the secret parts of `url` and `command` (next section), and answers only for the working directory of the dashboard process or a folder inside a registered project (`?cwd=` elsewhere: 400, nothing read). The mutating routes are `push`, `replay`, `retry`, `dlq/:id/replay` and `dlq/:id/clear`, which run or drop what is already configured (the log-file deletions are covered below).
 - **Revisit only with:** an authentication / CSRF protection that app-core provides to every module.
 
 ### Dashboard routes that delete log files
@@ -80,7 +80,8 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 ### HTTP subscriber receiving sensitive payload data
 
 - **Threat:** HTTP subscribers receive the full event payload. If the target URL is untrusted or the request is logged by a proxy, payload data is exposed.
-- **Mitigation:** None in the tool. Callers control the URL and headers. Use `when:` filters to limit which payloads are forwarded.
+- **Mitigation:** Callers control the URL and headers; use `when:` filters to limit which payloads are forwarded. Redirects are never followed (a 3xx fails, naming only the Location origin), so custom headers such as `Authorization` and the envelope cannot be forwarded to another origin by the endpoint. The timeout covers the response body and the body is capped at 1 MiB, so a stalling or endless answer cannot hang or fill the daemon.
+- **Output of cli subscribers:** each stream is kept in memory as the first 1 MiB plus the last 64 KiB; a program that prints without end cannot exhaust the daemon's memory.
 
 ### Relay-sourced events pushed into the daemon (queue-relay-client)
 
@@ -107,6 +108,12 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 
 - **Threat:** `with` may hold a token, a recipient or a message; `GET /subscribers` travels to a browser.
 - **Mitigation:** every `with` value is masked (`***`), keys are kept, like `headers` and `env`.
+
+### Secrets in the url and the command of a subscriber
+
+- **Threat:** a webhook url carries its secret in the path or the query (`/services/T0/B0/XXXX`, `?token=`), a command carries it in a header or option (`curl -H "Authorization: Bearer ..."`); `GET /subscribers` travels to a browser. `?cwd=` is a free parameter: it could make the route read the `subscribers.yml` of any folder.
+- **Mitigation:** `url` keeps scheme, host, port and the first path segment when it is a short plain word, hides the rest of the path, drops userinfo and fragment, masks query values (keys stay); a value that is not an absolute url is hidden whole. `command` has these masked: values of `-H`/`--header`, `Bearer`/`Basic` credentials, `-u`/`--user`, options and `NAME=value` whose name holds token, secret, password, key, auth or credential, userinfo and query values of http(s) urls, and known token shapes (`ghp_`, `github_pat_`, `xox*-`, `sk-`, `glpat-`, `AKIA`, JWT). `cwd` must be inside a registered project, else 400.
+- **Not covered:** a secret in a position none of these rules recognises (a positional argument, a path segment that looks like a plain word, a custom option name). The pattern is best effort on free text; keep secrets in `env` or `headers`, which are masked by key.
 
 ### Forged `$eventRef` and the reserved `queue.` namespace
 

@@ -236,11 +236,8 @@ export function findTemplateProblem(command: string): string | undefined {
   return undefined;
 }
 
-/**
- * Which arguments a code flag turns into code: `self` the flag token only (`--eval=...`), `next` the flag and the argument after it,
- * `rest` the flag and every argument after it (cmd.exe joins them all into one command line).
- */
-type CodeScope = 'self' | 'next' | 'rest';
+/** Which arguments a code flag turns into code: `self` the flag token only (`--eval=...`), `next` the flag and the argument after it. */
+type CodeScope = 'self' | 'next';
 
 interface CodeFlag {
   /**
@@ -258,26 +255,90 @@ interface InterpreterRule {
   valueOptions?: ReadonlySet<string>;
   /** Words that, as the first non-option argument, are a subcommand and not the script (`deno run script.ts`): the script is the next one. */
   subcommands?: ReadonlySet<string>;
-  /** The rule applies only when the first non-option argument is one of `subcommands` (`npm exec`, but not `npm install`). */
+  /** The rule applies only when the first non-option argument is one of `subcommands` (`npm exec`, but not `npm view`). */
   subcommandRequired?: boolean;
-  /** The program takes no script argument (cmd.exe): only the code flags are checked. */
-  noScriptPosition?: boolean;
+  /** Subcommands after which EVERY positional argument names a package to install (`npm install a b`): a placeholder anywhere after one is refused. */
+  allPositionalSubcommands?: ReadonlySet<string>;
+  /** The program has no safe form for a payload value in any argument (cmd.exe, mshta): any placeholder is refused. */
+  refuseAnyPlaceholder?: boolean;
+  /** Prefixes, besides `-`, that make an argument an option (`+x` of POSIX shells, `//B` of the Windows script hosts). */
+  optionPrefixes?: ReadonlyArray<string>;
+  /**
+   * Closed list of the options that take NO value (strict mode): an option that is in neither this pattern, `valueOptions` nor written `--name=value`
+   * could take the next argument as its value, so the position of the package or script is unknown; a placeholder after it is refused.
+   */
+  knownFlags?: RegExp;
+  /** The program runs another program given as argument: `env prog`, `busybox applet`. The rule is then applied to that program. */
+  wrapper?: 'env' | 'busybox';
   /** A script file name of this program, for the example of the error. */
   scriptName?: string;
+  /** Example of the form the error recommends, when `program script {{ x }}` does not fit. */
+  example?: string;
   /** PowerShell: a placeholder is accepted only after `-File <literal script>` (see findPowerShellProblem). */
   powershell?: boolean;
   /** The safe form shown in the error. */
   safeForm: string;
 }
 
+const GENERIC_EVAL_SAFE_FORM = (example: string): string => `pass the value as a separate argument after the code and read it from the program's argument list, e.g. ${example}`;
+
 const POSIX_SHELL_RULE: InterpreterRule = {
   // -c, -lc, -ec, ... (a lowercase c in an option cluster, text may follow it); fish also accepts --command
   codeFlags: [{ pattern: /^(?:-[A-Za-z]*c|--command)/, scope: 'next' }],
-  valueOptions: new Set(['-o', '-O', '--rcfile', '--init-file']),
+  // +o and +O take a value like -o and -O; every shell reads +x as an option too
+  valueOptions: new Set(['-o', '-O', '+o', '+O', '--rcfile', '--init-file']),
+  optionPrefixes: ['+'],
   safeForm: `pass the value as a separate argument after the script and read it as a positional parameter, e.g. bash -c 'echo "$1"' _ {{ x }}`,
 };
 
-const GENERIC_EVAL_SAFE_FORM = (example: string): string => `pass the value as a separate argument after the code and read it from the program's argument list, e.g. ${example}`;
+const NODE_RULE: InterpreterRule = {
+  codeFlags: [
+    { pattern: /^--(?:eval|print)=/, scope: 'self' },
+    { pattern: /^(?:-e|-p|--eval|--print)/, scope: 'next' },
+  ],
+  valueOptions: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title']),
+  scriptName: 'script.js',
+  safeForm: GENERIC_EVAL_SAFE_FORM('node -e "console.log(process.argv[1])" {{ x }}'),
+};
+
+/** Options of npm that take no value (from the config definitions of npm 11), plus the short clusters. Anything else is unknown (strict mode). */
+const NPM_FLAGS = new RegExp(
+  '^(?:--?|' +
+    '-(?:[aflgSBDEOPvhHynsqd?]+|ws|iwr)|' +
+    '--(?:no-[\\w-]+|all|allow-same-version|audit|bin-links|dangerously-allow-all-scripts|description|dev|dry-run|engine-strict|force|foreground-scripts|' +
+    'format-package-lock|fund|git-tag-version|global|global-style|if-present|ignore-scripts|include-staged|include-workspace-root|include-attestations|' +
+    'init-private|install-links|json|legacy-bundling|legacy-peer-deps|link|long|offline|omit-lockfile-registry-resolved|package-lock|package-lock-only|' +
+    'parseable|prefer-dedupe|prefer-offline|prefer-online|progress|provenance|read-only|rebuild-bundle|save|save-bundle|save-dev|save-exact|save-optional|' +
+    'save-peer|save-prod|shrinkwrap|sign-git-commit|sign-git-tag|strict-peer-deps|strict-allow-scripts|strict-ssl|timing|unicode|update-notifier|usage|' +
+    'version|versions|workspaces|yes|color|optional|production|silent|quiet|verbose|help|ignore-existing|no-install))$'
+);
+
+/** Options of npm that take their value as the next argument (config definitions of npm 11). */
+const NPM_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  '-p', '--package', '-w', '--workspace', '-C', '--prefix', '-L', '--location', '-m', '--message',
+  ...[
+    '_auth', 'access', 'allow-directory', 'allow-file', 'allow-git', 'allow-remote', 'allow-scripts', 'also', 'audit-level', 'auth-type', 'before', 'browser',
+    'ca', 'cache', 'cache-max', 'cache-min', 'cafile', 'cert', 'cidr', 'cpu', 'depth', 'diff', 'diff-dst-prefix', 'diff-src-prefix', 'diff-unified', 'editor',
+    'expect-result-count', 'expect-results', 'expires', 'fetch-retries', 'fetch-retry-factor', 'fetch-retry-maxtimeout', 'fetch-retry-mintimeout',
+    'fetch-timeout', 'git', 'globalconfig', 'heading', 'https-proxy', 'include', 'init-author-email', 'init-author-name', 'init-author-url', 'init-license',
+    'init-module', 'init-type', 'init-version', 'init.author.email', 'init.author.name', 'init.author.url', 'init.license', 'init.module', 'init.version',
+    'install-strategy', 'key', 'libc', 'local-address', 'lockfile-version', 'loglevel', 'logs-dir', 'logs-max', 'name', 'maxsockets', 'min-release-age',
+    'min-release-age-exclude', 'node-gyp', 'node-options', 'noproxy', 'omit', 'only', 'orgs', 'os', 'otp', 'pack-destination', 'packages', 'preid',
+    'provenance-file', 'proxy', 'registry', 'replace-registry-host', 'save-prefix', 'sbom-format', 'sbom-type', 'scope', 'scopes', 'script-shell',
+    'searchexclude', 'searchlimit', 'searchopts', 'searchstaleness', 'shell', 'tag', 'tag-version-prefix', 'umask', 'user-agent', 'userconfig', 'viewer',
+    'which', 'cwd',
+  ].map((name) => `--${name}`),
+]);
+
+const PNPM_FLAGS = new RegExp(
+  '^(?:--?|-[rwsDgPEOyn]+|--(?:no-[\\w-]+|recursive|workspace-root|silent|offline|prefer-offline|frozen-lockfile|ignore-scripts|global|dev|prod|production|' +
+    'if-present|stream|parallel|sequential|color|help|version|fix-lockfile|shamefully-hoist|force|use-stderr|aggregate-output|report-summary|yes))$'
+);
+
+const YARN_FLAGS = new RegExp(
+  '^(?:--?|-[sDWgPEOy]+|--(?:no-[\\w-]+|silent|verbose|offline|prefer-offline|frozen-lockfile|ignore-scripts|dev|peer|optional|exact|tilde|json|' +
+    'immutable|check-cache|help|version|production|ignore-engines|ignore-platform|non-interactive|no-progress|force|flat|pure-lockfile|skip-integrity-check))$'
+);
 
 /** Programs that run one of their arguments as code, by name (lowercase, no extension). Best-effort denylist: see docs/subscribers.md. */
 const INTERPRETER_RULES: Readonly<Record<string, InterpreterRule>> = {
@@ -291,38 +352,64 @@ const INTERPRETER_RULES: Readonly<Record<string, InterpreterRule>> = {
   fish: POSIX_SHELL_RULE,
   csh: POSIX_SHELL_RULE,
   tcsh: POSIX_SHELL_RULE,
+  // cmd.exe reads /c, /k, /r (any case, also attached to other switches) anywhere in its arguments and joins all of them into one command line
   cmd: {
-    codeFlags: [{ pattern: /^[/-][ckr]/i, scope: 'rest' }],
-    noScriptPosition: true,
+    codeFlags: [],
+    refuseAnyPlaceholder: true,
     safeForm: 'cmd.exe has no safe way to receive a value; start a real program or a script file instead (e.g. node script.js {{ x }}), or read the event envelope on stdin',
+  },
+  mshta: {
+    codeFlags: [],
+    refuseAnyPlaceholder: true,
+    safeForm: 'mshta runs its argument as an HTML application or inline script and has no data argument; run a script with cscript (cscript //nologo script.vbs {{ x }}) or read the event envelope on stdin',
+  },
+  wscript: {
+    codeFlags: [],
+    optionPrefixes: ['//'],
+    scriptName: 'script.vbs',
+    safeForm: 'name the script literally and pass the value after it (wscript script.vbs {{ x }}), or read the event envelope on stdin',
+  },
+  busybox: {
+    codeFlags: [],
+    wrapper: 'busybox',
+    safeForm: 'name the applet literally (busybox sh script.sh {{ x }}), or read the event envelope on stdin',
+  },
+  env: {
+    codeFlags: [],
+    wrapper: 'env',
+    safeForm: 'name the program literally after env and follow the rules of that program (env bash script.sh {{ x }}), or read the event envelope on stdin',
+  },
+  // awk runs its first non-option argument as a program; -f names a program file
+  awk: {
+    codeFlags: [{ pattern: /^(?:-f|-e|--file|--source)/, scope: 'next' }],
+    valueOptions: new Set(['-F', '-v', '-i', '-l', '-E']),
+    scriptName: 'prog.awk',
+    safeForm: GENERIC_EVAL_SAFE_FORM(`awk 'BEGIN { print ARGV[1] }' {{ x }}`),
   },
   powershell: {
     codeFlags: [],
     powershell: true,
     safeForm: 'start the command with -File and a literal script path, and put the placeholder after it, e.g. powershell -NoProfile -File script.ps1 {{ x }}, or read the event envelope on stdin',
   },
-  node: {
-    codeFlags: [
-      { pattern: /^--(?:eval|print)=/, scope: 'self' },
-      { pattern: /^(?:-e|-p|--eval|--print)/, scope: 'next' },
-    ],
-    valueOptions: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title']),
-    scriptName: 'script.js',
-    safeForm: GENERIC_EVAL_SAFE_FORM('node -e "console.log(process.argv[1])" {{ x }}'),
-  },
+  node: NODE_RULE,
+  tsx: { ...NODE_RULE, valueOptions: new Set([...NODE_RULE.valueOptions!, '--tsconfig']), scriptName: 'script.ts', safeForm: GENERIC_EVAL_SAFE_FORM('tsx -e "console.log(process.argv[1])" {{ x }}') },
+  'ts-node': { ...NODE_RULE, scriptName: 'script.ts', safeForm: GENERIC_EVAL_SAFE_FORM('ts-node -e "console.log(process.argv[1])" {{ x }}') },
   bun: {
     codeFlags: [
       { pattern: /^--(?:eval|print)=/, scope: 'self' },
       { pattern: /^(?:-e|-p|--eval|--print)/, scope: 'next' },
     ],
     valueOptions: new Set(['-r', '--preload', '--import', '--cwd', '--config', '-c']),
-    subcommands: new Set(['run', 'x', 'exec']),
+    subcommands: new Set(['run', 'x', 'exec', 'create']),
+    allPositionalSubcommands: new Set(['add', 'a', 'install', 'i']),
     scriptName: 'script.ts',
     safeForm: GENERIC_EVAL_SAFE_FORM('bun -e "console.log(process.argv[2])" {{ x }}'),
   },
   deno: {
     codeFlags: [{ pattern: /^eval$/, scope: 'next' }],
-    subcommands: new Set(['run', 'test', 'bench', 'task', 'serve', 'repl']),
+    // -c/--config and the like take their value as the next argument; x runs a package, install installs a script
+    valueOptions: new Set(['-c', '--config', '--import-map', '--lock', '--cert', '--location', '--env-file', '--v8-flags', '--seed', '--tsconfig']),
+    subcommands: new Set(['run', 'test', 'bench', 'task', 'serve', 'repl', 'x', 'install']),
     scriptName: 'script.ts',
     safeForm: 'run a script file and pass the value after it (deno run script.ts {{ x }}), or read the event envelope on stdin',
   },
@@ -365,15 +452,38 @@ const INTERPRETER_RULES: Readonly<Record<string, InterpreterRule>> = {
   // npx and `npm exec` download and run a package: the first argument chooses what runs, -c runs a command line
   npx: {
     codeFlags: [{ pattern: /^(?:-c|--call)/, scope: 'next' }],
-    valueOptions: new Set(['-p', '--package']),
+    valueOptions: NPM_VALUE_OPTIONS,
+    knownFlags: NPM_FLAGS,
     safeForm: 'name the package literally and pass the value after it (npx some-tool {{ x }}), or read the event envelope on stdin',
   },
+  // init/create run create-<name>; run runs the script <name> of the package.json: the first argument after them is chosen by the payload
   npm: {
     codeFlags: [{ pattern: /^(?:-c|--call)/, scope: 'next' }],
-    valueOptions: new Set(['-p', '--package']),
-    subcommands: new Set(['exec', 'x']),
+    valueOptions: NPM_VALUE_OPTIONS,
+    knownFlags: NPM_FLAGS,
+    subcommands: new Set(['exec', 'x', 'init', 'create', 'innit', 'run', 'run-script', 'rum', 'urn']),
+    allPositionalSubcommands: new Set(['install', 'i', 'add', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall', 'install-test', 'it']),
     subcommandRequired: true,
-    safeForm: 'name the package literally and pass the value after it (npm exec some-tool -- {{ x }}), or read the event envelope on stdin',
+    example: 'npm exec some-tool -- {{ x }}',
+    safeForm: 'name the package or script literally and pass the value after it (npm exec some-tool -- {{ x }}), or read the event envelope on stdin',
+  },
+  pnpm: {
+    codeFlags: [],
+    valueOptions: new Set(['-C', '--dir', '-F', '--filter', '--filter-prod', '--reporter', '--registry', '--loglevel', '--store-dir', '--config', '--workspace-concurrency', '--resume-from', '--test-pattern']),
+    knownFlags: PNPM_FLAGS,
+    subcommands: new Set(['exec', 'dlx', 'create', 'run', 'run-script', 'x', 'node', 'init']),
+    allPositionalSubcommands: new Set(['add', 'install', 'i']),
+    example: 'pnpm exec some-tool {{ x }}',
+    safeForm: 'name the script, package or tool literally and pass the value after it (pnpm exec some-tool {{ x }}), or read the event envelope on stdin',
+  },
+  yarn: {
+    codeFlags: [],
+    valueOptions: new Set(['--cwd', '--registry', '--network-timeout', '--modules-folder', '--cache-folder', '--mutex', '--link-folder', '--use-yarnrc', '--emoji']),
+    knownFlags: YARN_FLAGS,
+    subcommands: new Set(['exec', 'dlx', 'create', 'run', 'node', 'init']),
+    allPositionalSubcommands: new Set(['add']),
+    example: 'yarn exec some-tool {{ x }}',
+    safeForm: 'name the script, package or tool literally and pass the value after it (yarn exec some-tool {{ x }}), or read the event envelope on stdin',
   },
 };
 
@@ -384,6 +494,8 @@ const INTERPRETER_ALIASES: ReadonlyArray<{ pattern: RegExp; rule: string }> = [
   { pattern: /^pwsh(?:-preview)?$/, rule: 'powershell' },
   { pattern: /^powershell_ise$/, rule: 'powershell' },
   { pattern: /^nodejs$/, rule: 'node' },
+  { pattern: /^cscript$/, rule: 'wscript' },
+  { pattern: /^(?:gawk|mawk|nawk)$/, rule: 'awk' },
   { pattern: /^(?:bunx|pnpx)$/, rule: 'npx' },
 ];
 
@@ -397,14 +509,23 @@ function normalizeProgramName(program: string): string {
   return program.slice(Math.max(program.lastIndexOf('/'), program.lastIndexOf('\\')) + 1).replace(PROGRAM_EXTENSION, '').toLowerCase();
 }
 
+/** A version glued to the name: `node18`, `perl5.36`, `lua5.4`, `php8.2`, `bash-5`. */
+const VERSION_SUFFIX = /[-_]?\d[\d.]*$/;
+
 function findInterpreterRule(program: string): { name: string; rule: InterpreterRule } | undefined {
-  const name = normalizeProgramName(program);
-  // Own keys only: a program named `constructor` or `toString` is not a rule
-  if (Object.hasOwn(INTERPRETER_RULES, name)) {
-    return { name, rule: INTERPRETER_RULES[name]! };
+  const base = normalizeProgramName(program);
+  const stripped = base.replace(VERSION_SUFFIX, '');
+  for (const name of stripped === base || stripped === '' ? [base] : [base, stripped]) {
+    // Own keys only: a program named `constructor` or `toString` is not a rule
+    if (Object.hasOwn(INTERPRETER_RULES, name)) {
+      return { name, rule: INTERPRETER_RULES[name]! };
+    }
+    const alias = INTERPRETER_ALIASES.find((entry) => entry.pattern.test(name));
+    if (alias !== undefined) {
+      return { name, rule: INTERPRETER_RULES[alias.rule]! };
+    }
   }
-  const alias = INTERPRETER_ALIASES.find((entry) => entry.pattern.test(name));
-  return alias === undefined ? undefined : { name, rule: INTERPRETER_RULES[alias.rule]! };
+  return undefined;
 }
 
 function literalText(token: TemplateToken): string {
@@ -499,18 +620,27 @@ function findInterpreterProblem(tokens: TemplateToken[]): string | undefined {
   if (rule.powershell === true) {
     return findPowerShellProblem(program, args, fix);
   }
+  if (rule.refuseAnyPlaceholder === true) {
+    return args.some((token) => hasField(token))
+      ? `'${program}' would read a {{ }} placeholder as part of a command line or a document it runs, whatever the position and the quoting, so no placeholder is accepted in this command. ${fix}`
+      : undefined;
+  }
+  if (rule.wrapper !== undefined) {
+    return findWrapperProblem(program, rule.wrapper, args, fix);
+  }
 
+  const isOption = (text: string): boolean => text.startsWith('-') || (rule.optionPrefixes?.some((prefix) => text.startsWith(prefix)) ?? false);
   let subcommandSeen = false;
   for (let i = 0; i < args.length; i++) {
     const token = args[i]!;
     const text = literalText(token);
     const flag = rule.codeFlags.find((candidate) => candidate.pattern.test(text));
     if (flag !== undefined) {
-      const last = flag.scope === 'rest' ? args.length - 1 : flag.scope === 'next' ? i + 1 : i;
+      const last = flag.scope === 'next' ? i + 1 : i;
       for (let j = i; j <= last && j < args.length; j++) {
         if (hasField(args[j])) {
           return (
-            `'${program}' reads '${text}' and ${flag.scope === 'rest' ? 'every argument after it' : 'the argument after it'} as code (${found.name === 'cmd' ? 'a command line' : 'a script'}), so a {{ }} placeholder there would be interpreted ` +
+            `'${program}' reads '${text}' and ${flag.scope === 'next' ? 'the argument after it' : 'it'} as code (a script), so a {{ }} placeholder there would be interpreted ` +
             `instead of staying data. ${fix}`
           );
         }
@@ -518,19 +648,26 @@ function findInterpreterProblem(tokens: TemplateToken[]): string | undefined {
       // The code is found and holds no placeholder; what follows is data for it (positional parameters)
       return undefined;
     }
-    if (rule.noScriptPosition === true) {
-      continue;
-    }
 
-    if (text.startsWith('-')) {
+    if (isOption(text)) {
       if (hasField(token)) {
         return positionProblem(program, rule, `in the option '${text}'`, fix);
       }
-      if (rule.valueOptions?.has(text) === true && i + 1 < args.length) {
-        if (hasField(args[i + 1])) {
-          return positionProblem(program, rule, `as the value of '${text}'`, fix);
+      if (rule.valueOptions?.has(text) === true) {
+        if (i + 1 < args.length) {
+          if (hasField(args[i + 1])) {
+            return positionProblem(program, rule, `as the value of '${text}'`, fix);
+          }
+          i++;
         }
-        i++;
+        continue;
+      }
+      if (rule.knownFlags !== undefined && !text.includes('=') && !rule.knownFlags.test(text) && args.slice(i + 1).some((later) => hasField(later))) {
+        return (
+          `'${program}' is followed by the option '${text}', which this check does not know: it cannot tell whether the option takes the next argument as its value, ` +
+          `so it cannot tell where the package or script starts, and a {{ }} placeholder after it might be run as one. ` +
+          `Fix: write the option as ${text}=value if it takes a value, or remove it, or name the package or script before the placeholder. ${fix}`
+        );
       }
       continue;
     }
@@ -539,17 +676,69 @@ function findInterpreterProblem(tokens: TemplateToken[]): string | undefined {
     if (hasField(token)) {
       return positionProblem(program, rule, 'where the script is expected', fix);
     }
+    if (!subcommandSeen && rule.allPositionalSubcommands?.has(text) === true) {
+      if (args.slice(i + 1).some((later) => hasField(later))) {
+        return (
+          `a {{ }} placeholder follows '${program} ${text}', where every argument names a package to install (and install scripts run code). ` +
+          `A payload value must not choose what gets installed. ${fix}`
+        );
+      }
+      return undefined;
+    }
     if (rule.subcommands?.has(text) === true && !subcommandSeen) {
       subcommandSeen = true;
       continue;
     }
-    if (rule.subcommandRequired === true && !subcommandSeen) {
-      return undefined;
-    }
-    // A literal script: everything after it is data for the script
+    // A literal script (or a subcommand that does not run what follows): everything after it is data
     return undefined;
   }
   return undefined;
+}
+
+/** Switches of `env` that take the next argument as their value. */
+const ENV_VALUE_OPTIONS = new Set(['-u', '--unset', '-C', '--chdir']);
+
+/**
+ * `env prog args` and `busybox applet args` run the next word as a program: a placeholder there lets the payload choose the program, and a known
+ * shell or interpreter behind them is checked as if it were the program of the command.
+ */
+function findWrapperProblem(program: string, wrapper: 'env' | 'busybox', args: TemplateToken[], fix: string): string | undefined {
+  const chosen = (): string => `a {{ }} placeholder is where '${program}' reads the program to run. A payload value must never choose which program runs. ${fix}`;
+  let i = 0;
+  if (wrapper === 'env') {
+    for (; i < args.length; i++) {
+      const token = args[i]!;
+      const text = literalText(token);
+      if (/^(?:-S|--split-string)/.test(text)) {
+        // -S splits its value into a command line (program and arguments)
+        return hasField(token) || hasField(args[i + 1])
+          ? `'${program}' ${text.startsWith('--') ? '--split-string' : '-S'} splits its value into a command line, so a {{ }} placeholder in it would be parsed as program and arguments. ${fix}`
+          : undefined;
+      }
+      if (text === '--') {
+        i++;
+        break;
+      }
+      if (text.startsWith('-') && text !== '-') {
+        if (ENV_VALUE_OPTIONS.has(text)) {
+          i++;
+        }
+        continue;
+      }
+      // NAME=value sets a variable and is data; anything else (also a placeholder, which reads as empty text) is the program
+      if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(text)) {
+        break;
+      }
+    }
+  }
+  const next = args[i];
+  if (next === undefined) {
+    return undefined;
+  }
+  if (hasField(next)) {
+    return chosen();
+  }
+  return findInterpreterProblem(args.slice(i));
 }
 
 function positionProblem(program: string, rule: InterpreterRule, where: string, fix: string): string {

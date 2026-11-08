@@ -10,7 +10,7 @@ $type: PageContent
 sections:
   - $type: PageHeader
     title: Subscribers
-    subtitle: From the global subscribers.yml and the project of the working directory (?cwd=). Edit them with queue sub. Problem shows what the files alone reveal (a command with no folder to run from); an unknown action or settings an action refuses need the daemon's plugins, so queue sub list shows those.
+    subtitle: From the global subscribers.yml and the project of the working directory (?cwd=, a folder of a registered project). Secrets in a command or URL are hidden (***). Edit them with queue sub. Problem shows what the files alone reveal (a command with no folder to run from); an unknown action or settings an action refuses need the daemon's plugins, so queue sub list shows those.
   - $type: DataTable
     rows: $sources.subscribers.subscribers
     emptyMessage: No subscriber configured

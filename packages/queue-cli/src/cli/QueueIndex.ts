@@ -124,7 +124,7 @@ Options:
   --index <N>              0-based subscriber index (remove/edit take --index or --name; with both, edit renames)
   --unset <field>          edit only; repeatable: removes a field (timeout, retries, backoff, when, method, command, url, action, cwd, headers, env, with) or one key
                            (headers.<name>, env.<name>, with.<key>). Without it, edit keeps every field the options do not mention; --header and --set merge per key
-  --rewrite                add/edit/remove: allow rewriting a file that has comments (they are lost; unknown keys and the form of each event are kept).
+  --rewrite                add/edit/remove: only for a change that cannot be made in place (comments and anchors are otherwise kept): write the whole file again, comments and layout are lost.
                            Without it such a change is refused; adding a NEW event to a normal block-style file never needs it (the block is appended as text, the rest of the file is not touched)
 
 Event keys follow the same rules as 'queue wait': * is one whole segment, > the remaining ones and last; 'dep.pub*', 'on..x', 'on.>.x' are refused.

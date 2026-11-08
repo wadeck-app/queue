@@ -96,3 +96,27 @@ describe('describePathEntryCount - what a "program not found" error may say abou
     expect(describePathEntryCount(envWith(binA))).toBe('1 PATH entry');
   });
 });
+
+describe('findWindowsProgram - a relative PATH entry is ignored (it would resolve against the subscriber working directory)', () => {
+  it('does not find a tool planted in the working directory through PATH=.', () => {
+    touch(cwd, 'tool.cmd');
+    expect(findWindowsProgram('tool', cwd, envWith('.'))).toBeUndefined();
+  });
+
+  it('does not find a tool in a relative PATH entry such as bin', () => {
+    mkdirSync(join(cwd, 'bin'));
+    touch(join(cwd, 'bin'), 'tool.exe');
+    expect(findWindowsProgram('tool', cwd, envWith('bin'))).toBeUndefined();
+  });
+
+  it('still finds the tool in the absolute entries around a relative one', () => {
+    touch(cwd, 'tool.cmd');
+    const real = touch(binB, 'tool.exe');
+    expect(findWindowsProgram('tool', cwd, envWith('.', binB))).toBe(real);
+  });
+
+  it('reports the ignored entries by count in the not-found message, without the directories', () => {
+    expect(describePathEntryCount(envWith(binA, '.', 'bin'))).toBe('3 PATH entries (2 relative entries ignored: they would resolve against the working directory)');
+    expect(describePathEntryCount(envWith(binA, '.'))).toBe('2 PATH entries (1 relative entry ignored: it would resolve against the working directory)');
+  });
+});

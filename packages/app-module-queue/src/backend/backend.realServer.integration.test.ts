@@ -342,9 +342,13 @@ describe('the packaged module through a real app-core server', () => {
     expect(dlq.status).toBe(200);
     expect(dlq.body['entries']).toEqual([]);
 
-    const subscribers = await call('GET', `/subscribers?cwd=${encodeURIComponent(configDir)}`);
+    // No cwd: the process working directory. A folder outside every registered project is refused, not read
+    const subscribers = await call('GET', '/subscribers');
     expect(subscribers.status).toBe(200);
-    expect(subscribers.body['subscribers']).toEqual([]);
+    expect(Array.isArray(subscribers.body['subscribers'])).toBe(true);
+    const outside = await call('GET', `/subscribers?cwd=${encodeURIComponent(configDir)}`);
+    expect(outside.status).toBe(400);
+    expect(String(outside.body['error'])).toContain('not inside a registered project');
   });
 
   describe('log files', () => {

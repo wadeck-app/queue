@@ -638,6 +638,21 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ error: 'Invalid subscribers.yml: bad indentation' });
   });
 
+  it('GET /subscribers answers 400 with the fix when the cwd is not inside a registered project, and passes no cwd (not process.cwd()) when none is asked', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockListSubscribers.mockImplementation(() => { throw new InvalidQueryError('cwd "/x" is not inside a registered project. Fix: pass a folder of a registered project'); });
+    const reply = fakeReply();
+    await routes.get('GET /subscribers')!(fakeReq({ query: { cwd: '/x' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(400);
+    expect(reply.send).toHaveBeenCalledWith({ error: 'cwd "/x" is not inside a registered project. Fix: pass a folder of a registered project' });
+
+    mockListSubscribers.mockReset();
+    mockListSubscribers.mockReturnValue([]);
+    await routes.get('GET /subscribers')!(fakeReq({ query: {} }), asReply(fakeReply()));
+    expect(mockListSubscribers).toHaveBeenCalledWith(expect.any(String), undefined, undefined, expect.any(String));
+  });
+
   it('POST /dlq/:id/clear returns 500 with the reason when the DLQ cannot be edited', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
@@ -1398,7 +1413,8 @@ describe('backend', () => {
     mockListSubscribers.mockResolvedValue([]);
     const reply = fakeReply();
     await routes.get('GET /subscribers')!(fakeReq({ query: {} }), asReply(reply));
-    expect(mockListSubscribers).toHaveBeenCalledWith(expect.any(String), process.cwd(), undefined, expect.any(String));
+    // undefined: listSubscribers reads the working directory of the process itself
+    expect(mockListSubscribers).toHaveBeenCalledWith(expect.any(String), undefined, undefined, expect.any(String));
     expect(reply.code).toHaveBeenCalledWith(200);
   });
 

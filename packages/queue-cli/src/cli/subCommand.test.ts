@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
@@ -138,32 +138,54 @@ describe('R4b item 1 - queue sub add|edit|remove lose nothing and never crash on
   });
 
   it.each([
-    ['add', ['add', 'deploy.done', '--name', 'second', '--type', 'cli', '--command', 'echo 2']],
-    ['edit', ['edit', 'deploy.done', '--name', 'notify', '--timeout', '9s']],
-    ['remove', ['remove', 'deploy.done', '--name', 'notify']],
-  ])('%s of a file with comments is refused without --rewrite, and the file is untouched', async (_name, args) => {
-    writeFileSync(file, COMMENTED);
-    const result = await run(args);
-    expect(result.code).toBe(1);
-    expect(result.err).toContain('[fail]');
-    expect(result.err).toContain('--rewrite');
-    expect(result.err).toContain('by hand');
-    expect(result.err).toContain('line 1');
-    expect(readFileSync(file, 'utf-8')).toBe(COMMENTED);
-  });
-
-  it.each([
-    ['add', ['add', 'deploy.done', '--name', 'second', '--type', 'cli', '--command', 'echo 2', '--rewrite']],
-    ['edit', ['edit', 'deploy.done', '--name', 'notify', '--timeout', '9s', '--rewrite']],
-    ['remove', ['remove', 'build.>', '--name', 'hook', '--rewrite']],
-  ])('%s with --rewrite goes through, keeps unknown keys and the object form, says the comments are gone', async (_name, args) => {
+    ['add', ['add', 'deploy.done', '--name', 'second', '--type', 'cli', '--command', 'echo 2'], '# notifies me'],
+    ['edit', ['edit', 'deploy.done', '--name', 'notify', '--timeout', '9s'], '# Subscribers of my machine'],
+    ['remove', ['remove', 'build.>', '--name', 'hook'], '# inline comment'],
+  ])('%s of a file with comments goes through without --rewrite and keeps every comment and unknown key', async (_name, args, comment) => {
     writeFileSync(file, COMMENTED);
     const result = await run(args);
     expect(result.code, result.err).toBe(0);
-    expect(result.err).toContain('comment');
-    const doc = readDoc();
-    expect(doc.subscribers['deploy.done'][0]).toMatchObject({ notes: 'keep me', timout: '5s' });
-    expect(doc.subscribers['build.>']).toMatchObject({ cwd: 'sub', env: { A: '1' } });
+    expect(result.err).not.toContain('--rewrite');
+    const after = readFileSync(file, 'utf-8');
+    for (const kept of ['# Subscribers of my machine', '# notifies me', '# inline comment', 'notes: keep me', 'timout: 5s']) {
+      expect(after).toContain(kept);
+    }
+    expect(after).toContain(comment);
+    expect(readDoc().subscribers['build.>']).toMatchObject({ cwd: 'sub', env: { A: '1' } });
+  });
+
+  it('edit keeps the written text of values the command did not touch (date, hex, octal-looking, big integer) in unknown keys', async () => {
+    const text = lines(
+      'subscribers:',
+      '  ev:',
+      '    - type: cli',
+      '      name: wake',
+      '      command: echo wake',
+      '      since: 2024-01-01',
+      '      mask: 0x1F',
+      '      mode: 0755',
+      '      big: 12345678901234567890',
+    );
+    writeFileSync(file, text);
+    const result = await run(['edit', 'ev', '--name', 'wake', '--timeout', '9s']);
+    expect(result.code, result.err).toBe(0);
+    const after = readFileSync(file, 'utf-8');
+    for (const kept of ['since: 2024-01-01', 'mask: 0x1F', 'mode: 0755', 'big: 12345678901234567890', 'timeout: 9s']) {
+      expect(after).toContain(kept);
+    }
+  });
+
+  it('a change that cannot be made in place is refused with --rewrite as the way out, and --rewrite writes it (comments lost, said)', async () => {
+    const merged = lines('# keep', 'x-base: &b', '  type: cli', '  command: echo base', '  timeout: 5s', 'subscribers:', '  a:', '    - <<: *b', '      name: one');
+    writeFileSync(file, merged);
+    const refused = await run(['edit', 'a', '--name', 'one', '--unset', 'timeout']);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain('--rewrite');
+    expect(refused.err).toContain('by hand');
+    expect(readFileSync(file, 'utf-8')).toBe(merged);
+    const done = await run(['edit', 'a', '--name', 'one', '--unset', 'timeout', '--rewrite']);
+    expect(done.code, done.err).toBe(0);
+    expect(done.err).toContain('comments');
     expect(readFileSync(file, 'utf-8')).not.toContain('#');
   });
 
@@ -397,5 +419,17 @@ describe('sub help and usage', () => {
     const missing = await run(['add']);
     expect(missing.code).toBe(1);
     expect(missing.err).toContain('Usage: queue sub add <event>');
+  });
+});
+
+describe('queue sub add with an event name that cannot be a key', () => {
+  it('__proto__ is refused with a message that names the event and says what to do, not a raw validation dump', async () => {
+    const result = await run(['add', '__proto__', '--name', 'x', '--type', 'cli', '--command', 'echo']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain("'__proto__'");
+    expect(result.err).toContain('Fix:');
+    expect(result.err).not.toContain('"code"');
+    expect(result.err).not.toContain('ZodError');
+    expect(existsSync(file)).toBe(false);
   });
 });

@@ -34,16 +34,25 @@ export function describeSearchPath(env: NodeJS.ProcessEnv, maxEntries: number): 
  * and an error reaches the DLQ and the `queue.dlq.added` event that other subscribers see). The full list is logged once at daemon start (`queue logs`).
  */
 export function describePathEntryCount(env: NodeJS.ProcessEnv): string {
-  const count = pathDirectories(env).length;
+  const directories = pathDirectories(env);
+  const count = directories.length;
   if (count === 0) {
     return 'PATH is empty or not set';
   }
-  return count === 1 ? '1 PATH entry' : `${count} PATH entries`;
+  const relative = directories.filter((d) => !isAbsolute(d)).length;
+  const base = count === 1 ? '1 PATH entry' : `${count} PATH entries`;
+  if (relative === 0) {
+    return base;
+  }
+  return relative === 1
+    ? `${base} (1 relative entry ignored: it would resolve against the working directory)`
+    : `${base} (${relative} relative entries ignored: they would resolve against the working directory)`;
 }
 
 /**
  * The file `program` designates on Windows, trying the PATHEXT extensions. A bare name (`tool`) is looked up on PATH ONLY: the working directory of a
  * subscriber is often a cloned project, and a `tool.cmd` planted there must not run in place of the real tool (cmd.exe would run it; this does not).
+ * Relative PATH entries (`.`, `bin`) are skipped for the same reason.
  * A program written with a directory (`./tool.cmd`, `sub\tool`, `C:\x\tool.exe`) is resolved as given, relative to the working directory.
  * Node itself only tries .com and .exe, which is why a .cmd shim like `npm` or `queue` needs this.
  */
@@ -54,7 +63,8 @@ export function findWindowsProgram(program: string, cwd: string | undefined, env
   const hasExtension = known.includes(extname(program).toLowerCase());
   const names = hasExtension ? [program, ...extensions.map((e) => program + e)] : extensions.map((e) => program + e);
   const hasDirectory = /[\\/:]/.test(program);
-  const directories = hasDirectory || isAbsolute(program) ? [''] : pathDirectories(env);
+  // A relative PATH entry (`.`, `bin`) would resolve against the subscriber's working directory, which is exactly what a bare name must not search: ignored
+  const directories = hasDirectory || isAbsolute(program) ? [''] : pathDirectories(env).filter((d) => isAbsolute(d));
   for (const directory of directories) {
     for (const name of names) {
       const candidate = directory === '' ? resolve(base, name) : resolve(base, directory, name);

@@ -50,17 +50,22 @@ Fix: read the envelope on stdin and put the shell logic in a script, or remove t
 
 ### A shell or interpreter that runs a placeholder as code
 
-Re-introducing a shell (`bash -c 'echo {{ x }}'`) puts the value back into code text, so a placeholder is refused at load time where a known program would read it as code, as an option or as the script to run. Programs are matched by name only (directory, `.exe`, `.cmd`, `.bat` ignored; case-insensitive on every platform, because Windows and macOS file systems are).
+Re-introducing a shell (`bash -c 'echo {{ x }}'`) puts the value back into code text, so a placeholder is refused at load time where a known program would read it as code, as an option or as the script to run. Programs are matched by name only (directory, `.exe`, `.cmd`, `.bat` and a trailing version such as `node18`, `perl5.36`, `lua5.4`, `bash-5` ignored; case-insensitive on every platform, because Windows and macOS file systems are).
 
 | Program | Refused |
 |---|---|
 | `sh bash zsh dash ksh mksh ash fish csh tcsh` | the flag token and the argument after `-c` (also bundled `-lc`, `-ec`, attached `-cecho`, and `--command`) |
-| `cmd` | `/c`, `/k`, `/r` and everything after (cmd joins them into one command line) |
+| `cmd`, `mshta` | **any** placeholder, in any position (cmd reads `/c`, `/k`, `/r` anywhere and joins all arguments into one command line; mshta runs its argument as a document or script) |
 | `powershell`, `pwsh` | any placeholder unless the command is `[switches] -File <literal script> ...` (see below) |
-| `node`, `nodejs`, `bun` | `-e`, `-p`, `--eval`, `--print` (or inside `--eval=...`) |
+| `node`, `nodejs`, `tsx`, `ts-node`, `bun` | `-e`, `-p`, `--eval`, `--print` (or inside `--eval=...`) |
 | `deno` | `eval` |
+| `awk` (`gawk`, `mawk`, `nawk`) | `-f`/`-e`/`--file`/`--source` and the argument after it; the first non-option argument is the awk program |
+| `wscript`, `cscript` | the first argument that does not start with `//` is the script |
+| `env`, `busybox` | a placeholder where the program (`env`) or the applet (`busybox`) is read, or in `env -S`; otherwise the program behind them is checked with its own rule (`env bash -c ...`, `busybox sh -c ...`) |
 | `python`, `perl`, `ruby`, `php`, `lua`, `Rscript`, `osascript` | `-c` (python, also `-m`), `-e`/`-E` (perl, ruby, lua, Rscript, osascript), `-r` (php); attached or bundled forms count (`-cprint(1)`, `-eputs`, `-lne`, `-Bc`): the flag token and the argument after it |
-| all of the above, `npx`, `bunx`, `pnpx`, `npm exec`, `npm x`, `bun run`, `deno run` | a placeholder **before the first literal script**: inside an option (`--require={{ x }}`), as the value of an option (`node -r {{ x }}`, `npx -p {{ x }} tool`), or as the script, module or package itself (`bash {{ x }}`, `python -m {{ x }}`, `deno run {{ x }}`, `npx {{ x }}`) |
+| `npm install\|i\|add` (and abbreviations), `bun add\|install`, `pnpm add\|install`, `yarn add` | **any** placeholder after the subcommand (every argument names a package to install) |
+| `npm init\|create\|run`, `pnpm exec\|dlx\|create\|run`, `yarn exec\|dlx\|create\|run`, `bun create`, `deno x\|install` | a placeholder as the first argument after the subcommand (the package, template or script name) |
+| all of the above, `npx`, `bunx`, `pnpx`, `npm exec`, `npm x`, `pnpm`, `yarn`, `bun run`, `deno run` | a placeholder **before the first literal script**: inside an option (`--require={{ x }}`), as the value of an option (`node -r {{ x }}`, `npx -p {{ x }} tool`), or as the script, module or package itself (`bash {{ x }}`, `python -m {{ x }}`, `deno run {{ x }}`, `npx {{ x }}`) |
 
 PowerShell runs its first argument that is not a switch as command text, wherever `-File` shows up later. A placeholder is therefore accepted only when everything before `-File` is `-NoProfile`, `-NoLogo`, `-NonInteractive`, `-NoExit`, `-ExecutionPolicy <value>` or `-WindowStyle <value>` (case-insensitive, unique prefixes accepted), `-File` (or `-f`, `-fi`, `-fil`) is followed by a literal script path, and the placeholder comes after that path. `-Command`, `-EncodedCommand`, a command word, an unknown switch or a placeholder in the script path are refused.
 
@@ -84,12 +89,16 @@ A placeholder in a **separate argument after** a literal script, or after the co
 
 `cmd.exe` has no safe form: use a real program or a script that reads the envelope on stdin.
 
+For `npm`, `npx`, `pnpm` and `yarn` the position of the package is computed with a closed list of the options that take a value (taken from the config definitions of npm 11). An option the list does not know, followed by a placeholder, is refused with a message naming it (write it `--name=value`, or name the package before the placeholder); an option written `--name=value` needs no entry. The `+x` options of POSIX shells (`bash +x {{ x }}`) count as options like `-x`.
+
 Best-effort denylist, not a proof. **Not detected**:
 
-- wrappers that start another program with the value: `env`, `sudo`, `xargs`, `ssh`, `docker exec`, `wsl`, `find -exec`, `nohup`, `time`, `timeout`, `pnpm dlx`, `yarn dlx`;
-- programs whose argument is itself a program: `awk`, `sed`, `jq`, `make`, `git -c`, `curl --config`, `psql -c`, ...;
+- wrappers that start another program with the value, other than `env` and `busybox` (which are followed): `sudo`, `xargs`, `ssh`, `docker exec`, `wsl`, `find -exec`, `nohup`, `time`, `timeout`, `nice`, `start`, `Start-Process`, `yarn workspace`;
+- programs whose argument is itself a program: `sed`, `jq`, `make`, `git -c`, `curl --config`, `psql -c`, ...;
 - `deno run` on a URL or a script found through the value, and any interpreter renamed, copied or wrapped in a script;
-- an option of an interpreter that takes a value and is missing from the list in `commandTemplate.ts` (`INTERPRETER_RULES`): its value is taken for the script, so a later placeholder is judged as if after the script.
+- an option of an interpreter other than npm, npx, pnpm and yarn that takes a value and is missing from the list in `commandTemplate.ts` (`INTERPRETER_RULES`): its value is taken for the script, so a later placeholder is judged as if after the script (for npm, npx, pnpm and yarn an unknown option is refused instead);
+- a `NAME=value` that `env` sets and that changes what the program does (`env NODE_OPTIONS={{ x }} node script.js`, `LD_PRELOAD`): the value is data for the check;
+- a program with an option of its own that starts with `/` (Windows tools): only `cmd` and `mshta` are refused outright, and `looksLikeOption` in `CliTransport.ts` does not treat `/x` as an option, because that would refuse every absolute POSIX path.
 
 `subscribers.yml` stays trusted configuration.
 
@@ -118,7 +127,7 @@ subscriber 'NAME': program 'echo' was not found on the PATH of the queue daemon 
 
 The error carries only the number of PATH entries, not the directories (it reaches the DLQ and the `queue.dlq.added` event that other subscribers see). The full list is logged once when the daemon starts: `queue logs`.
 
-A bare program name is looked up on `PATH` only, never in the working directory: the working directory of a subscriber is often a cloned project, and a `tool.cmd` planted there must not run in place of the real tool (`cmd.exe` would). A program written with a directory (`./tool.cmd`, `sub\tool`, `C:\x\tool.exe`) is resolved as written, relative to the working directory.
+A bare program name is looked up on `PATH` only, never in the working directory, and a relative `PATH` entry (`.`, `bin`) is ignored for the same reason (the not-found error counts the ignored entries): the working directory of a subscriber is often a cloned project, and a `tool.cmd` planted there must not run in place of the real tool (`cmd.exe` would). A program written with a directory (`./tool.cmd`, `sub\tool`, `C:\x\tool.exe`) is resolved as written, relative to the working directory.
 
 On Linux/macOS the spawn error is reported instead (`spawn NAME ENOENT (subscriber 'NAME': the program was not found. Fix: install it, put it on PATH, or check the working directory '...')`) and the delivery is retried.
 
@@ -155,6 +164,8 @@ A filter such as `$.payload[?(@.projectId=='x')]` filters the children of `paylo
 - A value that is the whole argument and starts like an option is refused (see "Option injection").
 - A batch file receives each accepted value exactly in `%~1`. A value ending with a backslash is refused for it (see "Windows `.cmd` and `.bat` targets").
 - A timeout stops the whole process tree (`taskkill /T /F` on Windows, the process group elsewhere), and a program that exited is no longer waited on for more than 3 s because a child it left behind keeps its output pipes open.
+- The output of a `cli` subscriber is kept in memory up to its first 1 MiB and its last 64 KiB per stream; the middle is dropped and replaced by `[output truncated: N bytes dropped, ...]`.
+- An `http` subscriber's timeout covers the response body too, a body over 1 MiB fails the delivery (`HTTP <status>: response body is larger than the limit of 1 MiB`), and a redirect (3xx) is never followed: it fails with `HTTP 302: redirect to <origin> not followed` (origin only, no path, query or header), so custom headers and the event are never sent to another address. Fix: set `url` to the final address.
 - A batch file that re-expands its own arguments unquoted in `if (...)` blocks is the batch author's responsibility.
 - A `name` is unique per event key of a file; the same name under two keys (`on.a` and `*`) is allowed. The subscriberId of each holder is then `<name>@<event key>` (`notify@on.a`, `notify@*`), so each has its own WAL entry, DLQ row and retry target; a name used once keeps its plain id. Renaming a key or making a name unique changes the id: a WAL or DLQ entry written under the old id reports "no longer exists" on retry or replay (give it up or clear it).
 - Threat model: [.claude/threat-model.md](../.claude/threat-model.md).
@@ -163,7 +174,7 @@ A filter such as `$.payload[?(@.projectId=='x')]` filters the children of `paylo
 
 - **Event keys** follow the rules of `queue wait`: `*` is a whole segment, `>` the remaining ones and last, no empty segment. `dep.pub*`, `on.*x`, `on..x`, `on.>.x` are refused by the loader (error names the file and key), `queue sub add` and `queue events list --match` (exit 4).
 - **Nothing is dropped**: the file is edited as parsed YAML, so unknown subscriber keys (`notes`, a typo like `timout`) and the form of each event (array, or `{cwd, env, commands}`) are written back as found. `add`, `edit`, `remove` and `list` warn `[warn] ... unknown key 'timout' (did you mean 'timeout'?)`; the daemon still ignores such a key.
-- **Comments**: a YAML dump cannot keep them. `add` of a new event is appended as text (the file is otherwise byte for byte unchanged, when `subscribers:` is a block mapping). Any other change to a file with comments, anchors or aliases is refused with the line, unless you edit by hand or pass `--rewrite` (comments are lost). Keeping comments for `edit`/`remove` would need a comment-preserving YAML library (e.g. `yaml`), not a dependency today.
+- **Comments and values**: a new event is appended as text (the file is otherwise byte for byte unchanged, when `subscribers:` is a block mapping). Any other `add`/`edit`/`remove` is made in place with the [`yaml`](https://eemeli.org/yaml/) Document API: comments, anchors and the written text of every value the command did not change (`2024-01-01`, `0x1F`, `0755`, a 20-digit integer, quotes, block scalars), also in unknown keys and `with:`, stay as written. Layout is normalized: indentation becomes 2 spaces, blank-line runs collapse to one, a comment after `key:` moves to the line below, a new key goes at the end of its mapping, comments of a removed subscriber go with it. The result is re-read with the loader and must equal the edited document; if it does not (e.g. removing a field that comes from a `<<` merge key), nothing is written and the error names `--rewrite`, which writes the whole file again (comments and layout lost, said in a `[warn]`). A symlinked `subscribers.yml` is written through the link; one whose target cannot be resolved is refused. `queue sub add __proto__` is refused (reserved name).
 - **`edit` merges**: only the given flags change; `--header` and `--set` merge per key. `--unset <field>` (repeatable) removes `timeout, retries, backoff, when, method, command, url, action, cwd, headers, env, with` or one key (`headers.<name>`, `env.<name>`, `with.<key>`). `--type` to another type clears the old type's fields (command; url, method, headers; action, with; cwd and env when going to action), says which, and needs the new type's companion (`--url`, `--command`, `--action`).
 - **Flags are strict**: a flag without its value, a repeated single-value flag, an unknown option (with a suggestion), a stray word, `--retries` that is not a whole number, `--method` outside POST, PUT, PATCH, DELETE (the event is a JSON body, so not GET) are errors and nothing is written.
 - **`queue sub list`**: ids are the daemon's (`<project id>/<name>` for a project file, `<name>@<event>` for a repeated name) with or without `--scope`. A subscriber that cannot run gets a `[warn]` line (exit 0) and a `problem` field in `--json`. The dashboard Subscribers page shows `problem` too, but only what the files reveal; action problems need the plugins of the CLI (the module cannot depend on queue-cli).

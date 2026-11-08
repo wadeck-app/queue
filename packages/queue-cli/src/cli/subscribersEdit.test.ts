@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
-import { appendEventBlock, eventEntries, findRewriteLoss, loadSubsDoc, saveSubsDoc, setEventEntries, type SubsDoc } from './subscribersEdit.js';
+import { appendEventBlock, eventEntries, loadSubsDoc, saveSubsDoc, setEventEntries, type SubsDoc } from './subscribersEdit.js';
 
 let dir: string;
 let file: string;
@@ -113,29 +113,176 @@ describe('eventEntries / setEventEntries - both forms of an event', () => {
   });
 });
 
-describe('findRewriteLoss - what a rewrite would silently destroy', () => {
-  it.each([
-    ['# a comment at the top\nsubscribers: {}\n', 1],
-    ['subscribers:\n  # inside\n  a: []\n', 2],
-    ['subscribers: {}   # trailing\n', 1],
-    ['subscribers:\n  a:\n    - type: cli\n      command: echo "a #b"\n', 4],
-  ])('finds the comment in %j (line %i)', (text, line) => {
-    expect(findRewriteLoss(text)).toMatchObject({ line });
+/** Values a dump of the parsed value normalizes (date -> ISO timestamp, hex -> decimal, octal-looking -> decimal, big integer -> rounded) and a comment after an apostrophe-led word. */
+const TRICKY = lines(
+  '# top comment',
+  'subscribers:',
+  '  deploy.done:   # why',
+  '    - type: cli',
+  '      name: notify',
+  "      command: echo don't   # apostrophe then comment",
+  '      since: 2024-01-01',
+  '      mask: 0x1F',
+  '      mode: 0755',
+  '      big: 12345678901234567890',
+  '    # about the second one',
+  '    - type: action',
+  '      name: wake',
+  '      action: agent-wake',
+  '      with:',
+  '        day: 2024-01-01',
+  '        flags: 0x1F',
+  '  other.event:',
+  '    - &base',
+  '      type: cli',
+  '      name: shared',
+  '      command: echo shared',
+);
+
+describe('saveSubsDoc - edit and remove keep comments and the original text of every value', () => {
+  const edit = (doc: SubsDoc, event: string, index: number, change: Record<string, unknown>) => {
+    const entries = eventEntries(doc, event);
+    setEventEntries(doc, event, entries.map((e, i) => (i === index ? ({ ...e, ...change } as typeof e) : e)));
+    return saveSubsDoc(doc, { command: 'edit', rewrite: false });
+  };
+
+  it('edit changes only the changed value: comments, anchors and the text of unknown keys and of with: stay', () => {
+    writeFileSync(file, TRICKY);
+    expect(edit(load(), 'deploy.done', 0, { timeout: '9s' })).toMatchObject({ ok: true });
+    const after = readFileSync(file, 'utf-8');
+    // Only a new key is added; the comment after `key:` moves to the line below, the others and every value are untouched
+    expect(after).toBe(TRICKY.replace('  deploy.done:   # why\n', '  deploy.done:\n    # why\n').replace("echo don't   # apostrophe", "echo don't # apostrophe").replace('      big: 12345678901234567890\n', '      big: 12345678901234567890\n      timeout: 9s\n'));
   });
 
-  it.each([
-    'subscribers:\n  a:\n    - type: http\n      url: "http://x/#frag"\n',
-    'subscribers:\n  a:\n    - type: http\n      url: http://x/#frag\n',
-    "subscribers:\n  a:\n    - type: cli\n      command: 'echo #1'\n",
-    'subscribers:\n  "dep.>": []\n',
-    'subscribers:\n  a:\n    - type: cli\n      command: echo *.txt\n',
-  ])('finds nothing in %j', (text) => {
-    expect(findRewriteLoss(text)).toBeUndefined();
+  it('edit of a value keeps the comment of its line', () => {
+    writeFileSync(file, TRICKY);
+    expect(edit(load(), 'deploy.done', 0, { command: 'echo changed' })).toMatchObject({ ok: true });
+    const after = readFileSync(file, 'utf-8');
+    expect(after).toContain('since: 2024-01-01');
+    expect(after).toContain('mask: 0x1F');
+    expect(after).toContain('mode: 0755');
+    expect(after).toContain('big: 12345678901234567890');
+    expect(after).toContain('day: 2024-01-01');
+    expect(after).toContain('flags: 0x1F');
+    expect(after).toContain('# top comment');
+    expect(after).toContain('# why');
+    expect(after).toContain('# about the second one');
+    expect(after).toContain('&base');
+    expect(after).toContain('echo changed');
   });
 
-  it('finds anchors and aliases, which a rewrite would expand', () => {
-    expect(findRewriteLoss('subscribers:\n  a:\n    - &base\n      type: cli\n')).toMatchObject({ line: 3 });
-    expect(findRewriteLoss('x:\n  - *base\n')).toMatchObject({ line: 2 });
+  it('remove of one subscriber keeps every other comment and value', () => {
+    writeFileSync(file, TRICKY);
+    const doc = load();
+    setEventEntries(doc, 'deploy.done', eventEntries(doc, 'deploy.done').filter((e) => e.name !== 'notify'));
+    expect(saveSubsDoc(doc, { command: 'remove', rewrite: false })).toMatchObject({ ok: true });
+    const after = readFileSync(file, 'utf-8');
+    expect(after).toContain('# top comment');
+    expect(after).toContain('# why');
+    expect(after).toContain('flags: 0x1F');
+    expect(after).toContain('day: 2024-01-01');
+    expect(after).toContain('&base');
+    expect(after).not.toContain('echo don');
+  });
+
+  it('remove of the last subscriber of an event removes the event and keeps the others', () => {
+    writeFileSync(file, TRICKY);
+    const doc = load();
+    setEventEntries(doc, 'other.event', []);
+    expect(saveSubsDoc(doc, { command: 'remove', rewrite: false })).toMatchObject({ ok: true });
+    const after = readFileSync(file, 'utf-8');
+    expect(after).not.toContain('other.event');
+    expect(after).toContain('# about the second one');
+  });
+
+  it('add to an existing event keeps the comments', () => {
+    writeFileSync(file, TRICKY);
+    const doc = load();
+    setEventEntries(doc, 'deploy.done', [...eventEntries(doc, 'deploy.done'), { type: 'cli', name: 'third', command: 'echo 3' }]);
+    expect(saveSubsDoc(doc, { command: 'add', rewrite: false, appended: { event: 'deploy.done', entry: { type: 'cli', name: 'third', command: 'echo 3' } } })).toMatchObject({ ok: true, mode: 'rewrite' });
+    const after = readFileSync(file, 'utf-8');
+    expect(after).toContain('# about the second one');
+    expect(after).toContain('mask: 0x1F');
+    expect(after).toContain('name: third');
+  });
+
+  it('keeps the CRLF line endings of the file', () => {
+    writeFileSync(file, TRICKY.replace(/\n/g, '\r\n'));
+    expect(edit(load(), 'deploy.done', 0, { timeout: '9s' })).toMatchObject({ ok: true });
+    const after = readFileSync(file, 'utf-8');
+    expect(after).toContain('timeout: 9s');
+    expect(after).not.toMatch(/[^\r]\n/);
+  });
+
+  it('what is written reads back, through the loader, as exactly the edited document', () => {
+    writeFileSync(file, TRICKY);
+    const doc = load();
+    edit(doc, 'deploy.done', 1, { timeout: '9s' });
+    expect(yamlLoad(readFileSync(file, 'utf-8'))).toEqual(doc.raw);
+  });
+
+  it('a change that cannot be made in place is refused without --rewrite, and the file is untouched', () => {
+    const text = lines('# keep', 'x-base: &b', '  type: cli', '  command: echo base', '  timeout: 5s', 'subscribers:', '  a:', '    - <<: *b', '      name: one');
+    writeFileSync(file, text);
+    // The timeout comes from the merge key: removing it cannot be done on the entry itself
+    const withoutTimeout = (d: SubsDoc): void => setEventEntries(d, 'a', eventEntries(d, 'a').map(({ timeout: _timeout, ...rest }) => rest));
+    const first = load();
+    withoutTimeout(first);
+    const result = saveSubsDoc(first, { command: 'edit', rewrite: false });
+    expect(result).toMatchObject({ error: expect.stringContaining('--rewrite') });
+    expect(readFileSync(file, 'utf-8')).toBe(text);
+    const doc = load();
+    withoutTimeout(doc);
+    expect(saveSubsDoc(doc, { command: 'edit', rewrite: true })).toMatchObject({ ok: true, mode: 'rewrite', lost: expect.stringContaining('comment') });
+    expect(yamlLoad(readFileSync(file, 'utf-8'))).toEqual(doc.raw);
+  });
+});
+
+describe('saveSubsDoc - a symlinked subscribers.yml stays a symlink', () => {
+  it('writes through the link: the target changes, the link path is still the link (injected link detection)', () => {
+    const target = join(dir, 'real.yml');
+    writeFileSync(target, 'subscribers:\n  a:\n    - type: cli\n      name: x\n      command: echo\n');
+    const loaded = loadSubsDoc(target);
+    if ('error' in loaded) {
+      throw new Error(loaded.error);
+    }
+    const doc = loaded.doc;
+    // The path the user gave is `file`; it is reported as a link to `target`
+    doc.filePath = file;
+    setEventEntries(doc, 'a', [{ type: 'cli', name: 'x', command: 'echo', timeout: '9s' }]);
+    const result = saveSubsDoc(doc, { command: 'edit', rewrite: false, fs: { isSymlink: (p) => p === file, realpath: (p) => (p === file ? target : p) } });
+    expect(result).toMatchObject({ ok: true });
+    expect(readFileSync(target, 'utf-8')).toContain('timeout: 9s');
+    expect(existsSync(file)).toBe(false);
+    expect(readdirSync(dir).sort()).toEqual(['real.yml']);
+  });
+
+  it('refuses, naming the file, when the link cannot be resolved', () => {
+    writeFileSync(file, 'subscribers:\n  a: []\n');
+    const doc = load();
+    setEventEntries(doc, 'a', [{ type: 'cli', name: 'x', command: 'echo' }]);
+    const result = saveSubsDoc(doc, { command: 'add', rewrite: false, fs: { isSymlink: () => true, realpath: () => { throw new Error('ENOENT: dangling'); } } });
+    expect(result).toMatchObject({ error: expect.stringContaining(file) });
+    expect((result as { error: string }).error).toContain('dangling');
+    expect(readFileSync(file, 'utf-8')).toBe('subscribers:\n  a: []\n');
+  });
+
+  it('a real symlink (skipped with a message where the OS refuses to create one)', (ctx) => {
+    const target = join(dir, 'real.yml');
+    writeFileSync(target, 'subscribers:\n  a:\n    - type: cli\n      name: x\n      command: echo\n');
+    try {
+      symlinkSync(target, file);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EPERM' && process.platform === 'win32') {
+        ctx.skip(`cannot create a symlink on this Windows session (EPERM): the injected-seam tests above cover the logic`);
+      }
+      throw err;
+    }
+    const doc = load();
+    setEventEntries(doc, 'a', [{ type: 'cli', name: 'x', command: 'echo', timeout: '9s' }]);
+    expect(saveSubsDoc(doc, { command: 'edit', rewrite: false })).toMatchObject({ ok: true });
+    expect(lstatSync(file).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, 'utf-8')).toContain('timeout: 9s');
   });
 });
 
@@ -227,29 +374,6 @@ describe('saveSubsDoc', () => {
     expect(after).toContain('notes: keep me');
   });
 
-  it('add to an existing event of a file with comments is refused, with the line, both ways out and no write', () => {
-    writeFileSync(file, FIXTURE);
-    const result = add(load(), 'deploy.done', { type: 'cli', name: 'second', command: 'echo 2' });
-    expect(result).toMatchObject({ error: expect.stringContaining('--rewrite') });
-    const message = (result as { error: string }).error;
-    expect(message).toContain(file);
-    expect(message).toContain('line 1');
-    expect(message).toContain('by hand');
-    expect(message).toContain('comments');
-    expect(readFileSync(file, 'utf-8')).toBe(FIXTURE);
-  });
-
-  it('with --rewrite the add goes through; unknown keys and the object form are kept, the comments are gone', () => {
-    writeFileSync(file, FIXTURE);
-    const result = add(load(), 'deploy.done', { type: 'cli', name: 'second', command: 'echo 2' }, true);
-    expect(result).toMatchObject({ ok: true, mode: 'rewrite', lost: expect.stringContaining('comment') });
-    const after = yamlLoad(readFileSync(file, 'utf-8')) as { subscribers: Record<string, any> };
-    expect(after.subscribers['deploy.done']).toHaveLength(2);
-    expect(after.subscribers['deploy.done'][0]).toMatchObject({ notes: 'keep me', timout: '5s' });
-    expect(after.subscribers['build.>']).toMatchObject({ cwd: 'sub', env: { A: '1' }, commands: [{ name: 'hook' }] });
-    expect(readFileSync(file, 'utf-8')).not.toContain('#');
-  });
-
   it('a file without comments is rewritten without ceremony, and nothing but the data changes', () => {
     writeFileSync(file, lines('subscribers:', '  a:', '    - type: cli', '      name: x', '      command: echo', '      notes: n', '  o:', '    cwd: sub', '    commands:', '      - type: cli', '        name: y', '        command: echo'));
     const doc = load();
@@ -258,15 +382,6 @@ describe('saveSubsDoc', () => {
     const after = yamlLoad(readFileSync(file, 'utf-8')) as { subscribers: Record<string, any> };
     expect(after.subscribers['a'][0]).toMatchObject({ retries: 3, notes: 'n' });
     expect(after.subscribers['o']).toMatchObject({ cwd: 'sub', commands: [{ name: 'y' }] });
-  });
-
-  it('edit and remove of a file with comments are refused too, and say what to do', () => {
-    writeFileSync(file, FIXTURE);
-    const doc = load();
-    setEventEntries(doc, 'deploy.done', []);
-    const result = saveSubsDoc(doc, { command: 'remove', rewrite: false });
-    expect(result).toMatchObject({ error: expect.stringContaining("'queue sub remove'") });
-    expect(readFileSync(file, 'utf-8')).toBe(FIXTURE);
   });
 
   it('refuses to write an invalid document and leaves the file alone', () => {

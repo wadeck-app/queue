@@ -60,4 +60,4 @@ The page reads the project through `GET /project-scope?project=<id>`:
 
 A contributor needs `requires: { "queue": "*" }` and a root of an accepted type; it builds its own href (`/modules/project/p/<id>`). Whether a contributed node can read `$sources.projectScope` is not verified.
 
-The Subscribers page does not embed the slot yet: it filters on `?cwd=`, not on a project.
+The Subscribers page does not embed the slot yet: it filters on `?cwd=` (a folder inside a registered project, else 400), not on a project.

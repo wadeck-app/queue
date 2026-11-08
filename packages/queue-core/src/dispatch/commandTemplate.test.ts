@@ -264,7 +264,6 @@ describe('findTemplateProblem - shells and interpreters (value would land in cod
     ['php -r', `php -r 'echo $argv[1];' -- {{ x }}`],
     ['pwsh -File', 'pwsh -NoProfile -File script.ps1 {{ x }}'],
     ['powershell -File', 'powershell -File script.ps1 --id {{ x }}'],
-    ['cmd without a command flag', 'cmd /d {{ x }}'],
     ['a shell name as an argument, not as the program', 'tool bash -c {{ x }}'],
     ['a program whose name only starts like a shell', 'bashful -c {{ x }}'],
     ['a code flag with literal-only code', `bash -c 'echo hi'`],
@@ -448,7 +447,7 @@ describe('findTemplateProblem - a placeholder before the script of an interprete
     ['npx -y some-tool --id {{ x }}'],
     ['npx -p pkg tool {{ x }}'],
     ['npm exec some-tool -- {{ x }}'],
-    ['npm install {{ x }}'],
+    ['npm install'],
     ['npm run build -- {{ x }}'],
     // not an interpreter: placeholders anywhere
     ['git commit -m {{ x }}'],

@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
+import { Document, Pair, isMap, isNode, isScalar, isSeq, parseDocument, visit } from 'yaml';
 import { SubscribersYmlSchema, findUnknownKeys, getErrorMessage, isRecord, type SubscriberConfig, type UnknownKeyFinding } from '@wadeck-app/queue-core';
 
 /**
@@ -8,8 +9,8 @@ import { SubscribersYmlSchema, findUnknownKeys, getErrorMessage, isRecord, type 
  *
  * The file is edited as the YAML value it parses to (not as what the loader's schema keeps, which strips unknown keys), so a key this CLI does not know
  * (`notes`, a typo like `timout`) and the form of every event (array, or `{cwd, env, commands}`) are written back as they were.
- * Comments cannot be kept by a dependency-free dump: `add` of a new event is therefore appended as text (the file stays byte for byte as it was); any
- * other change that would drop a comment is refused unless the user passes `--rewrite`.
+ * A new event is appended as text (the file stays byte for byte as it was); any other change is made in place with the `yaml` package's Document API, which
+ * keeps comments, anchors and the written text of every value that did not change. If that cannot be verified, the change is refused unless `--rewrite`.
  */
 
 export interface SubsDoc {
@@ -73,63 +74,6 @@ export function setEventEntries(doc: SubsDoc, event: string, entries: Subscriber
   } else {
     doc.raw.subscribers[event] = entries;
   }
-}
-
-export interface RewriteLoss {
-  line: number;
-  /** What would be lost: "a comment" or "an anchor or alias". */
-  what: string;
-  snippet: string;
-}
-
-/**
- * The first thing in `text` that dumping the parsed value would not bring back: a comment (a `#` that starts a line or follows a space, outside a quoted
- * scalar) or a YAML anchor/alias (the dump expands them). Conservative on purpose: a `#` inside a block scalar counts, the user can pass `--rewrite`.
- */
-export function findRewriteLoss(text: string): RewriteLoss | undefined {
-  const rows = text.split(/\r?\n/);
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]!;
-    let quote: '"' | "'" | undefined;
-    for (let j = 0; j < row.length; j++) {
-      const c = row[j]!;
-      const before = j === 0 ? '' : row[j - 1]!;
-      if (quote === '"') {
-        if (c === '\\') {
-          j++;
-        } else if (c === '"') {
-          quote = undefined;
-        }
-        continue;
-      }
-      if (quote === "'") {
-        if (c === "'") {
-          if (row[j + 1] === "'") {
-            j++;
-          } else {
-            quote = undefined;
-          }
-        }
-        continue;
-      }
-      const startsToken = before === '' || /\s/.test(before);
-      if (c === '#' && startsToken) {
-        return { line: i + 1, what: 'a comment', snippet: row.trim() };
-      }
-      // A quote opens a quoted scalar only where a value or an item starts; inside a plain scalar it is a character
-      if ((c === '"' || c === "'") && (startsToken || /[[{,]/.test(before))) {
-        const lead = row.slice(0, j).trimEnd();
-        if (lead === '' || /[:\-,[{?]$/.test(lead)) {
-          quote = c;
-          continue;
-        }
-      }
-      if ((c === '&' || c === '*') && startsToken && /[A-Za-z0-9_-]/.test(row[j + 1] ?? '')) {
-        return { line: i + 1, what: 'an anchor or alias', snippet: row.trim() };
-      }
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -207,49 +151,219 @@ export function appendEventBlock(text: string, event: string, entry: object, exp
 
 export type SaveResult = { ok: true; mode: 'create' | 'append' | 'rewrite'; lost?: string } | { error: string };
 
-function writeAtomically(filePath: string, content: string): string | undefined {
-  const tmpPath = `${filePath}.tmp`;
+/** The two file-system questions the write asks, injectable because creating a symlink needs a privilege on Windows. */
+export interface WriteFs {
+  isSymlink: (path: string) => boolean;
+  realpath: (path: string) => string;
+}
+
+const DEFAULT_WRITE_FS: WriteFs = {
+  isSymlink: (path) => {
+    try {
+      return lstatSync(path).isSymbolicLink();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return false;
+      }
+      throw err;
+    }
+  },
+  realpath: (path) => realpathSync(path),
+};
+
+/** Writes through a symbolic link (the link stays a link, the file it points to changes); a link that cannot be resolved is refused. */
+function writeAtomically(filePath: string, content: string, fs: WriteFs): string | undefined {
   try {
+    let target = filePath;
+    if (fs.isSymlink(filePath)) {
+      try {
+        target = fs.realpath(filePath);
+      } catch (err) {
+        return `${filePath} is a symbolic link whose target cannot be resolved (${getErrorMessage(err)}). Fix: repair the link, or replace it with the real file, then retry.`;
+      }
+    }
+    const tmpPath = `${target}.tmp`;
     writeFileSync(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
-    renameSync(tmpPath, filePath);
+    renameSync(tmpPath, target);
     return undefined;
   } catch (err) {
     return `Failed to write ${filePath}: ${getErrorMessage(err)}`;
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date);
+}
+
+function keyText(pair: Pair): string {
+  return String(isScalar(pair.key) ? pair.key.value : pair.key);
+}
+
 /**
- * Writes the document back. `appended` (the event just added, which was not in the file) is written as a text append, so the file stays as it was. Any
- * other write is a dump of the parsed value: refused with the way out when it would drop a comment, unless `rewrite`.
+ * A node for a new value, with the quoting that makes the loader read it back as the same value. The file is parsed with the failsafe schema (every scalar
+ * stays the text it was written as: `0x1F`, `0755`, `2024-01-01`, a 20-digit integer), so a new value is rendered by a normal document first and parsed
+ * the same way, which keeps the quotes it needs (a string "123" or "true" stays quoted).
  */
-export function saveSubsDoc(doc: SubsDoc, options: { command: 'add' | 'edit' | 'remove'; rewrite: boolean; appended?: { event: string; entry: object } }): SaveResult {
+function newNode(value: unknown): unknown {
+  return parseDocument(new Document(value).toString({ lineWidth: 0 }), { schema: 'failsafe' }).contents;
+}
+
+/** The new node takes the comments of the one it replaces (the comment of a line stays on that line when its value changes). */
+function inheritComments(replacement: unknown, old: unknown): void {
+  if (isScalar(replacement) && isNode(old)) {
+    if (old.comment !== undefined && old.comment !== null) {
+      replacement.comment = old.comment;
+    }
+    if (old.commentBefore !== undefined && old.commentBefore !== null) {
+      replacement.commentBefore = old.commentBefore;
+    }
+    if (old.spaceBefore === true) {
+      replacement.spaceBefore = true;
+    }
+  }
+}
+
+/**
+ * Brings `node` (parsed by the `yaml` package from the file) from the value `before` to the value `after` (both parsed by the loader's js-yaml, so the
+ * difference between them is exactly what the command changed): a part that did not change keeps its node, so its comments, anchors and the text it was
+ * written with stay; only what changed is rewritten.
+ */
+function reconcile(node: unknown, before: unknown, after: unknown): unknown {
+  if (node !== undefined && node !== null && isDeepStrictEqual(before, after)) {
+    return node;
+  }
+  if (isMap(node) && isPlainObject(before) && isPlainObject(after)) {
+    for (const key of Object.keys(before)) {
+      if (!Object.hasOwn(after, key)) {
+        const index = node.items.findIndex((pair) => keyText(pair) === key);
+        if (index !== -1) {
+          node.items.splice(index, 1);
+        }
+      }
+    }
+    for (const key of Object.keys(after)) {
+      if (after[key] === undefined) {
+        continue;
+      }
+      const pair = node.items.find((candidate) => keyText(candidate) === key);
+      if (pair === undefined) {
+        node.items.push(new Pair(newNode(key), newNode(after[key])));
+      } else if (Object.hasOwn(before, key)) {
+        pair.value = reconcile(pair.value, before[key], after[key]) as typeof pair.value;
+      } else {
+        pair.value = newNode(after[key]);
+      }
+    }
+    return node;
+  }
+  if (isSeq(node) && Array.isArray(before) && Array.isArray(after) && node.items.length === before.length) {
+    const used = new Set<number>();
+    const placed: unknown[] = after.map((item) => {
+      const index = before.findIndex((candidate, j) => !used.has(j) && isDeepStrictEqual(candidate, item));
+      if (index === -1) {
+        return undefined;
+      }
+      used.add(index);
+      return node.items[index];
+    });
+    // What matched nothing is a changed or a new entry: a changed one takes the place of an entry that was not matched, a new one has no node yet
+    const leftovers = before.map((_, j) => j).filter((j) => !used.has(j));
+    after.forEach((item, i) => {
+      if (placed[i] === undefined) {
+        const j = leftovers.shift();
+        placed[i] = j === undefined ? newNode(item) : reconcile(node.items[j], before[j], item);
+      }
+    });
+    node.items = placed as typeof node.items;
+    return node;
+  }
+  const created = newNode(after);
+  inheritComments(created, node);
+  return created;
+}
+
+/** True when the document holds a comment anywhere (what a plain dump of the parsed value would drop). */
+function hasComments(yamlDoc: Document): boolean {
+  let found = Boolean(yamlDoc.comment) || Boolean(yamlDoc.commentBefore);
+  visit(yamlDoc, (_key, node) => {
+    if (isNode(node) && (Boolean(node.comment) || Boolean(node.commentBefore))) {
+      found = true;
+      return visit.BREAK;
+    }
+    return undefined;
+  });
+  return found;
+}
+
+/**
+ * `text` with the change made in place by the `yaml` package (comments, anchors, and the text of every value that was not changed stay), or undefined
+ * when that cannot be done reliably: the package reports an error, or what comes out does not read back through the loader as exactly `doc.raw`.
+ */
+function editInPlace(doc: SubsDoc): string | undefined {
+  const yamlDoc = parseDocument(doc.text, { schema: 'failsafe' });
+  if (yamlDoc.errors.length > 0 || !isMap(yamlDoc.contents)) {
+    return undefined;
+  }
+  let out: string;
+  try {
+    yamlDoc.contents = reconcile(yamlDoc.contents, doc.original, doc.raw) as typeof yamlDoc.contents;
+    out = yamlDoc.toString({ lineWidth: 0 });
+  } catch {
+    return undefined;
+  }
+  if (doc.text.includes('\r\n')) {
+    out = out.replace(/\r?\n/g, '\r\n');
+  }
+  try {
+    return isDeepStrictEqual(yamlLoad(out), doc.raw) ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Writes the document back. A new event (`appended`, not in the file) is a text append, so the file stays as it was. Any other change is made in place by
+ * editInPlace. When that cannot be verified the file is left alone with the way out, unless `rewrite`: then the parsed value is dumped (comments and layout lost).
+ */
+export function saveSubsDoc(
+  doc: SubsDoc,
+  options: { command: 'add' | 'edit' | 'remove'; rewrite: boolean; appended?: { event: string; entry: object }; fs?: WriteFs },
+): SaveResult {
+  const fs = options.fs ?? DEFAULT_WRITE_FS;
   const checked = SubscribersYmlSchema.safeParse(doc.raw);
   if (!checked.success) {
     return { error: `Invalid subscriber config: ${checked.error.toString()}` };
   }
+  const dump = (): string => yamlDump(doc.raw, { lineWidth: -1, noRefs: true });
   if (!doc.exists) {
-    const failure = writeAtomically(doc.filePath, yamlDump(doc.raw, { lineWidth: -1, noRefs: true }));
+    const failure = writeAtomically(doc.filePath, dump(), fs);
     return failure === undefined ? { ok: true, mode: 'create' } : { error: failure };
   }
   const { appended } = options;
   if (appended !== undefined && !Object.hasOwn(doc.original.subscribers, appended.event)) {
     const text = appendEventBlock(doc.text, appended.event, appended.entry, doc.raw);
     if (text !== undefined) {
-      const failure = writeAtomically(doc.filePath, text);
+      const failure = writeAtomically(doc.filePath, text, fs);
       return failure === undefined ? { ok: true, mode: 'append' } : { error: failure };
     }
   }
-  const loss = findRewriteLoss(doc.text);
-  if (loss !== undefined && !options.rewrite) {
+  const inPlace = editInPlace(doc);
+  if (inPlace !== undefined) {
+    const failure = writeAtomically(doc.filePath, inPlace, fs);
+    return failure === undefined ? { ok: true, mode: 'rewrite' } : { error: failure };
+  }
+  if (!options.rewrite) {
     return {
       error:
-        `${doc.filePath} has ${loss.what} (line ${loss.line}: ${loss.snippet}), and 'queue sub ${options.command}' has to rewrite the whole file for this change, which would delete ${loss.what === 'a comment' ? 'its comments' : 'it'}. ` +
-        `Fix: make the change by hand in the file, or add --rewrite to rewrite it anyway (comments and formatting are lost, the subscribers and their keys are kept).`,
+        `'queue sub ${options.command}' could not change ${doc.filePath} in place without altering something else (for example a YAML merge key '<<' or an alias that the change touches). ` +
+        `Fix: make the change by hand in the file, or add --rewrite to write the whole file again (comments and formatting are lost, the subscribers and their keys are kept).`,
     };
   }
-  const failure = writeAtomically(doc.filePath, yamlDump(doc.raw, { lineWidth: -1, noRefs: true }));
+  const commented = hasComments(parseDocument(doc.text));
+  const failure = writeAtomically(doc.filePath, dump(), fs);
   if (failure !== undefined) {
     return { error: failure };
   }
-  return { ok: true, mode: 'rewrite', ...(loss !== undefined && { lost: `${loss.what} (first at line ${loss.line}) was dropped by --rewrite` }) };
+  return { ok: true, mode: 'rewrite', ...(commented && { lost: 'the comments of the file were dropped by --rewrite' }) };
 }
+

@@ -398,7 +398,8 @@ export default function (ctx: ModuleContext): void {
     if (Array.isArray(cwdValue)) {
       return reply.code(400).send({ error: `cwd must be given once, got ${cwdValue.length} values` });
     }
-    const cwd = cwdValue ?? process.cwd();
+    // No cwd (or an empty one, as an unset ?cwd= of the page) means the working directory of this process; listSubscribers checks any other
+    const cwd = cwdValue === '' ? undefined : cwdValue;
 
     // Reject repeated event values
     const eventValue = query['event'];
@@ -410,7 +411,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send({ subscribers: listSubscribers(configDir, cwd, event, defaultRegistryDir(process.env)) });
     } catch (err) {
-      return reply.code(500).send({ error: getErrorMessage(err) });
+      return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
     }
   });
 

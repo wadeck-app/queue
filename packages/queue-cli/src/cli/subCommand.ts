@@ -270,6 +270,10 @@ async function addCommand(event: string, args: string[], scope: Scope, deps: Sub
   if (eventProblem !== null) {
     return fail(deps, `<event> ${eventProblem}`);
   }
+  // As a key of the subscribers object, '__proto__' would set the prototype instead of adding an event
+  if (event === '__proto__') {
+    return fail(deps, `<event> '__proto__' cannot be used as an event name: it is a reserved JavaScript property name and would not be stored as an event. Fix: choose another event name, e.g. queue sub add my.event ...`);
+  }
   const newEntry = buildSubscriberEntry(config);
   const missing = entryProblems(newEntry, {});
   if (missing.length > 0) {
