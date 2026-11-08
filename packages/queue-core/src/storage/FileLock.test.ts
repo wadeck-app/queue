@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 /** A lock for "process" `pid`, with a fake clock and a fake sleep; `onSleep` lets a test change the world while it waits. */

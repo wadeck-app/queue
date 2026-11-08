@@ -29,7 +29,7 @@ describe('Wal', () => {
   });
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('append + readAll round-trip', () => {
@@ -87,7 +87,7 @@ describe('Wal retention of acked entries', () => {
   });
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('drops acked entries acknowledged more than 24 hours ago on the next append', () => {

@@ -31,7 +31,7 @@ describe('EventLogger', () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    rmSync(logsDir, { recursive: true, force: true });
+    rmSync(logsDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('puts the record after a torn last line (a crash in the middle of an append) on a line of its own, so it is readable', () => {

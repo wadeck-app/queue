@@ -93,7 +93,7 @@ describe('isInside - is a path inside a tree, whatever form the platform gives t
     writeFileSync(join(base, 'root', 'fake-bin', 'orch.exe'), '');
     writeFileSync(join(base, 'root-other', 'orch.exe'), '');
   });
-  afterEach(() => rmSync(base, { recursive: true, force: true }));
+  afterEach(() => rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
   it('accepts a file under the root', () => {
     expect(isInside(join(base, 'root', 'fake-bin', 'orch.exe'), join(base, 'root'))).toBe(true);

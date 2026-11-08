@@ -378,7 +378,7 @@ describe('CliTransport: a real child process receives the base event field as it
   });
 
   afterAll(() => {
-    rmSync(workDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const argvOf = (result: DispatchResult): string[] => {

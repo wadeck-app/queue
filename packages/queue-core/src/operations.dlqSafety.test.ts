@@ -19,7 +19,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  rmSync(configDir, { recursive: true, force: true });
+  rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 const meta = { cwd: '/p', projectName: 'p' };

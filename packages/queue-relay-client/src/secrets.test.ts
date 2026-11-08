@@ -71,7 +71,7 @@ describe('secrets', () => {
     });
 
     afterEach(async () => {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await fs.rm(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     });
 
     it('says the secrets file exists but has no QUEUE_RELAY_TOKEN line when it is missing from the file', async () => {

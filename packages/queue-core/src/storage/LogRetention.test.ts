@@ -36,7 +36,7 @@ describe('pruneLogDir', () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const put = (name: string, bytes = 10): void => writeAged(dir, name, bytes);
@@ -160,7 +160,7 @@ describe('pruneLogDir for the history directory', () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const put = (name: string, bytes = 10): void => writeAged(dir, name, bytes);
@@ -272,7 +272,7 @@ describe('pruneLogDir clock safety (a forward clock jump or a long idle never de
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const put = (name: string, bytes = 10): void => {
@@ -396,7 +396,7 @@ describe('pruneLogDir with entries that are not regular files', () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const put = (name: string, bytes = 10): void => {

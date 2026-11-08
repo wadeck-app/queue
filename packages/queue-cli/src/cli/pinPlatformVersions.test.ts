@@ -8,13 +8,17 @@ const SCRIPT = resolve(__dirname, '../../ci/scripts/pin-platform-versions.mjs');
 
 function run(pkg: object, version: string | undefined) {
   const dir = mkdtempSync(join(tmpdir(), 'pin-platform-'));
-  const file = join(dir, 'package.json');
-  writeFileSync(file, JSON.stringify(pkg));
-  const args = version === undefined ? [SCRIPT, file] : [SCRIPT, file, version];
-  const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
-  const out = JSON.parse(readFileSync(file, 'utf8'));
-  rmSync(dir, { recursive: true, force: true });
-  return { r, out };
+  // finally: a script that corrupts the file (the JSON.parse below throws) must not leave the directory behind
+  try {
+    const file = join(dir, 'package.json');
+    writeFileSync(file, JSON.stringify(pkg));
+    const args = version === undefined ? [SCRIPT, file] : [SCRIPT, file, version];
+    const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    const out = JSON.parse(readFileSync(file, 'utf8'));
+    return { r, out };
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 }
 
 describe('pin-platform-versions.mjs', () => {

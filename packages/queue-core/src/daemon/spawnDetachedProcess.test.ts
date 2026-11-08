@@ -96,7 +96,7 @@ describe('buildLaunchScript', () => {
       expect(output(unguarded), 'the control (no guard) must report an error, otherwise this test proves nothing').not.toBe('');
       expect(output(guarded)).toBe('');
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 

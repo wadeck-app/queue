@@ -387,11 +387,18 @@ describe('queue replay (integration)', () => {
       const normalizedReplayedCwd = replayed!.cwd!.toLowerCase().replace(/\\/g, '/');
       expect(normalizedReplayedCwd).toBe(normalizedProjectA);
     } finally {
-      runCli(['stop']);
-      // the daemon must be gone before its directories are removed
-      await waitFor(() => !existsSync(join(tempConfigDir, 'config.port')), 'the daemon of this test to remove its port file');
-      await removeDirWhenFree(projectA);
-      await removeDirWhenFree(projectB);
+      // Nested finally: a stop that fails or a daemon that never leaves must not skip the removal of the two directories (they would stay in the temp dir)
+      try {
+        runCli(['stop']);
+        // the daemon must be gone before its directories are removed
+        await waitFor(() => !existsSync(join(tempConfigDir, 'config.port')), 'the daemon of this test to remove its port file');
+      } finally {
+        try {
+          await removeDirWhenFree(projectA);
+        } finally {
+          await removeDirWhenFree(projectB);
+        }
+      }
     }
   });
 });

@@ -31,6 +31,16 @@ const cliEntry = process.env['QUEUE_TEST_APP_CORE_CLI_ENTRY'] ?? join(dirname(cl
 
 let child: ChildProcess;
 let workDir: string;
+
+/**
+ * Every app-core-cli run schedules a DETACHED background updater next to its own bundle, which keeps running after the command (and after this test removed its
+ * directory) and writes update-state.json, update-cache.json and a log under XDG_CONFIG_HOME/app-core-cli: it brought the removed folder back (128 leftover
+ * app-module-queue-real-server-* folders in the temp dir) and, for the `package` run, wrote to the real ~/.config. LAUNCHER_BUNDLE_OVERRIDE is the bundle path the
+ * scheduler looks at: a folder without an updater next to it means no updater is started (shared-cli UpdateManager.scheduleBackgroundUpdate).
+ */
+function noUpdaterEnv(): NodeJS.ProcessEnv {
+  return { LAUNCHER_BUNDLE_OVERRIDE: join(workDir, 'no-updater', 'cli.bundle.js') };
+}
 let configDir: string;
 let baseUrl: string;
 // The project registry the server reads (XDG_CONFIG_HOME/project), and the ids of the projects written in it
@@ -98,6 +108,7 @@ function packageModule(out: string): void {
   try {
     execFileSync(process.execPath, [cliEntry, 'package', packageDir, '--out', out, '--version', '0.0.0-test-real-server'], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PACKAGE_TIMEOUT_MS, windowsHide: true,
+      env: { ...process.env, XDG_CONFIG_HOME: join(workDir, 'xdg'), ...noUpdaterEnv() },
     });
   } catch (err) {
     const failure = err as { stdout?: string; stderr?: string };
@@ -135,7 +146,7 @@ function startServer(builtModule: string): Promise<string> {
     child = spawn(process.execPath, [cliEntry, 'dev', builtModule], {
       windowsHide: true,
       // Port 0: a free port, never the developer's real app-core on 4850. QUEUE_CONFIG_DIR: the fixture history.
-      env: { ...process.env, APP_CORE_PORT: '0', QUEUE_CONFIG_DIR: configDir, XDG_CONFIG_HOME: join(workDir, 'xdg') },
+      env: { ...process.env, APP_CORE_PORT: '0', QUEUE_CONFIG_DIR: configDir, XDG_CONFIG_HOME: join(workDir, 'xdg'), ...noUpdaterEnv() },
     });
     const onData = (chunk: Buffer): void => {
       output += chunk.toString();

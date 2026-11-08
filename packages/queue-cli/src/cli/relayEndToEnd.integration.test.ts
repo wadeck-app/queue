@@ -332,13 +332,20 @@ describe('relay daemon bundle smoke test (integration)', () => {
         payloadMatch: {},
       });
     } finally {
-      if (daemon && daemon.child.exitCode === null) {
-        daemon.child.kill();
-        await withHangGuard(daemon.exited, 'the killed relay daemon to exit');
+      // Nested finally: whatever fails while stopping the daemon, both directories are removed (the daemon is gone first when it can be: Windows holds its files)
+      try {
+        if (daemon && daemon.child.exitCode === null) {
+          daemon.child.kill();
+          await withHangGuard(daemon.exited, 'the killed relay daemon to exit');
+        }
+        wss.close();
+      } finally {
+        try {
+          removeDir(isolatedDir);
+        } finally {
+          removeDir(configDir);
+        }
       }
-      wss.close();
-      removeDir(isolatedDir);
-      removeDir(configDir);
     }
   });
 });

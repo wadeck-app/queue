@@ -55,7 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env['QUEUE_CONFIG_DIR'];
-  rmSync(tmpDir, { recursive: true, force: true });
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe('queue replay of a queue.* event', () => {

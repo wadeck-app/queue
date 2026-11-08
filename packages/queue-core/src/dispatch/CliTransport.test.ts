@@ -92,7 +92,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  rmSync(workDir, { recursive: true, force: true });
+  rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 const HOSTILE_VALUES: ReadonlyArray<[string, string]> = [

@@ -89,7 +89,7 @@ describe('sweepStaleTestDirs', () => {
         if (path === locked) {
           throw new Error('EBUSY');
         }
-        rmSync(path, { recursive: true, force: true });
+        rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       },
       warn: (m) => warnings.push(m),
     });

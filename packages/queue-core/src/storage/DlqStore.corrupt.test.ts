@@ -37,7 +37,7 @@ describe('DlqStore with a corrupt line', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('append keeps the valid rows, moves the raw corrupt line to dlq.ndjson.corrupt and reports it through the sink', () => {
@@ -92,7 +92,7 @@ describe('DlqStore limit reached', () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('says through the sink which entry was dropped and what to do, and keeps the stderr write for a store without a sink', () => {
@@ -126,7 +126,7 @@ describe('DlqStore temp files', () => {
     file = join(dir, 'dlq.ndjson');
   });
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const touch = (name: string, ageMs = 0): string => {

@@ -46,7 +46,7 @@ describe('checkLauncherPackage', () => {
 
 describe('checkLauncherPackage shadowed copy warning', () => {
   const dirs: string[] = [];
-  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
   // Layout: <tmp>/@wadeck-app/queue-cli/<private>/@wadeck-app/queue-cli-win32-x64 (nested copy, right version, found by resolve)
   // and optionally <tmp>/@wadeck-app/queue-cli-win32-x64 (top-level sibling).

@@ -43,7 +43,7 @@ describe('AsyncDispatcher against a give-up that claims the entry while the deli
 
   afterEach(() => {
     vi.restoreAllMocks();
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   /** The give-up lands after the command ended and before the dispatcher writes its outcome. */

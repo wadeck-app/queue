@@ -25,7 +25,7 @@ describe('private modes of the queue temp and quarantine files', () => {
     appendMock.mockClear();
   });
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const modeOf = (mock: typeof writeMock | typeof appendMock, suffix: string): unknown => {

@@ -68,10 +68,11 @@ async function startFakeRelay(behaviour: FakeRelay): Promise<Started> {
 }
 
 describe('RelayConnection reconnect backoff (delays read from an injected sleep)', () => {
-  let tmpDir = '';
+  // Every directory a test made: one test runs several scenarios, so a single variable would only remember (and remove) the last one
+  const tmpDirs: string[] = [];
   afterEach(() => {
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    for (const dir of tmpDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -82,7 +83,8 @@ describe('RelayConnection reconnect backoff (delays read from an injected sleep)
 
   /** Same, and also what the connection reports as its last error once the waits were asked. */
   async function scenario(behaviour: FakeRelay, count: number, reconnect: RelayConnectionOptions['reconnect']): Promise<{ asked: number[]; lastError: string | null }> {
-    tmpDir = join(tmpdir(), `queue-relay-backoff-test-${crypto.randomUUID()}`);
+    const tmpDir = join(tmpdir(), `queue-relay-backoff-test-${crypto.randomUUID()}`);
+    tmpDirs.push(tmpDir);
     mkdirSync(tmpDir, { recursive: true });
     const relay = await startFakeRelay(behaviour);
     writeFileSync(join(tmpDir, 'plugin.js'), "export default { source: 'test', mapEvent: () => null };");

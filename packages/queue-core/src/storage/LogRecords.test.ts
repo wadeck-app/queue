@@ -89,7 +89,7 @@ describe('readLogRecords', () => {
   });
 
   afterEach(() => {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   function writeDay(date: string, lines: string[]): void {

@@ -108,7 +108,7 @@ beforeEach(() => {
 afterEach(() => {
 	// Puts back what each test stubbed (the real values, or unset), never deletes a variable the developer's shell had
 	vi.unstubAllEnvs();
-	rmSync(tmpDir, { recursive: true, force: true });
+	rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	// A daemon spawn writes a queue-spawn-<ms>-<random>.vbs that the (mocked) wscript never runs, so nobody deletes it: remove exactly the ones this
 	// test handed to the mocked wscript. Never "everything newer than my start" in the shared temp dir: a REAL daemon started at the same time by another
 	// test run or session would lose its launch script before wscript deletes it itself, and Windows would show a modal "File not found" dialog.

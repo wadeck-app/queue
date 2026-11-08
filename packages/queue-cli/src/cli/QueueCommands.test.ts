@@ -91,7 +91,7 @@ beforeEach(() => {
 afterEach(() => {
 	// Puts back what each test stubbed (the real values, or unset), never deletes a variable the developer's shell had
 	vi.unstubAllEnvs();
-	rmSync(tmpDir, { recursive: true, force: true });
+	rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // --- push ---

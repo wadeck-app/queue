@@ -29,7 +29,7 @@ describe('Wal with a corrupt line', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('append keeps the valid lines, moves the raw corrupt line to wal.ndjson.corrupt and reports it through the sink', () => {

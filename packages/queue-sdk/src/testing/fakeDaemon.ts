@@ -184,7 +184,7 @@ export function makeTempDir(prefix = 'queue-sdk-'): string {
 }
 
 export function removeDir(path: string): void {
-  rmSync(path, { recursive: true, force: true });
+  rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 /** A TCP port nothing listens on any more. */

@@ -31,7 +31,7 @@ describe('HistoryReader: the project of the outcomes (direction to-children)', (
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const records = [
@@ -76,7 +76,7 @@ describe('HistoryReader', () => {
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('returns empty array when the history directory does not exist', () => {
@@ -439,7 +439,7 @@ describe('HistoryReader.countTriggers (activity counters, without parsing the pa
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   // The writer puts ts and type first: { ts, type, ...entry }
@@ -513,7 +513,7 @@ describe('HistoryReader.bucketTriggers (events per time slice, for the dashboard
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const trigger = (atMs: number, eventId: string) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId, event: 'onFoo', matchedCount: 0, totalCount: 0 });
@@ -581,7 +581,7 @@ describe('HistoryReader.bucketOutcomes (how dispatches ended, per time slice)', 
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const outcome = (atMs: number, status: string, extra: object = {}) => ({ ts: new Date(atMs).toISOString(), type: 'outcome', eventId: 'e', event: 'onFoo', subscriberId: 'onFoo[0]', status, ...extra });
@@ -645,7 +645,7 @@ describe('HistoryReader breakdowns (events and subscribers over a window)', () =
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const trigger = (atMs: number, event: string) => ({ ts: new Date(atMs).toISOString(), type: 'trigger', eventId: crypto.randomUUID(), event, matchedCount: 0, totalCount: 0, payload: { big: 'x'.repeat(2000) } });
@@ -724,7 +724,7 @@ describe('HistoryReader.readProject (the pruned read of one project)', () => {
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('answers exactly what read({ projectId }) answers, also for an entry whose records are in two day files and for a to-children dispatch', () => {

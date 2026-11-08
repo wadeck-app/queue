@@ -18,7 +18,7 @@ describe('launcherTemplate resolveStdio', () => {
 
   afterEach(() => {
     if (fs.existsSync(tempDir)) {
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -356,7 +356,7 @@ describe('launcherTemplate buildInstallCommand', () => {
     try {
       return createRequire(file)(file) as { buildInstallCommand: (p: string, v: unknown) => string };
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   };
 

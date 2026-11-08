@@ -14,7 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  rmSync(historyDir, { recursive: true, force: true });
+  rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function writeDay(date: string, records: object[]): void {

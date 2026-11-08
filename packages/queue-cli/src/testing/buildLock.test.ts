@@ -82,7 +82,7 @@ describe('acquireBuildLock', () => {
       onOwnerRead: () => {
         if (contenderSeen) return;
         contenderSeen = true;
-        rmSync(lockDir, { recursive: true, force: true });
+        rmSync(lockDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
         writeOwner(ALIVE);
         events.push('other run holds the lock');
       },
@@ -141,7 +141,7 @@ describe('acquireBuildLock', () => {
       isAlive,
       sleep: pausing(() => {
         mutexAtPause = existsSync(mutex);
-        rmSync(mutex, { recursive: true, force: true });
+        rmSync(mutex, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }),
     });
     expect(mutexAtPause).toBe(true);
@@ -159,7 +159,7 @@ describe('acquireBuildLock', () => {
       isAlive,
       sleep: pausing(() => {
         mutexAtPause = existsSync(mutex);
-        rmSync(mutex, { recursive: true, force: true });
+        rmSync(mutex, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }),
     });
     expect(mutexAtPause).toBe(true);

@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
+  rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe('readLogTail', () => {

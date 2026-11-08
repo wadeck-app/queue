@@ -12,5 +12,7 @@ export default defineConfig({
     // Normal runs end long before these.
     testTimeout: 300_000,
     hookTimeout: 300_000,
+    // Gives the run a private temp dir and fails it when a test leaves a queue-* entry in it (test-support/tempLeakGuard.ts)
+    globalSetup: ['../../test-support/leakGuard.globalSetup.ts'],
   },
 });

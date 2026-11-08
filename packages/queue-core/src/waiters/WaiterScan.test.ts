@@ -298,7 +298,7 @@ describe('listLiveWaiters', () => {
     const fs: WaiterFs = { ...defaultWaiterFs, readdir: () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); } };
     expect(listLiveWaiters(configDir, options({ fs })).unreadable).toEqual(expect.stringContaining('EACCES'));
     expect(listLiveWaiters(configDir, options()).unreadable).toBeUndefined();
-    rmSync(waitersDir(configDir), { recursive: true, force: true });
+    rmSync(waitersDir(configDir), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     expect(listLiveWaiters(configDir, options()).unreadable).toBeUndefined();
   });
 });

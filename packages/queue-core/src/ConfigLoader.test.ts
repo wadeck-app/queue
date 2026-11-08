@@ -50,8 +50,8 @@ describe('ConfigLoader - cwd resolution', () => {
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('default cwd = project root (parent of .queue/) when no cwd configured', () => {
@@ -171,8 +171,8 @@ describe('ConfigLoader - env resolution', () => {
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('no env configured: env is undefined', () => {
@@ -299,8 +299,8 @@ describe('ConfigLoader - schema validation', () => {
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('invalid YAML throws with actionable message', () => {
@@ -331,8 +331,8 @@ describe('ConfigLoader - global + project merge', () => {
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('global and project subscribers are both returned', () => {
@@ -369,8 +369,8 @@ describe('ConfigLoader - subscriber validation', () => {
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("cli subscriber without command is rejected at load time, naming event and index", () => {
@@ -429,8 +429,8 @@ describe('ConfigLoader - subscriber ids', () => {
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('a global and a project subscriber with the same name on the same event get distinct ids (the daemon keys its WAL entries by id)', () => {
@@ -490,8 +490,8 @@ describe('ConfigLoader - unnamed subscribers', () => {
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('says which file a subscriber comes from and whether it is global or project', () => {
@@ -547,9 +547,9 @@ describe('ConfigLoader - subscribers kept in the config folder of a registered p
   });
 
   afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
-    rmSync(configRoot, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(configRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   /** A config folder of the registry with this subscribers.yml in it. */
@@ -683,7 +683,7 @@ describe('ConfigLoader - command templates ({{ }} runs without a shell)', () => 
   });
 
   afterEach(() => {
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   function load(command: string) {
@@ -742,7 +742,7 @@ describe('ConfigLoader - a ** event pattern is refused at load time', () => {
       const loader = new ConfigLoader(globalDir);
       expect(() => loader.getSubscribers('dep.published', undefined)).toThrow(/subscribers\.yml: "dep\.\*\*": "\*\*" is not a wildcard, use ">"[\s\S]*instead: "dep\.>"/);
     } finally {
-      rmSync(globalDir, { recursive: true, force: true });
+      rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 });
@@ -755,7 +755,7 @@ describe('ConfigLoader - type action', () => {
   });
 
   afterEach(() => {
-    rmSync(globalDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const write = (lines: string[]): void => writeFileSync(join(globalDir, 'subscribers.yml'), lines.join(NL) + NL, 'utf-8');
@@ -878,7 +878,7 @@ describe('ConfigLoader - an event key that can never match is refused at load ti
       expect(message).toContain(why);
       expect(message).toContain("Fix: rename the key under 'subscribers'");
     } finally {
-      rmSync(globalDir, { recursive: true, force: true });
+      rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -888,7 +888,7 @@ describe('ConfigLoader - an event key that can never match is refused at load ti
       writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  "dep.>":\n    - type: cli\n      name: a\n      command: echo hi\n  "on.*.x":\n    - type: cli\n      name: b\n      command: echo hi\n', 'utf-8');
       expect(new ConfigLoader(globalDir).getSubscribers('dep.a.b', undefined)).toHaveLength(1);
     } finally {
-      rmSync(globalDir, { recursive: true, force: true });
+      rmSync(globalDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 });

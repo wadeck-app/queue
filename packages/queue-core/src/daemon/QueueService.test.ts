@@ -25,8 +25,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(configDir, { recursive: true, force: true });
-  rmSync(projectDir, { recursive: true, force: true });
+  rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 /** Registers `projectDir` in a new registry whose project holds this subscribers.yml in its config folder; returns the registry folder and the project id. */

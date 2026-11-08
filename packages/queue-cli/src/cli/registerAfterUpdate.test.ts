@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(installDir, { recursive: true, force: true });
+  rmSync(installDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe('readAppModuleVersion', () => {

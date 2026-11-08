@@ -10,7 +10,8 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     // Builds the bundled CLI once per run into a directory of its own (the integration tests used to rebuild the shared dist-bundle/ each,
     // which cannot run in parallel) and gives the run its own app-core pickup directory.
-    globalSetup: ['./vitest.globalSetup.ts'],
+    // The leak guard must stay LAST: the build above uses the real temp dir (shared build lock), the guard then redirects it for the tests (test-support/tempLeakGuard.ts)
+    globalSetup: ['./vitest.globalSetup.ts', '../../test-support/leakGuard.globalSetup.ts'],
     // Test files run in parallel. What made that unsafe was shared global state, all of it now per run or per test:
     //  - ports: the daemons ask for QUEUE_DAEMON_PORT / QUEUE_RELAY_PORT, which createIsolatedCliEnv sets to free ports allocated per environment
     //    (no test uses 47910/47911, so a real daemon or another session's run on this machine cannot collide);

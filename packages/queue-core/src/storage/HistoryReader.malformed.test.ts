@@ -20,7 +20,7 @@ describe('HistoryReader with a malformed line in a day file', () => {
   });
 
   afterEach(() => {
-    rmSync(historyDir, { recursive: true, force: true });
+    rmSync(historyDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   // GOOD_A, OUTCOME_A, a torn line, GOOD_B: the torn line sits in the middle

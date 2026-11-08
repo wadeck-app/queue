@@ -32,7 +32,7 @@ describe('Wal, DlqStore and the event catalog replace their file through the tra
 
   afterEach(() => {
     renameMock.mockReset();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   // The next rename of a data file fails with EPERM once (as a scanner holding the file does), then really renames

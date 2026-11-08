@@ -175,7 +175,7 @@ export default {
           payload: { test: true },
         });
       } finally {
-        await fs.rm(tmpDir, { recursive: true, force: true });
+        await fs.rm(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }
     });
 
@@ -187,7 +187,7 @@ export default {
         await fs.writeFile(pluginPath, pluginCode, 'utf8');
         await expect(loadPlugin(pluginPath)).rejects.toThrow(/does not export a valid RelayPlugin/);
       } finally {
-        await fs.rm(tmpDir, { recursive: true, force: true });
+        await fs.rm(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }
     });
   });

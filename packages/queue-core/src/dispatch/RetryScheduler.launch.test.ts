@@ -43,7 +43,7 @@ describe.skipIf(!IS_WINDOWS)('resolveOrchLaunch - a real npm shim on disk (Windo
     writeFileSync(join(dir, 'orch.cmd'), SHIM('node_modules\\@wadeck\\orchestrator\\bin\\orch.js'));
     writeFileSync(join(dir, 'orch'), '#!/bin/sh\n');
   });
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
   it('starts node on the shim script with the orch arguments, without cmd.exe', () => {
     const launch = resolveOrchLaunch(join(dir, 'orch.cmd'), ARGS, {}, 'win32');

@@ -55,8 +55,8 @@ describe('retention protection and shared policy', () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(dir2, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(dir2, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   // Writes a file whose mtime is `ageMs` before NOW (default: long ago, so no mtime guard applies)
@@ -271,7 +271,7 @@ describe('listLogFiles', () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('a missing directory is an empty listing with exists false, not an error', () => {
@@ -335,7 +335,7 @@ describe('deleteLogFile', () => {
   });
 
   afterEach(() => {
-    rmSync(outside, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const put = (name: string, ageMs = LONG_AGO_MS): void => {
@@ -485,7 +485,7 @@ describe('statQueueFiles', () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it('gives size and mtime of wal and dlq, and exists false for a missing one', () => {
@@ -517,7 +517,7 @@ describe('protectionReason with a modification time later than the clock', () =>
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   // mtime is `ageMs` before NOW (negative: after it)
