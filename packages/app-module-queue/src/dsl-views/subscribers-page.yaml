@@ -10,7 +10,7 @@ $type: PageContent
 sections:
   - $type: PageHeader
     title: Subscribers
-    subtitle: From the global subscribers.yml and the project of the working directory (?cwd=). Edit them with queue sub.
+    subtitle: From the global subscribers.yml and the project of the working directory (?cwd=). Edit them with queue sub. Problem shows what the files alone reveal (a command with no folder to run from); an unknown action or settings an action refuses need the daemon's plugins, so queue sub list shows those.
   - $type: DataTable
     rows: $sources.subscribers.subscribers
     emptyMessage: No subscriber configured
@@ -24,6 +24,7 @@ sections:
       - { key: "url", label: "URL", mono: true }
       - { key: "when", label: "When", mono: true }
       - { key: "retries", label: "Retries" }
+      - { key: "problem", label: "Problem" }
   - $type: PageHeader
     title: Last 24 hours
     subtitle: How the dispatches of each subscriber ended, busiest first. Durations come from the dispatch log.

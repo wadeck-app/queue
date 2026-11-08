@@ -101,3 +101,26 @@ describe('doubleStarProblem', () => {
     expect(doubleStarProblem('a.**.b.**')).toBe('"a.**.b.**": "**" is not a wildcard, use ">" (the rest of the segments) instead: "a.>.b.>".');
   });
 });
+
+describe('eventPatternProblem - an empty segment without any wildcard', () => {
+  it.each(['on..x', '.x', 'x.', ''])('refuses %j: such a key can never match a real event', (s) => {
+    expect(eventPatternProblem(s), s).toContain('empty segment');
+  });
+});
+
+describe('EventMatcher.matches - a ">" that is not the last segment', () => {
+  it.each([
+    ['on.>.x', 'on.a.x'],
+    ['on.>.x', 'on.a.b'],
+    ['on.>.x', 'on.a'],
+    ['>.x', 'a.x'],
+  ])('%s never matches %s (">" must be last, the key is refused at load time)', (pattern, event) => {
+    expect(EventMatcher.matches(pattern, event)).toBe(false);
+  });
+
+  it('still matches a final ">" on one or more remaining segments', () => {
+    expect(EventMatcher.matches('on.>', 'on.a')).toBe(true);
+    expect(EventMatcher.matches('on.>', 'on.a.b.c')).toBe(true);
+    expect(EventMatcher.matches('on.>', 'on')).toBe(false);
+  });
+});

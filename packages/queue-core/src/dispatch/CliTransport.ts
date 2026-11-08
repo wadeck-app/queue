@@ -7,6 +7,7 @@ import { getErrorMessage } from '../errors.js';
 import { CommandTemplateError, findCmdMetacharacter, hasPlaceholders, substituteToken, tokenizeTemplate } from './commandTemplate.js';
 import type { DispatchResult } from './DispatchResult.js';
 import { resolveNpmShim } from './NpmShim.js';
+import { formatDuration } from './formatDuration.js';
 import { describePathEntryCount, envValue, findWindowsProgram } from './windowsProgram.js';
 
 type SpawnOptions = Parameters<typeof spawn>[2];
@@ -251,7 +252,7 @@ export class CliTransport {
 
         if (timedOut) {
           const detail = killProblem === undefined ? '' : ` (the process tree may still run: ${killProblem})`;
-          settle({ success: false, error: `timeout after ${Math.round(timeoutMs / 1000)}s${detail}`, stdout, stderr, durationMs });
+          settle({ success: false, error: `timeout after ${formatDuration(timeoutMs)}${detail}`, stdout, stderr, durationMs });
           return;
         }
 

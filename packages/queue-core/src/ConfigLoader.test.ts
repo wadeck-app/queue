@@ -855,3 +855,40 @@ describe('ConfigLoader - type action', () => {
     expect(subs.find((s) => s.name === 'c')).toMatchObject({ type: 'cli', cwd: globalDir });
   });
 });
+
+describe('ConfigLoader - an event key that can never match is refused at load time', () => {
+  it.each([
+    ['dep.pub*', 'mixes a wildcard with other characters'],
+    ['on.*x', 'mixes a wildcard with other characters'],
+    ['on..x', 'empty segment'],
+    ['on.>.x', 'must be the last one'],
+  ])('refuses the key %s, names the file and the key and says how to fix it', (key, why) => {
+    const globalDir = makeTmpDir();
+    try {
+      writeFileSync(join(globalDir, 'subscribers.yml'), `subscribers:\n  "${key}":\n    - type: cli\n      name: notify\n      command: echo hi\n`, 'utf-8');
+      const loader = new ConfigLoader(globalDir);
+      let message = '';
+      try {
+        loader.getSubscribers('on.a.x', undefined);
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toContain('subscribers.yml');
+      expect(message).toContain(`"${key}"`);
+      expect(message).toContain(why);
+      expect(message).toContain("Fix: rename the key under 'subscribers'");
+    } finally {
+      rmSync(globalDir, { recursive: true, force: true });
+    }
+  });
+
+  it('still accepts well-formed patterns', () => {
+    const globalDir = makeTmpDir();
+    try {
+      writeFileSync(join(globalDir, 'subscribers.yml'), 'subscribers:\n  "dep.>":\n    - type: cli\n      name: a\n      command: echo hi\n  "on.*.x":\n    - type: cli\n      name: b\n      command: echo hi\n', 'utf-8');
+      expect(new ConfigLoader(globalDir).getSubscribers('dep.a.b', undefined)).toHaveLength(1);
+    } finally {
+      rmSync(globalDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -146,3 +146,71 @@
 - [ ] Add the following to `.claude/settings.json`: a permission allowlist for frequent read-only commands (`netstat`, `git status/diff/log`, `queue ...`, `gh run list`), and bypass pre-approval for routine `git-commit` and `kill-port` calls (run the `fewer-permission-prompts` skill). Fix the w-guardrails `request-bypass.js` `checkKillSwitchWrite` bug and make grants independent of CWD.
 - [ ] Add a lint check in CI for import-path case sensitivity (Windows vs Linux). Add a CI lint for em-dashes in help text and JSDoc, and make the `tsconfig` test exclusion the default in every package. Run the violations check in CI for review forks.
 - [ ] Make each package's vitest config explicit about `include` and `exclude`, so `dist/*.test.js` artifacts do not run twice. Make test setup set `QUEUE_CONFIG_DIR` and the app-core ports by default, and replace hardcoded `/c/Workspace_Tooling/...` paths in integration tests with temp or relative paths.
+
+<!-- consolidated 2026-11-08 -->
+## Documentation
+- [ ] Add a "Testing on Windows" section to `.claude/guiding-principles.md`. It should cover:
+  - the canonical `queue` invocation, using `node /c/App/nodejs/node_modules/@wadeck-app/queue-cli/bin/queue.js` when the shim fails and `--cli-foreground` in non-TTY shells;
+  - checking that the binary runs before retrying a test;
+  - using `createIsolatedCliEnv()` and never ports 47910/47911;
+  - cleaning up `queue-replay-cwd-*` temp dirs with `attrib` and retrying removal on EBUSY;
+  - using forward-slash `C:/...` paths for app-core manifest registration.
+- [ ] Add an "app-core module authoring checklist" to `docs/project-integration.md`. It should cover:
+  - the `src/backend` + `src/dsl-views` layout;
+  - the required `"id"` field in `manifest.json`;
+  - the manifest version being the loader cache key, so it must be written at bundle time;
+  - the bundled-types (`index.bundle.d.ts`) requirement;
+  - the dist-module sync between source and installed copies.
+- [ ] Document the cross-platform test rules in `.claude/guiding-principles.md`:
+  - assert `error.code` against both ENOENT and ENOTDIR instead of one OS value;
+  - no hardcoded `/tmp` or `/c/...` paths;
+  - use the shared condition-based `waitFor` helper, not sleeps or wall-clock timeouts;
+  - give each test its own temp dir;
+  - tests that spawn relay or queue daemons must stop them.
+- [ ] Write a protocol-bump runbook in `docs/push-protocol.md` listing every file to update:
+  - `contract/protocol-1.json`;
+  - `PROTOCOL_VERSION`;
+  - the READMEs;
+  - `guiding-principles.md`;
+  - the tests, which must use the constant instead of a literal `1.1.0`.
+- [ ] Add the dependency boundary rules explicitly to `.claude/product-vision.md`:
+  - `queue-cli` must not depend on `app-core-sdk`;
+  - `app-module-queue` depends on `queue-core` only, never `queue-cli`;
+  - registration with app-core belongs in `queue-cli`;
+  - `configDir` belongs in `queue-core`;
+  - the SDK must not depend on `queue-cli`.
+- [ ] Document the relay API contract (`stats`, `verified24h` and delivery fields), the `_secrets_/.env.local` token convention and the rule that tokens never appear in logs. Put it in the `queue-relay-client` README or `docs/`, so nobody has to read the poc-node `routes.js`.
+- [ ] Document the following in `docs/`:
+  - the daemon lifecycle (on-demand relay start and stop);
+  - the full test cycle for daemon changes: CI, then `queue cli update`, then `queue stop`, then an end-to-end run with the installed binary;
+  - `QUEUE_PUSH_CWD` being sticky.
+- [ ] Record the `@wadeck-app/*` dependency policy (`latest` versus pinned). Also record "check the registry before adding an unpublished `@wadeck-app` dependency". Include the CalVer and `compute-version` `breaking-input` behavior.
+- [ ] Add a workspace package template to the docs (tsconfig that excludes `**/*.test.ts`, `vitest.config.ts` with isolated env vars, `src/index.ts`). Also document the test file naming and structure conventions.
+
+## Process
+- [ ] Before any multi-file refactor or restructure, state the end layout and open design questions (module layout, package boundaries, command naming such as `relay webhook list|history`) and get user confirmation first. This avoids mid-task redirects and rework.
+- [ ] Before delegating, brief sub-agents with file paths, the exact scope and the build conventions (tsconfig test exclusion, shared helpers created upfront). Assign file ownership so parallel agents don't collide. Verify their output yourself before reporting it, since "tests pass" has let vacuous tests through.
+- [ ] In TDD, write the test first and check it fails when the guarded behavior is removed (control mutation). Assert on messages and on all written lines, not just that nothing threw.
+- [ ] Before declaring a feature done, run an end-to-end check with the installed binary against the real published package. Local builds and isolated instances don't count.
+- [ ] Before a code review, run the `violations` check as well, and use the correct commit range (not an empty `main...HEAD`).
+- [ ] After every `git push` whose CI result matters, use `queue wait ci <sha> --cli-foreground` in the background. No `sleep` loops and no manual `actions_list` polling.
+- [ ] Before using a deferred tool, MCP tool or skill, load its schema with `ToolSearch("select:<name>")`. If a tool still reports "NOT YET KNOWN", stop retrying and switch to an alternative or ask the user.
+- [ ] Search project docs and CLAUDE.md before launching external research agents. Scope research tightly (for example, GitHub Actions `workflow_run` only).
+- [ ] Prefer Edit over temp `.mjs` or `sed` scripts for code changes. If a script is truly needed, put it outside the repo and delete it afterwards.
+- [ ] Check ports and processes before launching isolated app-core or daemon instances, and clean up afterwards. Add `*.stackdump` to `.gitignore` and remove leaked processes.
+- [ ] After a refactor that deletes or moves a barrel or shared module, grep every import path first. Also grep for hardcoded counts and strings, so tests aren't left to fail one at a time.
+
+## Code comments
+- [ ] Comment the non-obvious invariants where they live:
+  - `ws` `autoPong` behavior in `RelayConnection` (a dead peer needs an explicit terminate);
+  - the `abort` listener removal in async sleeps;
+  - `stop()` ordering on the daemon error path (`connection.stop()` before `daemonHandle.stop()`);
+  - why `PASSTHROUGH_FLAGS` is declared but unused at the template call site;
+  - why `ModuleContext` is mirrored in `src/moduleContext.ts`.
+
+## Configuration
+- [ ] Make every workspace package's `tsconfig.json` exclude `**/*.test.ts` and `**/*.integration.test.ts`. Give each package a `vitest.config.ts` with isolated env (`QUEUE_CONFIG_DIR`, `APP_CORE_PORT`, `APP_CORE_CONFIG_DIR`) and explicit include/exclude, so `dist/` tests don't run twice.
+- [ ] Add `*.stackdump`, `dist-module/` and generated `dist-types/` to `.gitignore`. Exclude `dist-types/`, `api-backend/`, `dsl-frontend/` and nested `**/packages/*/node_modules/**` in `.violations/config.ts`. Wire a lint rule for the `no-em-dash` constraint on help text, so it fails locally and not only in CI.
+- [ ] Add a lint or CI check for import path case-sensitivity (Windows versus Linux). Add one for hardcoded protocol version literals in tests.
+- [ ] Pre-allowlist the recurring safe permission prompts (for example `queue wait ci`, `git-commit` via `request-bypass`, `kill-port`) in `.claude/settings.json`. Use `fewer-permission-prompts` to generate the list.
+- [ ] Fix or flag the w-guardrails `checkKillSwitchWrite is not defined` bug in `request-bypass.js`. Document that grants are CWD-relative at request time.

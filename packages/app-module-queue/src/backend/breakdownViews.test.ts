@@ -33,6 +33,21 @@ describe('subscribers-page.yaml, last 24 hours table', () => {
   });
 });
 
+describe('subscribers-page.yaml, configured subscribers table', () => {
+  const sections = load('subscribers-page.yaml')['sections'] as Node[];
+  const [header, table] = sections as [Node, Node];
+
+  it('has a Problem column, last, for a subscriber that cannot run', () => {
+    expect(columnKeys(table).at(-1)).toBe('problem');
+    expect((table['columns'] as Node[]).at(-1)).toMatchObject({ key: 'problem', label: 'Problem' });
+  });
+
+  it('says what the Problem column cannot see: the problems that need the action plugins are in queue sub list', () => {
+    expect(header['subtitle']).toContain('Problem');
+    expect(header['subtitle']).toContain('queue sub list');
+  });
+});
+
 describe('status-widget.yaml', () => {
   const doc = load('status-widget.yaml');
   const tiles = doc['items'] as Node[];

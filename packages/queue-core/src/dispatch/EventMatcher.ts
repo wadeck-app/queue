@@ -17,16 +17,13 @@ export function doubleStarProblem(s: string): string | null {
 }
 
 /**
- * Why `s` cannot be used as an event pattern, null when it is fine (or when it holds no wildcard character at all: a concrete name).
- * A wildcard character must be a whole segment (`*`, `>`), no segment may be empty, `>` must come last, and `**` is refused (use `>`).
+ * Why `s` cannot be used as an event pattern or name, null when it is fine (a concrete name is fine too).
+ * A wildcard character must be a whole segment (`*`, `>`), no segment may be empty (a name with an empty segment never matches anything), `>` must come last, and `**` is refused (use `>`).
  */
 export function eventPatternProblem(s: string): string | null {
   const doubleStar = doubleStarProblem(s);
   if (doubleStar !== null) {
     return doubleStar;
-  }
-  if (!/[*>]/.test(s)) {
-    return null;
   }
   const segments = s.split('.');
   for (let i = 0; i < segments.length; i++) {
@@ -64,8 +61,9 @@ export class EventMatcher {
       const p = patternParts[pi]!;
 
       if (p === '>') {
-        // Multi-segment wildcard: matches remaining segments
-        return true;
+        // Multi-segment wildcard: matches the remaining segments, so it only means something as the last one. A key like "on.>.x" is refused at load time
+        // (eventPatternProblem); matching nothing here keeps a pattern that got through from firing on everything after the ">"
+        return pi === patternParts.length - 1;
       }
 
       if (p === '*') {

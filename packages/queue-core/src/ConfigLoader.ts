@@ -3,7 +3,7 @@ import { join, basename, dirname, resolve, isAbsolute } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { validateLayer, type ConfigSchema } from '@wadeck-app/project-sdk';
 import { z } from 'zod';
-import { EventMatcher, doubleStarProblem } from './dispatch/EventMatcher.js';
+import { EventMatcher, eventPatternProblem } from './dispatch/EventMatcher.js';
 import type { ResolvedSubscriber } from './types.js';
 import { getErrorMessage } from './errors.js';
 import { isRecord } from './isRecord.js';
@@ -26,6 +26,9 @@ const SubscriberConfigSchema = z.object({
   cwd: z.string().optional(),
   env: z.record(z.string()).optional(),
 });
+
+/** The keys a subscriber may have: the schema strips any other one, so `findUnknownKeys` reports them. */
+export const SUBSCRIBER_KEYS: readonly string[] = Object.keys(SubscriberConfigSchema.shape);
 
 // Per-event entry can be a plain array (existing format) or an object with optional cwd/env + commands array
 const EventConfigSchema = z.union([
@@ -418,10 +421,10 @@ export class ConfigLoader {
       };
       const fileResolved: Array<[string, ResolvedSubscriber[]]> = [];
       for (const [event, eventConfig] of Object.entries(yml.subscribers)) {
-        // '**' is not a wildcard: it would be a literal segment that never matches and the subscribers would silently never fire
-        const patternProblem = doubleStarProblem(event);
+        // A key that can never match ('**', 'dep.pub*', 'on..x', a '>' that is not last) would leave its subscribers silently never firing
+        const patternProblem = eventPatternProblem(event);
         if (patternProblem !== null) {
-          throw new Error(`[queue] Invalid event pattern in ${filePath}: ${patternProblem}\nFix: rename the key under 'subscribers' (> is the only multi-segment wildcard, * matches one segment).`);
+          throw new Error(`[queue] Invalid event pattern in ${filePath}: ${patternProblem}\nFix: rename the key under 'subscribers' (a wildcard is a whole segment: * matches one segment, > matches the rest and must be last; no segment may be empty).`);
         }
         let subs: SubscriberConfig[];
         let eventCwd: string | undefined;

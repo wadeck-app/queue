@@ -78,6 +78,17 @@ describe('listSubscribers (reads subscribers.yml itself, no daemon needed)', () 
     expect(subscriber?.url).toBeUndefined();
   });
 
+  it('carries the problem of a subscriber that cannot run (a command of a virtual parent project has no folder), and none for a healthy one', async () => {
+    const ghost = await addProject(registryDir, { name: 'ghost' });
+    writeFileSync(join(projectToolDir(registryDir, ghost.id, 'queue', 'config', { ensure: true }), 'subscribers.yml'), ['subscribers:', '  onFoo:', '    - type: cli', '      name: lost', '      command: echo lost', '    - type: http', '      name: fine', '      url: http://example.test/hook', ''].join('\n'));
+    await addProject(registryDir, { name: 'app', path: projectDir, parent: 'ghost' });
+    const listed = listSubscribers(configDir, projectDir, undefined, registryDir);
+    const lost = listed.find((s) => s.name === 'lost');
+    expect(lost?.problem).toContain('virtual project');
+    expect(lost?.problem).toContain('Fix:');
+    expect(listed.find((s) => s.name === 'fine')?.problem).toBeUndefined();
+  });
+
   it('has no headers or env in the answer when the subscriber has none', async () => {
     await writeProjectSubscribers('subscribers:\n  onFoo:\n    - type: cli\n      name: a\n      command: echo foo\n');
     const [subscriber] = listSubscribers(configDir, projectDir, undefined, registryDir);

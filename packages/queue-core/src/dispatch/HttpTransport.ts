@@ -1,6 +1,7 @@
 import type { EventEnvelope } from '../types.js';
 import type { DispatchResult } from './DispatchResult.js';
 import { getErrorMessage } from '../errors.js';
+import { formatDuration } from './formatDuration.js';
 
 export class HttpTransport {
   async dispatch(
@@ -38,7 +39,7 @@ export class HttpTransport {
       clearTimeout(timer);
       const durationMs = Date.now() - start;
       if (err instanceof Error && err.name === 'AbortError') {
-        return { success: false, error: `timeout after ${Math.round(timeoutMs / 1000)}s`, durationMs };
+        return { success: false, error: `timeout after ${formatDuration(timeoutMs)}`, durationMs };
       }
       return { success: false, error: getErrorMessage(err), durationMs };
     }

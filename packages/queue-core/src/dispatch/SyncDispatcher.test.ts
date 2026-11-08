@@ -87,6 +87,17 @@ describe('SyncDispatcher', () => {
     expect(result.reason).toContain('timeout');
   });
 
+  it.each([
+    [30, 'subscriber timeout after 30ms'],
+    [999, 'subscriber timeout after 999ms'],
+    [1200, 'subscriber timeout after 1.2s'],
+    [5000, 'subscriber timeout after 5s'],
+  ])('timeout of %i ms is printed as "%s" (milliseconds under one second, never rounded to 0s)', async (timeoutMs, expected) => {
+    vi.spyOn(CliTransport.prototype, 'dispatch').mockResolvedValue({ success: false, error: 'timeout after whatever', durationMs: 1 });
+    const result = await dispatcher.dispatch([makeSub('s1')], makeEnvelope(), timeoutMs);
+    expect(result.reason).toBe(expected);
+  });
+
   it('successful waterfall: each subscriber gets previous response payload', async () => {
     const spy = vi.spyOn(CliTransport.prototype, 'dispatch')
       .mockResolvedValueOnce({ success: true, stdout: JSON.stringify({ action: 'continue', payload: { title: 'modified' } }), durationMs: 1 })

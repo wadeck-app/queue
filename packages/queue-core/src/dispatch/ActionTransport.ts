@@ -4,17 +4,13 @@ import { getErrorMessage } from '../errors.js';
 import type { EventEnvelope } from '../types.js';
 import type { DispatchResult } from './DispatchResult.js';
 import { EventRefError, type RefResolver } from './refResolver.js';
+import { formatDuration } from './formatDuration.js';
 
 /**
  * Builds what a plugin may do for one run: bound to the envelope the subscriber received and to the id of that subscriber
  * (the host decides project, working directory, loop counter and provenance).
  */
 export type ActionContextFactory = (envelope: EventEnvelope, subscriberId: string) => Omit<ActionContext, 'signal' | 'subscriber'>;
-
-/** Prints a duration for a message: milliseconds under one second ("30ms"), seconds above ("1.2s", "30s"). */
-function formatDuration(ms: number): string {
-  return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 100) / 10}s`;
-}
 
 /** Runs a `type: action` subscriber in the daemon process. Reports like the other transports; never throws. */
 export class ActionTransport {

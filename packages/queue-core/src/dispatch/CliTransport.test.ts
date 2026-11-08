@@ -210,6 +210,13 @@ describe('CliTransport - command with {{ }}: values reach the program as single,
     expect(result.error).toMatch(/timeout/);
   });
 
+  it('prints a timeout under one second in milliseconds, not as 0s', async () => {
+    const sleeper = join(workDir, 'sleeper-ms.js');
+    writeFileSync(sleeper, 'setTimeout(() => {}, 20000);');
+    const result = await transport.dispatch(`"${NODE}" "${sleeper}" {{ v }}`, envelope({ v: 'x' }), 300, workDir, undefined, 'notify');
+    expect(result.error).toMatch(/^timeout after 300ms/);
+  });
+
   it('reports a non-zero exit', async () => {
     const failing = join(workDir, 'failing.js');
     writeFileSync(failing, 'process.exit(3);');

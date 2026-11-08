@@ -4,6 +4,7 @@ import type { ActionTransport } from './ActionTransport.js';
 import type { RefResolver } from './refResolver.js';
 import { runSubscriber, targetOf } from './runSubscriber.js';
 import { OutputCapture } from './OutputCapture.js';
+import { formatDuration } from './formatDuration.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
 import { projectRefsOf, type HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
@@ -55,7 +56,7 @@ export class SyncDispatcher {
 
       if (!result.success) {
         const reason = result.error?.startsWith('timeout')
-          ? `subscriber timeout after ${Math.round(timeoutMs / 1000)}s`
+          ? `subscriber timeout after ${formatDuration(timeoutMs)}`
           : result.error ?? 'dispatch failed';
         return this.abort(envelope, sub, reason, target, result.durationMs, captured, result.detail);
       }

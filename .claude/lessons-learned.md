@@ -1,8 +1,17 @@
 # Lessons learned
 
-<!-- Last updated: 2026-10-25T20:27:54.541Z -->
+<!-- Last updated: 2026-11-08T12:03:23.295Z -->
 
 ## Recurring feedback
+
+<!-- session b58fd504 2026-11-08 -->
+- Work was organized into planned "remediation batches" (R3, R4a, R4b visible in commits). Suggests the user pre-planned scope and execution strategy, and agents executed within that framework.
+
+<!-- session dd0c6036 2026-11-08 -->
+- Heavy reliance on inline temporary script files (.mjs/.cjs) as workaround for complex multi-file edits. Consider whether Edit tool or multiple sequential edits would be clearer and reduce context noise from generated code.
+
+<!-- session 7d3eca29 2026-10-31 -->
+- README.md was reset (git checkout) mid-session before re-edit and commit — implicit validation failure; first approach did not meet requirements
 
 <!-- session fc140a04 2026-10-25 -->
 - User corrected output format violation at start — required exact pattern matching with only four section tags.
@@ -187,6 +196,15 @@
 - Manual E2E test cycle needed after each deployment: daemon lifecycle (start/stop), event push/delivery, DLQ checks, and dispatch log verification.
 
 ## Agent errors
+
+<!-- session b58fd504 2026-11-08 -->
+- Agent created temporary .cjs/.mjs files to perform inline text edits on test files, rather than using the Edit tool directly. This made changes harder to verify and left unnecessary artifacts in /tmp.
+- Agent wrote complete test files from scratch, then modified them with sed/bash scripts, rather than using Read then targeted Edit operations. This made changes harder to trace.
+- Attempted to invoke write-doc skill which was not loaded/available at that moment, despite CLAUDE.md requiring it for all documentation changes. Should use ToolSearch to load the skill schema before calling it, or check skill availability upfront.
+
+<!-- session dd0c6036 2026-11-08 -->
+- Called deferred tools (TaskStop via ToolSearch, write-doc via Skill) without first loading their schemas via ToolSearch. Must use `ToolSearch("select:TaskStop")` before invoking TaskStop; skills and deferred tools require schema fetch before use.
+- Failed to invoke write-doc skill before editing docs/subscribers.md — violated CLAUDE.md requirement: "Always invoke the `write-doc` skill before writing any documentation, skill file, README, or .md file."
 
 <!-- session fc140a04 2026-10-25 -->
 - Multiple successive .mjs scripts written and executed for piecemeal file modifications (sed/edit operations) without upfront scope planning; suggests exploration in place of comprehensive analysis before starting implementation.
@@ -590,6 +608,10 @@
 
 ## Documentation gaps
 
+<!-- session b58fd504 2026-11-08 -->
+- Agent spent 30+ exploratory commands grepping across multiple packages to understand inter-module contracts (SubscriberSchema, ActionRegistry, refs, project scope, emission budgets). Better documentation of the module architecture and contracts between packages (queue-core → queue-cli → app-module-queue) would reduce exploration overhead.
+- CLAUDE.md mandates write-doc for all .md changes, but the write-doc skill's availability is not guaranteed at session start; no guidance on fallback if unavailable.
+
 <!-- session fc140a04 2026-10-25 -->
 - Protocol versioning system (contract files, PROTOCOL_VERSION, daemon compatibility checks) required extensive grep/read exploration across multiple files; naming conventions and version update procedures are not immediately clear.
 
@@ -844,6 +866,12 @@
 - New violations rules require a corresponding test file (`src/rules/[category]/[rule].test.ts`), or self-check fails with no clear error message pointing to the root cause.
 
 ## Known constraints
+
+<!-- session b58fd504 2026-11-08 -->
+- Tests timeout or hang frequently — agent uses `timeout 100`/`timeout 110` commands and manages stale processes (taskkill, netstat checks). Suggests test infrastructure or long-running tests need investigation.
+
+<!-- session 7d3eca29 2026-10-31 -->
+- Violations checks run on documentation changes; violations check failure triggers reset-and-retry pattern before commit
 
 <!-- session fc140a04 2026-10-25 -->
 - Project adoption implementation requires explicit user decisions (SDK vs. config strategy, adoption order) before proceeding — scope question at 14:20 blocked progress until confirmed.

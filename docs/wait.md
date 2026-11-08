@@ -13,7 +13,7 @@ Blocks until a queue event of that name is recorded (any `queue push`, even with
 
 ### Patterns
 
-A name containing a segment that is exactly `*` or `>` is a pattern, matched like `subscribers.yml`. It also matches names that appear later.
+A name containing a segment that is exactly `*` or `>` is a pattern, matched like `subscribers.yml` (same rules: the loader refuses the keys `queue wait` refuses). It also matches names that appear later.
 
 | Token | Matches |
 |---|---|

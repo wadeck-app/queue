@@ -136,6 +136,21 @@ describe('queue events list', () => {
     expect(result.out).toBe('');
   });
 
+  it.each([
+    ['dep.pub*', 'mixes a wildcard with other characters'],
+    ['on.*x', 'mixes a wildcard with other characters'],
+    ['on..x', 'empty segment'],
+    ['on.>.x', 'must be the last one'],
+  ])('--match refuses the pattern %s (it would never match) with exit 4, like queue wait and subscribers.yml do', async (pattern, why) => {
+    seed();
+    const result = await run(['list', '--match', pattern]);
+    expect(result.code).toBe(EVENTS_EXIT.USAGE);
+    expect(result.err).toContain('[fail] --match');
+    expect(result.err).toContain(pattern);
+    expect(result.err).toContain(why);
+    expect(result.out).toBe('');
+  });
+
   it('prints each unreadable catalog file as a warning on stderr and still exits 0', async () => {
     seed();
     writeFileSync(join(configDir, 'events', 'broken.json'), '{ not json');
