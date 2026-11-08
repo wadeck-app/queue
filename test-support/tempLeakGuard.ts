@@ -43,6 +43,9 @@ export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const SCOPED_ENV = ['TMPDIR', 'TEMP', 'TMP'] as const;
 
+/** The real temp dir, for the few tests that start a tool which cannot work from inside the private root (the Go launcher build: go ignores a go.mod below the redirected temp root). */
+export const REAL_TMPDIR_ENV = 'QUEUE_TEST_REAL_TMPDIR';
+
 function remove(path: string): void {
   // Windows keeps files open for a moment after a process ended
   rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -136,7 +139,8 @@ export function startLeakGuard(realTmp: string = tmpdir(), env: NodeJS.ProcessEn
   mkdirSync(realTmp, { recursive: true });
   const root = mkdtempSync(join(realTmp, RUN_ROOT_PREFIX));
   writeFileSync(join(root, RUN_ROOT_MARKER), `${process.pid}\n`);
-  const previous = SCOPED_ENV.map((key) => [key, env[key]] as const);
+  const previous = [...SCOPED_ENV, REAL_TMPDIR_ENV].map((key) => [key, env[key]] as const);
+  env[REAL_TMPDIR_ENV] = realTmp;
   for (const key of SCOPED_ENV) {
     env[key] = root;
   }

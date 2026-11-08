@@ -9,6 +9,7 @@ import {
   findLeaks,
   formatLeakMessage,
   prefixOf,
+  REAL_TMPDIR_ENV,
   RUN_ROOT_MARKER,
   RUN_ROOT_PREFIX,
   startLeakGuard,
@@ -112,6 +113,24 @@ describe('startLeakGuard', () => {
     expect('TEMP' in env).toBe(false);
     expect(env['TMP']).toBe('/before/tmp');
     expect(env['OTHER']).toBe('kept');
+  });
+
+  it('hands the real temp dir to the tests that must not run inside the private root (QUEUE_TEST_REAL_TMPDIR), and takes it away at the end', () => {
+    const realTmp = scratch();
+    const env: NodeJS.ProcessEnv = {};
+    const run = startLeakGuard(realTmp, env);
+    expect(env[REAL_TMPDIR_ENV]).toBe(realTmp);
+    run.finish();
+    expect(REAL_TMPDIR_ENV in env).toBe(false);
+  });
+
+  it('restores a QUEUE_TEST_REAL_TMPDIR that was set before the run', () => {
+    const realTmp = scratch();
+    const env: NodeJS.ProcessEnv = { [REAL_TMPDIR_ENV]: '/set/before' };
+    const run = startLeakGuard(realTmp, env);
+    expect(env[REAL_TMPDIR_ENV]).toBe(realTmp);
+    run.finish();
+    expect(env[REAL_TMPDIR_ENV]).toBe('/set/before');
   });
 
   it('reports nothing for a run that removed everything it created', () => {
