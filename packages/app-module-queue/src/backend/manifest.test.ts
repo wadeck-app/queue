@@ -4,6 +4,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registeredRoutes } from './registeredRoutes.testUtil.js';
 import { getStatus } from './status.js';
+import { getWaiters } from './waiters.js';
+import { registerFixtureWait } from './waitersFixture.testUtil.js';
 import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -59,18 +61,45 @@ describe('manifest.json figures next to menu entries (count)', () => {
     expect(pages.find((page) => page.path === '/dlq')?.count).toEqual({ route: '/status', field: 'dlqCount' });
   });
 
+  it('Waiters shows the number of waits running now (what its first table lists), read from /waiters', () => {
+    expect(pages.find((page) => page.path === '/waiters')).toMatchObject({ label: 'Queue Waiters', count: { route: '/waiters', field: 'count' } });
+  });
+
   it('every count points at a GET route the backend registers and at a whole number that route answers', () => {
     const registered = registeredRoutes();
     const dir = makeTempDir('queue-manifest-count-');
     try {
-      const answer = getStatus(dir) as unknown as Record<string, unknown>;
+      // The routes a count may read, each answered by its own function on an empty folder
+      const answers: Record<string, Record<string, unknown>> = {
+        '/status': getStatus(dir) as unknown as Record<string, unknown>,
+        '/waiters': getWaiters(dir) as unknown as Record<string, unknown>,
+      };
       const counted = pages.filter((page) => page.count !== undefined);
       expect(counted.length).toBeGreaterThan(0);
       for (const page of counted) {
         const count = page.count as Count;
         expect(registered, `${page.path}: count.route ${count.route}`).toContain(`GET ${count.route}`);
-        expect(Number.isInteger(answer[count.field]), `${page.path}: /status field ${count.field}`).toBe(true);
+        const answer = answers[count.route];
+        expect(answer, `${page.path}: this test cannot answer ${count.route}; add it to the table above`).toBeDefined();
+        expect(Number.isInteger(answer![count.field]), `${page.path}: ${count.route} field ${count.field}`).toBe(true);
       }
+    } finally {
+      removeTempDir(dir);
+    }
+  });
+});
+
+describe('the figure next to Waiters is the number of live waits', () => {
+  it('counts the waits that are listed, not the stale ones that were swept', () => {
+    const dir = makeTempDir('queue-manifest-waiters-count-');
+    try {
+      const now = Date.parse('2026-11-08T10:00:00.000Z');
+      registerFixtureWait(dir, { name: 'a.one', at: now - 1000 });
+      registerFixtureWait(dir, { name: 'b.two', at: now - 40_000 });
+      registerFixtureWait(dir, { name: 'c.gone', at: now - 120_000 });
+      const answer = getWaiters(dir, { now: () => now, isAlive: () => true });
+      expect(answer.count).toBe(2);
+      expect(answer.waiters).toHaveLength(answer.count);
     } finally {
       removeTempDir(dir);
     }

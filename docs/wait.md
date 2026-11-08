@@ -106,6 +106,7 @@ Put the awaited thing in the name: one session often runs several waits (`wait c
 - `queue waiters [--json]`: name, events and filters, label, contact, since, last seen, pid. `--json` is an array (`id`, `name`, `anonymous`, `events`, `whens`, `label`, `contact`, `pid`, `cwd`, `since`, `startedAt`, `lastSeen`, `stale`).
 - `queue list-subscribers [event]` and `queue sub list [event]` (without `--scope`) append a "Waiting now" section on a terminal, only when someone waits. Their `--json` arrays and piped output are unchanged.
 - `queue waiters --history [--since <duration>] [--name <glob>] [--outcome <o>] [--limit N] [--json]`: newest first, with from, to, duration, outcome (`matched` with the event and its id, `timeout`, `cancelled`, `refused` for a taken name, `lost`, or `waiting`). Journal: `waiters/history/<day>.ndjson`, 90 days. For a CI wait, exit 0 and 1 (passed, failed) are recorded `matched`; exit 2 and 3 (timeout, no run, relay down) `timeout`.
+- Dashboard: the **Queue Waiters** page (menu figure = waits running now) shows both lists, refreshed every 15 s, with the History filters on name (`*` glob) and outcome; the event of a `matched` wait links to the History page. Routes `GET /waiters` and `GET /waiters/history` read the same files with the daemon stopped.
 - A listing sweeps first: the waits that are over are recorded `lost` once and named on stderr (`[info]`). A record that cannot be read is named with its path (`[warn]`) and ignored.
 
 ## Exit codes

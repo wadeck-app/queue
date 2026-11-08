@@ -1,0 +1,101 @@
+# Needs a shell built with dsl-ui and dsl-renderer >= 2026.10.14-094 (urlParam pagination), dsl-ui >= 2026.10.22-124 (resetUrlParams).
+# Both sources are reloaded together every 15 s (`poll`): a wait appears and disappears while the page is open. The routes read the waiter files and the waits history
+# directly (no daemon). The first one also records the waits that are over as lost, like `queue waiters`.
+$sources:
+  waiters:
+    url: GET /api/modules/queue/waiters
+    poll: 15s
+  history:
+    url: GET /api/modules/queue/waiters/history
+    poll: 15s
+    params:
+      page: $urlParam.page
+      limit: $urlParam.size
+      name: $urlParam.name
+      outcome: $urlParam.outcome
+
+$type: PageContent
+sections:
+  - $type: PageHeader
+    title: Waiting now
+    subtitle: The queue wait commands running now (queue wait <event> --name <who>.<what>, queue wait ci). queue push counts them. A wait whose heartbeat is more than 30 s late is marked stale; after 60 s, or when its process is gone, it is no longer listed and is recorded as lost. Filters and working directories are shown as written; no payload is ever stored.
+  # Files that cannot be read and bounds that were hit: said instead of showing a quietly shorter list
+  - $type: Badge
+    $if: $sources.waiters.warningText
+    label: $sources.waiters.warningText
+    variant: warning
+  - $type: Badge
+    $if: $sources.waiters.sweptText
+    label: $sources.waiters.sweptText
+    variant: info
+  # The working directory of a wait is the tooltip of its name. Wake: how the daemon can reach the wait (polling only until the pipe release).
+  - $type: DataTable
+    rows: $sources.waiters.waiters
+    emptyMessage: Nobody is waiting. A wait is listed here while queue wait runs.
+    columns:
+      - { key: "name", label: "Name", mono: true, nowrap: true, title: "{cwd}" }
+      - { key: "anonymousText", label: "Anonymous", nowrap: true, badge: { anonymous: info } }
+      - { key: "eventsText", label: "Events", mono: true }
+      - { key: "whensText", label: "Filters", mono: true }
+      - { key: "label", label: "Label" }
+      - { key: "contactText", label: "Wake", nowrap: true }
+      - { key: "since", label: "Since", format: "datetime" }
+      - { key: "lastSeen", label: "Last seen", format: "datetime" }
+      - { key: "staleText", label: "Stale", nowrap: true, badge: { stale: warning } }
+  - $type: PageHeader
+    title: History
+    subtitle: The waits of the last 90 days, newest first. A lost wait was killed (or its machine slept) and wrote no end; its end time is its last heartbeat. The event that ended a wait links to the History page.
+  - $type: Badge
+    $if: $sources.history.warningText
+    label: $sources.history.warningText
+    variant: warning
+  # Same filters as queue waiters --history --name / --outcome (name: * stands for any characters, e.g. agent.*)
+  - $type: HorizontalStack
+    gap: gap-3
+    align: items-center
+    items:
+      - $type: SearchBar
+        urlParam: name
+        resetUrlParams: [page]
+        placeholder: "Name, e.g. agent.*"
+      - $type: CompactSelect
+        urlParam: outcome
+        resetUrlParams: [page]
+        ariaLabel: Outcome
+        placeholder: Any outcome
+        options:
+          - { value: waiting, label: Waiting }
+          - { value: matched, label: Matched }
+          - { value: timeout, label: Timed out }
+          - { value: cancelled, label: Cancelled }
+          - { value: refused, label: Refused (name taken) }
+          - { value: lost, label: Lost }
+  # The event id is the tooltip of the event: the History page filters on the name. A wait that did not match has no event, so its cell is plain text.
+  - $type: DataTable
+    rows: $sources.history.entries
+    emptyMessage: No wait on this page, or none matches the filters
+    columns:
+      - { key: "name", label: "Name", mono: true, nowrap: true, title: "{cwd}" }
+      - { key: "anonymousText", label: "Anonymous", nowrap: true, badge: { anonymous: info } }
+      - { key: "eventsText", label: "Events", mono: true }
+      - { key: "whensText", label: "Filters", mono: true }
+      - { key: "label", label: "Label" }
+      - { key: "from", label: "From", format: "datetime" }
+      - { key: "to", label: "To", format: "datetime" }
+      - { key: "durationText", label: "Duration", nowrap: true }
+      - { key: "outcome", label: "Outcome", nowrap: true, badge: { matched: success, timeout: warning, cancelled: default, refused: danger, lost: danger, waiting: info } }
+      - { key: "event", label: "Event", nowrap: true, href: "/modules/queue/history?event={event}", title: "{eventId}" }
+  - $type: HorizontalStack
+    justify: justify-between
+    align: items-center
+    gap: gap-3
+    items:
+      - $type: Pagination
+        urlParam: page
+        total: $sources.history.total
+        size: $sources.history.limit
+      - $type: PageSizeSelect
+        urlParam: size
+        resetUrlParams: [page]
+        options: [20, 50, 100]
+        value: $sources.history.limit

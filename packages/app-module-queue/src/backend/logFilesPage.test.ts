@@ -132,11 +132,11 @@ describe('log-files-page.yaml', () => {
 });
 
 describe('navigation', () => {
-  it('Log files is the 9th nav entry, after Queue Logs, at /log-files', () => {
+  it('Log files is the last nav entry (the 10th), after Queue Logs, at /log-files', () => {
     const manifest = JSON.parse(readFileSync(join(here, '../../manifest.json'), 'utf-8')) as { extensionPoints: Node[] };
     const nav = manifest.extensionPoints.filter((p) => p['kind'] === 'page' && p['slot'] === 'nav');
-    expect(nav).toHaveLength(9);
+    expect(nav).toHaveLength(10);
     expect(nav.map((p) => p['label']).slice(-2)).toEqual(['Queue Logs', 'Queue Log files']);
-    expect(nav[8]).toMatchObject({ path: '/log-files', view: { type: 'path', value: './src/dsl-views/log-files-page.yaml' } });
+    expect(nav[9]).toMatchObject({ path: '/log-files', view: { type: 'path', value: './src/dsl-views/log-files-page.yaml' } });
   });
 });

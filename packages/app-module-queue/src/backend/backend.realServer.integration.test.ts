@@ -9,6 +9,7 @@ import { addProject, removeProject } from '@wadeck-app/project-sdk';
 import { createDaemon } from '@wadeck-app/singleton-daemon-kit';
 import { createQueueService } from '@wadeck-app/queue-core';
 import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
+import { registerFixtureWait, registryAt } from './waitersFixture.testUtil.js';
 
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
@@ -455,6 +456,49 @@ describe('the packaged module through a real app-core server', () => {
       expect(sentinelIntact()).toBe(true);
       // The history is another directory: its files are untouched
       expect(existsSync(join(configDir, 'history', '2026-01-01.ndjson'))).toBe(true);
+    });
+  });
+
+  // The Waiters routes read waiters/ and waiters/history/ of the config dir the server reads, with no daemon (none runs here); a live wait is this test process (its pid is alive)
+  describe('Waiters routes (files only, no daemon)', () => {
+    it('GET /waiters lists a live wait with its figures, and GET /waiters/history lists it as waiting then as matched with its event', async () => {
+      const start = Date.now();
+      const { registration } = registerFixtureWait(configDir, { name: 'it.live', at: start, pid: process.pid, events: ['onFoo'], whens: ['payload.a=1'], label: 'abc1234' });
+      const live = await call('GET', '/waiters');
+      expect(live.status).toBe(200);
+      expect(live.body).toMatchObject({ count: 1, staleCount: 0, anonymousCount: 0 });
+      expect((live.body['waiters'] as Array<Record<string, unknown>>)[0]).toMatchObject({ name: 'it.live', eventsText: 'onFoo', whensText: 'payload.a=1', label: 'abc1234', contactText: 'polling only', stale: false });
+      expect(JSON.stringify(live.body)).not.toContain(registration.id);
+
+      const waiting = await call('GET', '/waiters/history?outcome=waiting&limit=5&page=0');
+      expect(waiting.status).toBe(200);
+      expect(waiting.body).toMatchObject({ total: 1, limit: 5, offset: 0 });
+      expect((waiting.body['entries'] as Array<Record<string, unknown>>)[0]).toMatchObject({ name: 'it.live', outcome: 'waiting' });
+
+      registryAt(configDir, Date.now()).deregister(registration, { outcome: 'matched', eventId: 'evt-with-payload', event: 'onFoo' });
+      expect((await call('GET', '/waiters')).body).toMatchObject({ count: 0, waiters: [] });
+      const matched = await call('GET', '/waiters/history?name=it.*&outcome=matched');
+      expect(matched.status).toBe(200);
+      expect((matched.body['entries'] as Array<Record<string, unknown>>)[0]).toMatchObject({ name: 'it.live', outcome: 'matched', event: 'onFoo', eventId: 'evt-with-payload' });
+    });
+
+    it('GET /waiters/history answers 400 with the reason for an invalid query, over the real router', async () => {
+      for (const [query, message] of [['outcome=done', 'outcome must be one of'], ['limit=0', 'limit must be an integer between 1 and 500'], ['page=1&offset=1', 'page and offset cannot be combined'], ['name=a&name=b', 'name must be given once']] as const) {
+        const { status, body } = await call('GET', `/waiters/history?${query}`);
+        expect(status, query).toBe(400);
+        expect(String(body['error']), query).toContain(message);
+      }
+    });
+
+    it('records a wait whose process is gone as lost, when the page asks', async () => {
+      // A pid that no process has: far above the pid space of every platform
+      registerFixtureWait(configDir, { name: 'it.dead', at: Date.now(), pid: 2_147_483_000 });
+      const { status, body } = await call('GET', '/waiters');
+      expect(status).toBe(200);
+      expect(body['count']).toBe(0);
+      expect(String(body['sweptText'])).toContain('it.dead');
+      const history = await call('GET', '/waiters/history?name=it.dead');
+      expect((history.body['entries'] as Array<Record<string, unknown>>)[0]).toMatchObject({ name: 'it.dead', outcome: 'lost' });
     });
   });
 });

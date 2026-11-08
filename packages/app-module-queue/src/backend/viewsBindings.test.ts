@@ -48,6 +48,7 @@ const EXPECTED: Record<string, { sources: Record<string, string>; actions: Recor
   'status-widget.yaml': { sources: { status: `${P}/status`, pending: `${P}/pending` }, actions: {} },
   'subscribers-page.yaml': { sources: { subscribers: `${P}/subscribers`, breakdown: `${P}/breakdown` }, actions: {} },
   'top-events-widget.yaml': { sources: { breakdown: `${P}/breakdown` }, actions: {} },
+  'waiters-page.yaml': { sources: { waiters: `${P}/waiters`, history: `${P}/waiters/history` }, actions: {} },
   'webhooks-page.yaml': { sources: { webhooks: `${P}/relay/webhooks`, deliveries: `${P}/relay/deliveries` }, actions: {} },
 };
 
@@ -67,11 +68,15 @@ describe('each view calls the routes it was designed for', () => {
   });
 });
 
-describe('the tables of the Webhooks and Subscribers pages read the source that holds their rows', () => {
+describe('the tables of the Webhooks, Waiters and Subscribers pages read the source that holds their rows', () => {
   const rowsOf = (file: string): string[] => [...readFileSync(join(viewsDir, file), 'utf-8').matchAll(/rows:\s*\$sources\.(\w+)\.(\w+)/g)].map((m) => `${m[1]}.${m[2]}`);
 
   it('webhooks-page: webhooks table from the webhooks route, deliveries table from the deliveries route', () => {
     expect(rowsOf('webhooks-page.yaml')).toEqual(['webhooks.webhooks', 'deliveries.deliveries']);
+  });
+
+  it('waiters-page: the live waits table from the waiters route, the history table from the history route', () => {
+    expect(rowsOf('waiters-page.yaml')).toEqual(['waiters.waiters', 'history.entries']);
   });
 
   it('subscribers-page: the subscriber table from subscribers, the activity table from the breakdown (which answers a `subscribers` list)', () => {

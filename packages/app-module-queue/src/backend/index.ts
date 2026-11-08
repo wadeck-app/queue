@@ -26,6 +26,9 @@ import { getProjectScope } from './projectScope.js';
 import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery, validateSingleString } from './historyQuery.js';
+import { getWaiters } from './waiters.js';
+import { listWaiterHistory } from './waiterHistory.js';
+import { parseWaiterHistoryQuery } from './waitersQuery.js';
 import { getOverviewRange } from './overviewRange.js';
 import { pushAnswer, dlqReplayAnswer, dlqClearAnswer, retryAnswer, withPushOrigin, type PushOrigin } from './httpAnswers.js';
 import { resolveProjectCwd } from './projectCwd.js';
@@ -445,6 +448,26 @@ export default function (ctx: ModuleContext): void {
 
     try {
       return reply.code(200).send({ subscribers: listSubscribers(configDir, cwd, event, defaultRegistryDir(process.env)) });
+    } catch (err) {
+      return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // The `queue wait` processes waiting now, from waiters/waiter-<name>.json: files only, works with the daemon stopped. It first records the waits that are over as lost
+  // (like `queue waiters`). `count` is the figure next to the Waiters entry of the menu.
+  ctx.registerRoute('GET', '/waiters', (_req, reply) => {
+    try {
+      return reply.code(200).send(getWaiters(configDir));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
+
+  // The waits that were, newest first, from waiters/history/<day>.ndjson. Filters name (glob), outcome, sinceMs; limit/offset/page like /history
+  ctx.registerRoute('GET', '/waiters/history', (req, reply) => {
+    const query = (req as { query?: QueryParams }).query ?? {};
+    try {
+      return reply.code(200).send(listWaiterHistory(configDir, parseWaiterHistoryQuery(query)));
     } catch (err) {
       return reply.code(err instanceof InvalidQueryError ? 400 : 500).send({ error: getErrorMessage(err) });
     }

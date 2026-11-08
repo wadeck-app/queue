@@ -143,6 +143,8 @@ describe('backend', () => {
       'GET /project-scope',
       'GET /related/project/:projectId',
       'GET /subscribers',
+      'GET /waiters',
+      'GET /waiters/history',
       'POST /push',
     ]);
   });

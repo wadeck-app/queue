@@ -132,6 +132,17 @@
     {
       "kind": "page",
       "slot": "nav",
+      "label": "Queue Waiters",
+      "path": "/waiters",
+      "count": { "route": "/waiters", "field": "count" },
+      "view": {
+        "type": "path",
+        "value": "./src/dsl-views/waiters-page.yaml"
+      }
+    },
+    {
+      "kind": "page",
+      "slot": "nav",
       "label": "Queue Webhooks",
       "path": "/webhooks",
       "view": {
