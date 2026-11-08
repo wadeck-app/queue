@@ -102,6 +102,7 @@
       "slot": "nav",
       "label": "Queue Pending",
       "path": "/pending",
+      "count": { "route": "/status", "field": "pendingCount" },
       "view": {
         "type": "path",
         "value": "./src/dsl-views/pending-page.yaml"
@@ -112,6 +113,7 @@
       "slot": "nav",
       "label": "Queue DLQ",
       "path": "/dlq",
+      "count": { "route": "/status", "field": "dlqCount" },
       "view": {
         "type": "path",
         "value": "./src/dsl-views/dlq-page.yaml"

@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { registeredRoutes } from './registeredRoutes.testUtil.js';
+import { getStatus } from './status.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf8')) as {
@@ -44,5 +47,32 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
 
   it('does not expose a slot named nav (reserved by app-core)', () => {
     expect(Object.keys(manifest.expose?.slots ?? {})).not.toContain('nav');
+  });
+});
+
+describe('manifest.json figures next to menu entries (count)', () => {
+  type Count = { route: string; field: string; refreshSeconds?: number };
+  const pages = (manifest.extensionPoints as unknown as { slot?: string; path?: string; count?: Count }[]).filter((point) => point.slot === 'nav');
+
+  it('Pending shows the number of pending events and DLQ the number of dead-letter entries, both read from /status', () => {
+    expect(pages.find((page) => page.path === '/pending')?.count).toEqual({ route: '/status', field: 'pendingCount' });
+    expect(pages.find((page) => page.path === '/dlq')?.count).toEqual({ route: '/status', field: 'dlqCount' });
+  });
+
+  it('every count points at a GET route the backend registers and at a whole number that route answers', () => {
+    const registered = registeredRoutes();
+    const dir = mkdtempSync(join(tmpdir(), 'queue-manifest-count-'));
+    try {
+      const answer = getStatus(dir) as unknown as Record<string, unknown>;
+      const counted = pages.filter((page) => page.count !== undefined);
+      expect(counted.length).toBeGreaterThan(0);
+      for (const page of counted) {
+        const count = page.count as Count;
+        expect(registered, `${page.path}: count.route ${count.route}`).toContain(`GET ${count.route}`);
+        expect(Number.isInteger(answer[count.field]), `${page.path}: /status field ${count.field}`).toBe(true);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

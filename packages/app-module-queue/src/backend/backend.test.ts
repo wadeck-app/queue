@@ -128,6 +128,8 @@ function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; ctx: Module
     off: vi.fn(),
     emit: vi.fn(),
     registerRoute: (method, subPath, handler) => routes.set(`${method} ${subPath}`, handler),
+    fileVersion: vi.fn(),
+    unchanged: vi.fn(),
     dispose: vi.fn(),
   };
   return { routes, ctx };

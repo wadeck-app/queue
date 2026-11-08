@@ -27,8 +27,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "@wadeck-app/app-core-cli": "^2026.11.7-166-a969517b",
-    "@wadeck-app/app-core-sdk": "^2026.10.22-072-f1ca3cff",
+    "@wadeck-app/app-core-cli": "^2026.11.8-176-6817f5bf",
+    "@wadeck-app/app-core-sdk": "^2026.11.8-176-6817f5bf",
     "rimraf": "^6.0.1",
     "typescript": "^7.0.0",
     "vitest": "^4.0.14"

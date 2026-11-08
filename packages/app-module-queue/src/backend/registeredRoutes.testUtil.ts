@@ -18,6 +18,8 @@ export function registeredRoutes(): string[] {
     off: unused,
     emit: unused,
     registerRoute: (method, subPath) => { routes.push(`${method} ${subPath}`); },
+    fileVersion: unused,
+    unchanged: unused,
     dispose: unused,
   };
   backend(ctx);

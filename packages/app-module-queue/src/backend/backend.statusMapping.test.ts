@@ -45,6 +45,8 @@ function routes(): Map<string, ModuleRouteHandler> {
   const ctx = {
     dataDir: '/unused', setInterval: vi.fn(), setTimeout: vi.fn(), clearInterval: vi.fn(), clearTimeout: vi.fn(), on: vi.fn(), off: vi.fn(), emit: vi.fn(),
     registerRoute: (method: string, subPath: string, handler: ModuleRouteHandler) => map.set(`${method} ${subPath}`, handler),
+    fileVersion: vi.fn(),
+    unchanged: vi.fn(),
     dispose: vi.fn(),
   } as unknown as ModuleContext;
   backend(ctx);
