@@ -10,6 +10,17 @@ function render(template: string, payload: unknown = {}, meta: EventEnvelope['me
   return renderActionTemplate(template, envelope(payload, meta), 'with.payload.text');
 }
 
+describe('renderActionTemplate: {{ subscriber }}', () => {
+  it('renders the id of the subscriber the host gives, and is in scope at load time', () => {
+    expect(renderActionTemplate('{{ id }}:{{ subscriber }}', envelope({}, { eventId: 'first' }), 'with.ref', { subscriber: 'ci-wake' })).toBe('first:ci-wake');
+    expect(findActionTemplateProblem('{{ subscriber }}')).toBeUndefined();
+  });
+
+  it('fails loudly, naming the field, when the host gave no subscriber', () => {
+    expect(() => renderActionTemplate('{{ subscriber }}', envelope({}), 'with.ref')).toThrow(/with.ref.*{{ subscriber }}.*no subscriber/);
+  });
+});
+
 describe('renderActionTemplate', () => {
   it('renders a payload field, nested paths and the envelope fields', () => {
     expect(render('{{ payload.a }}/{{payload.b.c}}/{{ event }}/{{ timestamp }}', { a: 'x', b: { c: 'y' } })).toBe('x/y/onTicket.created/2026-01-02T03:04:05.000Z');

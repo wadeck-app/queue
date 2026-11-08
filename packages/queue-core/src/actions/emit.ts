@@ -2,9 +2,8 @@ import { MAX_NAME_LENGTH, NAME_PATTERN } from '../catalog/EventCatalog.js';
 import { isRecord } from '../isRecord.js';
 import { getErrorMessage } from '../errors.js';
 import type { ActionConfig, ActionPlugin, ActionResult } from './ActionPlugin.js';
-import { ActionTemplateError, findActionTemplateProblem, renderActionTemplate } from './renderActionTemplate.js';
+import { ActionTemplateError, findActionTemplateProblem, renderActionTemplate, type RenderOptions } from './renderActionTemplate.js';
 import type { EventEnvelope } from '../types.js';
-import type { WalkOptions } from '../walkPayloadPath.js';
 import { reservedEventProblem } from '../reservedEvents.js';
 import { EventRefError } from '../dispatch/refResolver.js';
 
@@ -63,7 +62,7 @@ function payloadTemplateProblem(value: unknown, path: string, depth: number): st
 }
 
 /** Renders every string leaf of `value` (keys are kept as written). */
-function renderPayload(value: unknown, envelope: EventEnvelope, path: string, depth: number, walk: WalkOptions): unknown {
+function renderPayload(value: unknown, envelope: EventEnvelope, path: string, depth: number, walk: RenderOptions): unknown {
   if (depth > MAX_DEPTH) {
     throw new ActionTemplateError(path, `nested more than ${MAX_DEPTH} levels deep (or refers to itself).`);
   }
@@ -86,7 +85,7 @@ function renderPayload(value: unknown, envelope: EventEnvelope, path: string, de
 
 /**
  * `action: emit`: pushes a new event from the daemon. `with.event` is the literal name, `with.payload` an object whose
- * string values are templates ({{ payload.x }}, {{ event }}, {{ id }}, {{ timestamp }}). Generic: it knows nothing of what consumes the event.
+ * string values are templates ({{ payload.x }}, {{ event }}, {{ id }}, {{ timestamp }}, {{ subscriber }}). Generic: it knows nothing of what consumes the event.
  * The event is filed under the project of the event that fired the subscriber; loops are bounded by the daemon (hop cap).
  */
 export const emitAction: ActionPlugin = {
@@ -126,7 +125,7 @@ export const emitAction: ActionPlugin = {
     const event = config['event'] as string;
     let payload: unknown;
     try {
-      payload = renderPayload(config['payload'] ?? {}, envelope, 'with.payload', 0, context.resolveRef === undefined ? {} : { resolveRef: context.resolveRef });
+      payload = renderPayload(config['payload'] ?? {}, envelope, 'with.payload', 0, { subscriber: context.subscriber, ...(context.resolveRef !== undefined && { resolveRef: context.resolveRef }) });
     } catch (err) {
       // The history could not be read right now: a retry can work
       if (err instanceof EventRefError) {

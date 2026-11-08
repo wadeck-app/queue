@@ -367,6 +367,17 @@ describe('AsyncDispatcher - type action', () => {
     expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', target: 'action:probe' }));
   });
 
+  it('keeps the detail of a failed action in the log, on a retried failure and on the one that goes to the DLQ', async () => {
+    vi.spyOn(RetryScheduler, 'scheduleRetry').mockImplementation(() => undefined);
+    const retried = setup(() => Promise.resolve({ success: false, error: 'half done', detail: 'sent 2 of 3' }));
+    await retried.dispatcher.dispatch([actionSub()], makeEnvelope(), new Map([['sub-1', makeWalEntry('sub-1')]]));
+    expect(retried.logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', detail: 'sent 2 of 3' }));
+
+    const given = setup(() => Promise.resolve({ success: false, error: 'refused', permanent: true, detail: 'sent 0 of 3' }));
+    await given.dispatcher.dispatch([actionSub()], makeEnvelope(), new Map([['sub-1', makeWalEntry('sub-1')]]));
+    expect(given.logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'dlq', detail: 'sent 0 of 3' }));
+  });
+
   it('a permanent failure goes to the DLQ on the first attempt even with retries left, without scheduling a retry', async () => {
     const scheduler = vi.spyOn(RetryScheduler, 'scheduleRetry');
     const { dispatcher, dlqMover, historyLog } = setup(() => Promise.resolve({ success: false, error: 'refused value', permanent: true }));

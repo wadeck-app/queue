@@ -58,7 +58,8 @@ describe('findActionCycles', () => {
     expect(findings.map((f) => f.severity)).toEqual(['error']);
   });
 
-  it('does not follow an edge into the file of a descendant project (the default direction does not go down)', () => {
+  // Replaces the test that pinned 'parent -> child is not an edge': a parent action fires for the events of its descendants and the event it emits is filed under that descendant, so it reaches the descendant's own file
+  it('follows the edge from a parent action into the file of a descendant project (the emitted event is filed under the descendant)', () => {
     const findings = findActionCycles(
       [
         emitSub('parent-action', 'on.a', 'on.b', { projectId: 'aaaaaaaa' }),
@@ -67,14 +68,31 @@ describe('findActionCycles', () => {
       registry,
       { chains: new Map([['aaaaaaaa', ['aaaaaaaa']], ['bbbbbbbb', ['aaaaaaaa', 'bbbbbbbb']]]) },
     );
-    // parent -> child is not an edge (the child's file is not reached from the parent); child -> parent is one
-    expect(findings).toEqual([]);
+    expect(findings.map((f) => f.severity)).toEqual(['error']);
+    expect(findings[0]!.subscribers.slice().sort()).toEqual(['child-action', 'parent-action']);
   });
 
+  // Replaces the first assertion of the test that pinned 'a child emitter and a parent listener make no loop': the parent action fires for the child's events too
   it('follows the edge from a child to the file of its ancestor, and both ways inside one project', () => {
     const chains = new Map([['aaaaaaaa', ['aaaaaaaa']], ['bbbbbbbb', ['aaaaaaaa', 'bbbbbbbb']]]);
-    expect(findActionCycles([emitSub('p', 'on.a', 'on.b', { projectId: 'bbbbbbbb' }), emitSub('q', 'on.b', 'on.a', { projectId: 'aaaaaaaa' })], registry, { chains })).toEqual([]);
+    expect(findActionCycles([emitSub('p', 'on.a', 'on.b', { projectId: 'bbbbbbbb' }), emitSub('q', 'on.b', 'on.a', { projectId: 'aaaaaaaa' })], registry, { chains }).map((f) => f.severity)).toEqual(['error']);
     expect(findActionCycles([emitSub('p', 'on.a', 'on.b', { projectId: 'bbbbbbbb' }), emitSub('q', 'on.b', 'on.a', { projectId: 'bbbbbbbb' })], registry, { chains }).map((f) => f.severity)).toEqual(['error']);
+  });
+
+  it('a descendant chain of three projects: a grandparent action reaches the grandchild file', () => {
+    const chains = new Map([['aaaaaaaa', ['aaaaaaaa']], ['bbbbbbbb', ['aaaaaaaa', 'bbbbbbbb']], ['cccccccc', ['aaaaaaaa', 'bbbbbbbb', 'cccccccc']]]);
+    const findings = findActionCycles([emitSub('root', 'on.a', 'on.b', { projectId: 'aaaaaaaa' }), emitSub('leaf', 'on.b', 'on.a', { projectId: 'cccccccc' })], registry, { chains });
+    expect(findings.map((f) => f.severity)).toEqual(['error']);
+  });
+
+  it('a chain between a parent and a child that ends is not a loop', () => {
+    const chains = new Map([['aaaaaaaa', ['aaaaaaaa']], ['bbbbbbbb', ['aaaaaaaa', 'bbbbbbbb']]]);
+    expect(findActionCycles([emitSub('p', 'on.a', 'on.b', { projectId: 'aaaaaaaa' }), emitSub('q', 'on.b', 'on.c', { projectId: 'bbbbbbbb' })], registry, { chains })).toEqual([]);
+  });
+
+  it('a project that is in no chain map reaches only its own file, and a parent unrelated to it is not reached', () => {
+    const chains = new Map([['aaaaaaaa', ['aaaaaaaa']]]);
+    expect(findActionCycles([emitSub('p', 'on.a', 'on.b', { projectId: 'aaaaaaaa' }), emitSub('q', 'on.b', 'on.a', { projectId: 'dddddddd' })], registry, { chains })).toEqual([]);
   });
 
   it('two sibling projects never reach each other', () => {
@@ -93,6 +111,17 @@ describe('findActionCycles', () => {
     );
     expect(findings.length).toBeGreaterThan(0);
     expect(findings.every((f) => f.severity === 'warning')).toBe(true);
+  });
+
+  // Emitted events always travel in the default direction, so a to-children subscriber (loaded for a to-children push only) is never the target of an emission and cannot close a loop
+  it('a to-children descendant subscriber takes no part in a loop, even when its events and the parent action would match', () => {
+    const chains = new Map([['aaaaaaaa', ['aaaaaaaa']], ['bbbbbbbb', ['aaaaaaaa', 'bbbbbbbb']]]);
+    const findings = findActionCycles(
+      [emitSub('parent', 'on.a', 'on.b', { projectId: 'aaaaaaaa' }), emitSub('child', 'on.b', 'on.a', { projectId: 'bbbbbbbb', fromDescendant: true })],
+      registry,
+      { chains },
+    );
+    expect(findings).toEqual([]);
   });
 
   it('ignores cli and http subscribers, to-children descendants and subscribers with a configuration problem', () => {

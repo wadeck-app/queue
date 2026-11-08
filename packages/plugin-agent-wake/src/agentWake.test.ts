@@ -19,7 +19,7 @@ const envelope: EventEnvelope = {
 };
 
 function context(result: ActionPushResult = { success: true, eventId: 'new-id' }): ActionContext & { push: ReturnType<typeof vi.fn> } {
-  return { push: vi.fn().mockResolvedValue(result) };
+  return { signal: new AbortController().signal, subscriber: 'wake-a', push: vi.fn().mockResolvedValue(result) };
 }
 
 const validate = (config: Record<string, unknown>): string | undefined => agentWakeAction.validate(config, { event: 'onX' });
@@ -97,6 +97,25 @@ describe('agent-wake: run', () => {
     const ctx = context();
     await agentWakeAction.run({ to: 'project:x', text: 't' }, { ...envelope, meta: {} }, ctx);
     expect((ctx.push.mock.calls[0]![0] as { payload: { ref: string } }).payload.ref).toBe('wal-id');
+  });
+
+  it('{{ subscriber }} in the ref tells two subscribers of one event apart, for the same session', async () => {
+    const a = context();
+    const b = { ...context(), subscriber: 'wake-b' };
+    const config = { to: SESSION, text: 't', ref: '{{ id }}:{{ subscriber }}' };
+    await agentWakeAction.run(config, envelope, a);
+    await agentWakeAction.run(config, envelope, b);
+    expect((a.push.mock.calls[0]![0] as { payload: { ref: string } }).payload.ref).toBe('first-push:wake-a');
+    expect((b.push.mock.calls[0]![0] as { payload: { ref: string } }).payload.ref).toBe('first-push:wake-b');
+    expect(validate(config)).toBeUndefined();
+  });
+
+  it('the ref text says what the dedupe key covers: same first push, not a replay, and how to add the subscriber', () => {
+    const declared = agentWakeAction.events![0]!;
+    const ref = (declared.schema as { properties: { ref: { description: string } } }).properties.ref.description;
+    expect(ref).toContain('{{ subscriber }}');
+    expect(ref).toContain("a new one for a queue replay");
+    expect(ref).not.toMatch(/stable across[^.]*replays/);
   });
 
   it('honours an explicit from, mode and ref (rendered)', async () => {

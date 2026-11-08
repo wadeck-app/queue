@@ -39,13 +39,8 @@ export function subscribersFor(configLoader: ConfigLoader, req: { event?: string
   return Array.from(configLoader.load(req.cwd, req.project).values()).flat();
 }
 
-/** Removes one DLQ entry, or all of them when `id` is omitted (`undefined`; an empty id throws); returns how many were removed. The WAL entries that carried their payload go too (see {@link removeDlqEntries}). */
-export function removeFromDlq(dlq: DlqStore, wal: Wal, id?: string): number {
-  return removeDlqEntries(dlq, wal, id).length;
-}
-
 /**
- * Same removal as {@link removeFromDlq}, returning the entries removed (read under the lock of the removal itself). A row that leaves the DLQ for good keeps nothing
+ * Removes one DLQ entry, or all of them when `id` is omitted (`undefined`; an empty id throws), returning the entries removed (read under the lock of the removal itself). A row that leaves the DLQ for good keeps nothing
  * behind: the WAL entry of the same id, in status `dlq`, held the payload (secrets included) and would stay for ever, so it is removed. A WAL entry in any other
  * status is left alone: it is a replay of that row running under the same id.
  */
@@ -206,7 +201,7 @@ export function listDlqEntries(configDir: string): DlqEntry[] {
 }
 
 export function clearDlqEntries(configDir: string, id?: string): number {
-  return removeFromDlq(new DlqStore(join(configDir, 'dlq.ndjson')), new Wal(join(configDir, 'wal.ndjson')), id);
+  return clearDlqEntriesReturning(configDir, id).length;
 }
 
 /** Same as {@link clearDlqEntries}, returning the entries removed instead of their count. */

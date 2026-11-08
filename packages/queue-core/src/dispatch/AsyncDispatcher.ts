@@ -85,7 +85,7 @@ export class AsyncDispatcher {
           }
           // A permanent failure (refused value, bad command) would fail the same way again: no retry
           if (newAttempts < sub.retries && result.permanent !== true) {
-            this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
+            this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured, ...(result.detail !== undefined && { detail: result.detail }) });
             this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'failed', target, ...projectRefsOf(envelope.meta) });
             try {
               RetryScheduler.scheduleRetry({ ...walEntry, attempts: newAttempts });
@@ -96,7 +96,7 @@ export class AsyncDispatcher {
               });
             }
           } else {
-            this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured });
+            this.logger.logDispatch({ event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, durationMs: result.durationMs, error: lastError, attempts: newAttempts, ...captured, ...(result.detail !== undefined && { detail: result.detail }) });
             this.historyLog.logOutcome({ eventId: envelope.id, event: walEntry.event, subscriberId: sub.subscriberId, status: 'dlq', target, ...projectRefsOf(envelope.meta) });
             await this.dlqMover({ ...walEntry, attempts: newAttempts }, lastError, {
               reason: result.permanent === true ? 'permanent-failure' : 'retries-exhausted',

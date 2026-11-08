@@ -57,7 +57,7 @@ export class SyncDispatcher {
         const reason = result.error?.startsWith('timeout')
           ? `subscriber timeout after ${Math.round(timeoutMs / 1000)}s`
           : result.error ?? 'dispatch failed';
-        return this.abort(envelope, sub, reason, target, result.durationMs, captured);
+        return this.abort(envelope, sub, reason, target, result.durationMs, captured, result.detail);
       }
 
       const stdout = result.stdout?.trim() ?? '';
@@ -114,6 +114,7 @@ export class SyncDispatcher {
     target?: string,
     durationMs?: number,
     captured: { stdout?: string; stderr?: string } = {},
+    detail?: string,
   ): SyncResult {
     const resolvedTarget = target ?? targetOf(sub) ?? '';
     this.logger.logDispatch({
@@ -124,6 +125,7 @@ export class SyncDispatcher {
       durationMs,
       error: reason,
       ...captured,
+      ...(detail !== undefined && { detail }),
     });
     this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed', target: resolvedTarget, ...projectRefsOf(envelope.meta) });
     return { action: 'aborted', reason };

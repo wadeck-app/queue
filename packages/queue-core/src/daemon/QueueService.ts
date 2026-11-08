@@ -16,7 +16,8 @@ import { reservedEventProblem } from '../reservedEvents.js';
 import { describeSearchPath } from '../dispatch/windowsProgram.js';
 import type { ActionRegistry } from '../actions/ActionRegistry.js';
 import { createActionRegistry } from '../actions/createActionRegistry.js';
-import { MAX_ACTION_HOPS } from '../actions/hopCap.js';
+import { MAX_ACTION_HOPS, MAX_ACTION_EMISSIONS_PER_ROOT } from '../actions/hopCap.js';
+import { EmissionBudget } from '../actions/EmissionBudget.js';
 import type { ActionPushRequest, ActionPushResult } from '../actions/ActionPlugin.js';
 import { findActionCycles, type CycleSubscriber } from '../actions/findActionCycles.js';
 import type { WalEntry } from '../storage/Wal.js';
@@ -51,7 +52,6 @@ export interface QueueServiceOptions {
   actions?: ActionRegistry;
 }
 
-export { MAX_ACTION_HOPS };
 /** Largest payload an action may emit, serialized as JSON, in bytes. */
 export const MAX_EMITTED_PAYLOAD_BYTES = 64 * 1024;
 
@@ -100,6 +100,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     const known = lookup ?? (projectResolver === undefined ? undefined : projectId !== undefined ? projectResolver.lookupId(projectId) : cwd === undefined ? undefined : projectResolver.lookup(cwd));
     const source = known?.kind === 'registered' ? projectResolver?.configSource(known.project.id, directions) : undefined;
     const subscribers = configLoader.getSubscribers(event, cwd, source);
+    reportConfigProblems(subscribers);
     const registryFile = subscribers.find((sub) => sub.via === 'registry')?.file;
     if (registryFile !== undefined) {
       const legacy = cwd === undefined ? null : configLoader.findProjectFile(cwd);
@@ -110,6 +111,19 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       }
     }
     return subscribers;
+  }
+  /** Says what stops a subscriber from running, once per daemon run: without it the subscriber looks healthy until an event fires and lands in the DLQ. */
+  function reportConfigProblems(subscribers: readonly ResolvedSubscriber[]): void {
+    for (const sub of subscribers) {
+      if (sub.configProblem === undefined) {
+        continue;
+      }
+      const message = `subscriber ${sub.subscriberId} (event '${sub.event}', ${sub.file}) cannot run: ${sub.configProblem} Its events go to the dead-letter queue until this is fixed (queue dlq list).`;
+      if (!saidOnce.has(message)) {
+        saidOnce.add(message);
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.config', message });
+      }
+    }
   }
   const eventLogger = new EventLogger(join(configDir, 'logs'));
   // The daemon's stderr is ignored: what the queue files have to say (unreadable lines kept aside, a full DLQ) goes to the daemon log, where `queue logs` shows it
@@ -128,7 +142,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     const trigger = historyReader.findTrigger(eventId);
     return trigger === undefined ? undefined : { payload: trigger.payload };
   });
-  const actionTransport = new ActionTransport(actions, (source, subscriberId) => ({ push: (request) => emitFrom(source, subscriberId, request) }), refs);
+  const actionTransport = new ActionTransport(actions, (source, subscriberId) => ({ push: (request) => emitFrom(source, subscriberId, request) }), refs, (message) => eventLogger.logDiagnostic({ source: 'ActionTransport', message }));
   const syncDispatcher = new SyncDispatcher(eventLogger, historyLog, actionTransport, refs);
   const startedAt = Date.now();
   const asyncDispatcher = new AsyncDispatcher(
@@ -175,6 +189,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   );
 
   let activeDispatches = 0;
+  // Per root event: the hop cap bounds the depth of an action chain, this bounds its width
+  const emissionBudget = new EmissionBudget();
 
   /**
    * The event an action pushes. It is filed under the project (and working directory) of the envelope the subscriber received, never one the plugin
@@ -202,6 +218,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         error: `an action cannot emit '${request.event}': a 'before*' event is synchronous and answers its pusher. Fix: emit an 'on*' event instead.`,
       };
     }
+    // The first push of the chain: carried by the envelope (set by the daemon only), the event itself when a client pushed it
+    const rootEventId = source.meta.rootEventId ?? source.meta.eventId ?? source.id;
     let serialized: string | undefined;
     try {
       serialized = JSON.stringify(request.payload);
@@ -216,6 +234,15 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         error: `the payload of '${request.event}' is ${bytes} bytes, over the ${MAX_EMITTED_PAYLOAD_BYTES} bytes an action may emit. Fix: send fewer or smaller fields.`,
       };
     }
+    const reservation = emissionBudget.reserve(rootEventId);
+    if (!reservation.granted) {
+      const message = `emission budget: the chain started by the event ${rootEventId} has already emitted ${reservation.count} events (cap ${MAX_ACTION_EMISSIONS_PER_ROOT} per chain), so subscriber ${subscriberId} did not emit '${request.event}'. `
+        + 'Fix: break the fan-out between the action subscribers of subscribers.yml (several actions that emit an event another action listens to).';
+      if (reservation.firstRefusal) {
+        eventLogger.logDiagnostic({ source: 'QueueDaemon.actions', message });
+      }
+      return { success: false, permanent: true, error: message };
+    }
     const response = await pushInternal(
       {
         event: request.event,
@@ -225,8 +252,12 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         ...(source.meta.projectId !== undefined && { project: source.meta.projectId }),
       },
       // provenance: the first-push id of the source event and the action subscriber that emitted this one
-      { hops: hops + 1, causedBy: { eventId: source.meta.eventId ?? source.id, subscriberId } },
+      { hops: hops + 1, causedBy: { eventId: source.meta.eventId ?? source.id, subscriberId }, rootEventId },
     );
+    if (response.status === 'aborted' || response.status === 'rejected') {
+      // Only an event that exists counts against the budget
+      emissionBudget.release(rootEventId);
+    }
     switch (response.status) {
       case 'queued':
       case 'dispatched':
@@ -274,7 +305,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           ...(entry.meta.cwd !== undefined && { cwd: entry.meta.cwd }),
           ...(entry.meta.projectId !== undefined && { project: entry.meta.projectId }),
         },
-        { hops: hops + 1, causedBy: { eventId: entry.meta.eventId ?? entry.id, subscriberId: entry.subscriberId }, origin: 'queue' },
+        { hops: hops + 1, causedBy: { eventId: entry.meta.eventId ?? entry.id, subscriberId: entry.subscriberId }, origin: 'queue', rootEventId: entry.meta.rootEventId ?? entry.meta.eventId ?? entry.id },
       );
       if (response.status === 'rejected' || response.status === 'aborted') {
         sayOnce(`${label} was not emitted (${response.status}): ${response.reason ?? 'no reason given'}`);
@@ -375,7 +406,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
    * `origin` is `'queue'` for the events the daemon builds about itself, given the same way (never read from the wire, the RPC push has none): it alone
    * allows a name in the reserved `queue.` namespace, and it is required there.
    */
-  async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy; origin?: 'queue' }): Promise<PushResponse> {
+  async function pushInternal(req: PushRequest, internal: { hops: number; causedBy?: CausedBy; origin?: 'queue'; rootEventId?: string }): Promise<PushResponse> {
     // The wire does not check types: a number, an object or an empty name would fail deep inside (HTTP 500) after the history trigger was written
     if (typeof req.event !== 'string' || req.event === '') {
       return { status: 'rejected', reason: `the push has no usable 'event': expected a non-empty string, got ${req.event === '' ? 'an empty string' : JSON.stringify(req.event) ?? typeof req.event}. Fix: send the event name as a string (e.g. 'onTaskDone'); the event was not recorded` };
@@ -439,11 +470,13 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         payload: req.payload,
         meta: {
           cwd,
-          projectName: cwd !== undefined ? resolveProjectName(cwd) : lookup?.kind === 'registered' ? lookup.project.name : undefined,
+          // A project named by id (an event emitted for a to-children descendant) is that project, whatever folder the event comes from
+          projectName: explicit?.kind === 'registered' ? explicit.project.name : cwd !== undefined ? resolveProjectName(cwd) : lookup?.kind === 'registered' ? lookup.project.name : undefined,
           ...(lookup?.kind === 'registered' && { projectId: lookup.project.id }),
-          // The id of this first push: a retry or a dlq-replay gets a new WAL id, an action template renders this one
+          // The id of this first push: the WAL id is one per subscriber (and a `queue replay` is a new push), so an action template renders this one, shared by all the subscribers of the push and kept by a retry and a dlq-replay
           eventId,
           ...(internal.hops > 0 && { hops: internal.hops }),
+          ...(internal.rootEventId !== undefined && { rootEventId: internal.rootEventId }),
           ...(internal.origin !== undefined && { origin: internal.origin }),
         },
       };
@@ -591,6 +624,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
           for (const sub of list) {
             seen.set(`${sub.file}\0${sub.event}\0${sub.subscriberId}`, sub);
           }
+          reportConfigProblems(list);
         }
         if (projectSource !== undefined) {
           chains.set(projectSource.projectId, projectSource.layers.map((layer) => layer.projectId));
@@ -724,7 +758,13 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         eventLogger.logDiagnostic({ source: 'QueueDaemon.list-subscribers', message: `config error: ${getErrorMessage(err)}` });
         throw err;
       }
-      return { subscribers };
+      reportConfigProblems(subscribers);
+      return {
+        subscribers: subscribers.map((sub) => {
+          const problem = sub.configProblem ?? sub.cwdProblem;
+          return problem === undefined ? sub : { ...sub, problem };
+        }),
+      };
     },
 
     'dlq-list'(): DlqListResponse {

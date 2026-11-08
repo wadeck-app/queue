@@ -120,8 +120,8 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 ### Action loops and fan-out
 
 - **Threat:** An action that emits an event another action (or itself) listens to loops; one event can also fan out to many actions.
-- **Mitigation:** a hop counter (cap 5, set only by the daemon from its own push, never from the wire, kept through WAL, DLQ, retry and dlq-replay), refusal of `before*` emits, a 64 KB cap on the emitted payload, and a static cycle check in `queue sub add|edit` and at daemon start.
-- **Risk accepted:** `queue replay` resets the counter to 0. The static check misses cycles through a descendant project's file and through non-action subscribers (a `cli` that runs `queue push`); fan-out is not capped.
+- **Mitigation:** a hop counter (cap 5, set only by the daemon from its own push, never from the wire, kept through WAL, DLQ, retry and dlq-replay), a per-root emission budget (100 events per chain, root id carried by the daemon like the hop counter, in-memory map bounded by 1 hour and 10 000 roots), refusal of `before*` emits, a 64 KB cap on the emitted payload, and a static cycle check in `queue sub add|edit` and at daemon start (parent and child project files included). A timed-out action run is superseded: it can no longer push, so a retry cannot double-emit.
+- **Risk accepted:** `queue replay` resets the counter and starts a new root. A `cli` subscriber that runs `queue push` re-enters through the RPC at hop 0 with a new root: the runtime caps cover actions only, and neither the budget nor the static check sees that loop (the counters cannot be taken from the wire without letting a client forge them). The budget resets at daemon restart.
 
 ## Out-of-scope threats
 

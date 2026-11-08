@@ -5,7 +5,7 @@ import { EventRefError } from '../dispatch/refResolver.js';
 /**
  * Templates of the `with:` values of a `type: action` subscriber. Rendered in Node, never in a shell, in one pass (a value
  * that holds `{{ ... }}` is not rendered again). Scope: `{{ payload.a.b }}` (an own key named `a.b` first, else nested, own properties only: walkPayloadPath), `{{ payload }}`
- * (the whole payload as JSON), `{{ event }}`, `{{ id }}`, `{{ timestamp }}`. A bare `{{ x }}` is an error: write `payload.x`
+ * (the whole payload as JSON), `{{ event }}`, `{{ id }}`, `{{ timestamp }}`, `{{ subscriber }}` (the id of the subscriber being run, given by the host). A bare `{{ x }}` is an error: write `payload.x`
  * (the `cli` rule, a bare name is a payload field, is not applied here, so the two cannot be mixed up).
  */
 
@@ -14,7 +14,12 @@ export const MAX_RENDERED_FIELD_BYTES = 64 * 1024;
 
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 const PAYLOAD_SEGMENT = /^[\w-]+$/;
-const ENVELOPE_FIELDS = new Set(['event', 'id', 'timestamp']);
+const ENVELOPE_FIELDS = new Set(['event', 'id', 'timestamp', 'subscriber']);
+
+/** What the host gives a render besides the payload walk: the id of the subscriber being run, for `{{ subscriber }}`. */
+export interface RenderOptions extends WalkOptions {
+  subscriber?: string;
+}
 
 /** A template cannot be rendered (or never will be). The message names the field and the placeholder, never a value of the event. */
 export class ActionTemplateError extends Error {
@@ -41,8 +46,8 @@ function expressionProblem(raw: string): string | undefined {
   if (segments[0] !== 'payload') {
     const field = segments.join('.');
     return /^[\w-]+(\.[\w-]+)*$/.test(expression)
-      ? `the placeholder {{ ${expression} }} is not in scope: a payload field is written {{ payload.${field} }} (the other fields are event, id, timestamp).`
-      : `the placeholder {{ ${expression} }} is not valid: use {{ payload.<field> }}, {{ event }}, {{ id }} or {{ timestamp }}.`;
+      ? `the placeholder {{ ${expression} }} is not in scope: a payload field is written {{ payload.${field} }} (the other fields are event, id, timestamp, subscriber).`
+      : `the placeholder {{ ${expression} }} is not valid: use {{ payload.<field> }}, {{ event }}, {{ id }}, {{ timestamp }} or {{ subscriber }}.`;
   }
   for (const segment of segments.slice(1)) {
     if (!PAYLOAD_SEGMENT.test(segment)) {
@@ -107,7 +112,7 @@ function walkWithRefs(envelope: EventEnvelope, expression: string, field: string
  * Throws ActionTemplateError: syntax or scope (also found by findActionTemplateProblem at load time), a NUL character,
  * or a rendered value over 64 KB. Every message names the field and the placeholder, never the value.
  */
-export function renderActionTemplate(template: string, envelope: EventEnvelope, field: string, options: WalkOptions = {}): string {
+export function renderActionTemplate(template: string, envelope: EventEnvelope, field: string, options: RenderOptions = {}): string {
   const syntax = findActionTemplateProblem(template);
   if (syntax !== undefined) {
     throw new ActionTemplateError(field, syntax);
@@ -119,6 +124,12 @@ export function renderActionTemplate(template: string, envelope: EventEnvelope, 
       // The id of the first push, so a retry or a dlq-replay renders the same value (the WAL id changes)
       case 'id': return envelope.meta.eventId ?? envelope.id;
       case 'timestamp': return envelope.timestamp;
+      case 'subscriber': {
+        if (options.subscriber === undefined) {
+          throw new ActionTemplateError(field, 'the placeholder {{ subscriber }} cannot be rendered: the host gave no subscriber to this run. Fix: remove the placeholder.');
+        }
+        return options.subscriber;
+      }
       case 'payload': return stringify(envelope.payload, field, expression);
       default: return stringify(walkWithRefs(envelope, expression, field, options), field, expression);
     }

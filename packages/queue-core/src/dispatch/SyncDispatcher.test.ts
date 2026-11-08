@@ -219,6 +219,12 @@ describe('SyncDispatcher - type action', () => {
     expect(historyLog.logOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', target: 'action:probe' }));
   });
 
+  it('keeps the detail of a failed action in the log of the abort', async () => {
+    const { dispatcher, logger } = setup(() => Promise.resolve({ success: false, error: 'nope', detail: 'sent 1 of 2' }));
+    await dispatcher.dispatch([actionSub()], makeEnvelope(), 5000);
+    expect(logger.logDispatch).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', detail: 'sent 1 of 2' }));
+  });
+
   it('aborts with the configProblem of an unknown action, without running anything', async () => {
     const run = vi.fn<ActionPlugin['run']>();
     const { dispatcher } = setup(run);

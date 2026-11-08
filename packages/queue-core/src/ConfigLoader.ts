@@ -200,7 +200,16 @@ function checkAction(event: string, index: number, raw: SubscriberConfig, filePa
   if (plugin === undefined) {
     return `subscriber '${raw.name ?? `index ${index}`}' of event '${event}' (${filePath}): ${actions.unknownActionProblem(name)}`;
   }
-  const problem = plugin.validate(raw.with ?? {}, { event, ...(raw.name !== undefined && { name: raw.name }) });
+  let problem: string | undefined;
+  try {
+    problem = plugin.validate(raw.with ?? {}, { event, ...(raw.name !== undefined && { name: raw.name }) });
+  } catch (err) {
+    // The interface says validate must not throw: a plugin that does is that subscriber's problem, not the problem of every push
+    return (
+      `subscriber '${raw.name ?? `index ${index}`}' of event '${event}' (${filePath}): the validate() of action '${name}' threw: ${getErrorMessage(err)}. ` +
+      `This is a bug in the plugin. Fix: update or remove the plugin '${name}', or use another action for this subscriber.`
+    );
+  }
   if (problem !== undefined) {
     return (
       `subscriber '${raw.name ?? `index ${index}`}' of event '${event}' (${filePath}): action '${name}' refuses its 'with:' block: ${problem} ` +
@@ -306,6 +315,27 @@ function assertUniqueNames(event: string, resolved: ResolvedSubscriber[], filePa
   }
 }
 
+/**
+ * A name is unique within one event key of a file, but may be used under several keys (`onA` and `*` both holding a subscriber called notify): both fire for an event
+ * that matches the two keys, and they would share one id, hence one WAL entry, one DLQ row and one retry target. The id of every holder of a repeated name is therefore
+ * qualified with its event key (`notify@onA`, `notify@*`); a name used once keeps its plain id. The `name` field is unchanged.
+ */
+function qualifyRepeatedNames(fileResolved: ReadonlyArray<[string, ResolvedSubscriber[]]>): void {
+  const keysOfName = new Map<string, number>();
+  for (const [, resolved] of fileResolved) {
+    for (const sub of resolved) {
+      keysOfName.set(sub.name, (keysOfName.get(sub.name) ?? 0) + 1);
+    }
+  }
+  for (const [event, resolved] of fileResolved) {
+    for (const sub of resolved) {
+      if ((keysOfName.get(sub.name) ?? 0) > 1) {
+        sub.subscriberId = `${sub.subscriberId}@${event}`;
+      }
+    }
+  }
+}
+
 /** One config folder of a registered project (the project itself or one of its ancestors) that may hold a subscribers.yml. */
 export interface ProjectConfigLayer {
   dir: string;
@@ -386,6 +416,7 @@ export class ConfigLoader {
         globalCwd: yml.cwd,
         globalEnv: yml.env,
       };
+      const fileResolved: Array<[string, ResolvedSubscriber[]]> = [];
       for (const [event, eventConfig] of Object.entries(yml.subscribers)) {
         // '**' is not a wildcard: it would be a literal segment that never matches and the subscribers would silently never fire
         const patternProblem = doubleStarProblem(event);
@@ -407,6 +438,10 @@ export class ConfigLoader {
         const ctx: ResolveContext = { ...globalCtx, eventCwd, eventEnv, ...(this.actions !== undefined && { actions: this.actions }) };
         const resolved = subs.map((s, i) => toResolved(event, i, s, ctx));
         assertUniqueNames(event, resolved, filePath);
+        fileResolved.push([event, resolved]);
+      }
+      qualifyRepeatedNames(fileResolved);
+      for (const [event, resolved] of fileResolved) {
         const existing = merged.get(event) ?? [];
         merged.set(event, [...existing, ...resolved]);
       }

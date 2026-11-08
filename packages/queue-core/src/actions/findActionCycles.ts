@@ -43,9 +43,21 @@ function reaches(from: CycleSubscriber, to: CycleSubscriber, chains: ReadonlyMap
   if (from.projectId === undefined) {
     return true;
   }
-  // The event is filed under the project of the event that fired the action (the project of `from` or a descendant of it): it reaches that project and its ancestors.
-  // The files of the descendants are not reached (the default direction does not go down)
-  return (chains.get(from.projectId) ?? [from.projectId]).includes(to.projectId);
+  // The action fires for the events of its own project and of its descendants (it sits in their ancestor's file), and the event it emits is filed under the project
+  // of the event that fired it: so it may be filed under any of those projects P, and it then reaches the file of every project in the chain of P (P and its ancestors).
+  // The files of the descendants of P are not reached (the default direction does not go down), but a descendant is itself such a P.
+  const eventProjects = new Set<string>([from.projectId]);
+  for (const [project, chain] of chains) {
+    if (chain.includes(from.projectId)) {
+      eventProjects.add(project);
+    }
+  }
+  for (const project of eventProjects) {
+    if ((chains.get(project) ?? [project]).includes(to.projectId)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** The strongly connected components of the graph that contain a cycle (more than one node, or a node that reaches itself), by Tarjan's algorithm. */
@@ -143,8 +155,9 @@ function describe(nodes: readonly Node[], path: readonly number[], severity: 'er
 
 /**
  * Looks for chains of action subscribers that can trigger themselves: an action emits an event that another action (or the same one) listens to.
- * Pure: it reads the subscribers it is given. Edges follow the real delivery chain only (the emitted event reaches the global file and the files of the emitter's
- * project and its ancestors, not its descendants), so a layout that cannot loop is not reported.
+ * Pure: it reads the subscribers it is given. Edges follow the real delivery chain only: an action fires for the events of its project and of its descendants, and the event it emits is filed under
+ * the project of the event that fired it, so it reaches the global file and the files of that project and its ancestors. A to-children subscriber is never the
+ * target of an emission (an emitted event goes in the default direction), so it is left out. A layout that cannot loop is not reported.
  * An error is a cycle in which no subscriber has a `when:`; a cycle that has one is a warning (the filter may break it). The runtime hop cap is the real guard.
  */
 export function findActionCycles(subscribers: readonly CycleSubscriber[], actions: ActionRegistry, options: ActionCycleOptions = {}): ActionCycleFinding[] {

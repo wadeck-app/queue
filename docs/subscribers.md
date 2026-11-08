@@ -156,6 +156,7 @@ A filter such as `$.payload[?(@.projectId=='x')]` filters the children of `paylo
 - A batch file receives each accepted value exactly in `%~1`. A value ending with a backslash is refused for it (see "Windows `.cmd` and `.bat` targets").
 - A timeout stops the whole process tree (`taskkill /T /F` on Windows, the process group elsewhere), and a program that exited is no longer waited on for more than 3 s because a child it left behind keeps its output pipes open.
 - A batch file that re-expands its own arguments unquoted in `if (...)` blocks is the batch author's responsibility.
+- A `name` is unique per event key of a file; the same name under two keys (`on.a` and `*`) is allowed. The subscriberId of each holder is then `<name>@<event key>` (`notify@on.a`, `notify@*`), so each has its own WAL entry, DLQ row and retry target; a name used once keeps its plain id. Renaming a key or making a name unique changes the id: a WAL or DLQ entry written under the old id reports "no longer exists" on retry or replay (give it up or clear it).
 - Threat model: [.claude/threat-model.md](../.claude/threat-model.md).
 
 ## What is logged of a `cli` run
@@ -187,7 +188,7 @@ CLI: `queue sub add <event> --name <n> --type action --action <name> --set key=v
 
 ### Fields
 
-- `with` is the plugin's settings; the plugin validates it when the file loads, with no silent stripping. A `with` the plugin refuses fails that subscriber alone, for good, to the DLQ with the plugin's message (like an unknown action); `queue sub add|edit` refuse it up front. A missing `action` or a forbidden field still aborts the whole file.
+- `with` is the plugin's settings; the plugin validates it when the file loads, with no silent stripping. A `with` the plugin refuses, or a plugin whose `validate` throws, fails that subscriber alone, for good, to the DLQ with the plugin's message (like an unknown action); `queue sub add|edit` refuse it up front. Every such problem is written once per daemon run to the daemon log (`queue logs`, "cannot run") at start and at the first load, and `list-subscribers` carries it in a `problem` field. A missing `action` or a forbidden field still aborts the whole file.
 - `command`, `url`, `method`, `headers`, `cwd` and `env` are refused on an action. `timeout`, `retries`, `backoff` and `when` apply.
 - `emit`: `with.event` is a literal concrete event name (no placeholder, no wildcard); `with.payload` is a mapping whose string values are templates.
 - `agent-wake` always emits `agent.message { to, text, from, mode, ref }`:
@@ -198,7 +199,7 @@ CLI: `queue sub add <event> --name <n> --type action --action <name> --set key=v
 | `text` | Required, at most 16 KB once rendered, not empty. |
 | `from` | Default `queue:{{ event }}`; one line, at most 200 characters. |
 | `mode` | `wake` (default) or `passive`; literal only. |
-| `ref` | Default `{{ id }}`; at most 200 characters. |
+| `ref` | Default `{{ id }}`; at most 200 characters. Dedupe semantics: see Delivery and idempotence. |
 
 ### Templates in `with` values
 
@@ -208,7 +209,7 @@ Rendered in Node, never in a shell, in one pass. Differences with `cli`:
 |---|---|---|
 | Payload field | `{{ title }}` or `{{ payload.title }}` | `{{ payload.title }}` |
 | Nested field | `{{ a.b }}` or `{{ payload.a.b }}` | `{{ payload.a.b }}` (an own key `a.b` first, then own properties; see Placeholders) |
-| Envelope | n/a | `{{ event }}`, `{{ id }}`, `{{ timestamp }}`, `{{ payload }}` (whole payload as JSON) |
+| Envelope | n/a | `{{ event }}`, `{{ id }}`, `{{ timestamp }}`, `{{ subscriber }}` (id of the subscriber being run), `{{ payload }}` (whole payload as JSON) |
 | Bare `{{ x }}` | payload field | **load-time error**: write `payload.x` |
 | Shell metacharacters | refused | allowed (no shell) |
 
@@ -262,7 +263,9 @@ The events the daemon emits about the dead-letter queue (`queue.dlq.added`, `que
 ### Delivery and idempotence
 
 - Delivery is at-least-once: a retry, `queue dlq replay` or a daemon restart can emit the same message again.
-- `{{ id }}` renders the id of the first push (`meta.eventId`), not the per-attempt WAL id, so it is stable across retries and replays. `agent-wake` defaults `ref` to it: the consumer ignores a `ref` it has seen.
+- `{{ id }}` renders the id of the first push (`meta.eventId`), not the WAL id: the same across the retries and `queue dlq replay` of a delivery, and the same for every subscriber of that push. `queue replay` is a new push and gets a new id.
+- `agent-wake` defaults `ref` to `{{ id }}`, and a consumer that dedupes on `ref` drops a `ref` it has seen. Two `agent-wake` subscribers on one event that message the same session therefore collide: the second message is dropped. Fix: `ref: "{{ id }}:{{ subscriber }}"`.
+- `{{ subscriber }}` is the subscriber id: its `name`, prefixed `<project id>/` in a project file, and `@<event key>` when the name is used under several event keys of the file.
 - `{{ timestamp }}` is the timestamp of the attempt's envelope; do not use it as a key.
 
 ### Where the emitted event goes
@@ -273,14 +276,20 @@ The events the daemon emits about the dead-letter queue (`queue.dlq.added`, `que
 
 ### Loop guards
 
-- Runtime: each emitted event carries a hop counter (set by the daemon only, never read from the wire); an action whose source is already at 5 hops is refused, permanently.
-- Static: `queue sub add|edit` refuses a change that closes a cycle of actions with no `when:`, and warns when a `when:` may break it. The daemon logs the same findings at start and never aborts. Only the real delivery chain counts: the global file and the emitter's project and its ancestors, not descendants.
+- Runtime depth: each emitted event carries a hop counter (set by the daemon only, never read from the wire); an action whose source is already at 5 hops is refused, permanently.
+- Runtime width: the hop cap does not bound fan-out (3 emitters of their own event gave 364 events). Each chain also has an emission budget of 100 events (`MAX_ACTION_EMISSIONS_PER_ROOT`), counted per root event (the first push; the root id is carried by the daemon, never read from the wire). The emission past it is refused, permanently (DLQ, first attempt), and the daemon log says it once per root, naming the root event, the subscriber and the cap. The counters live in memory (forgotten after 1 hour or beyond 10 000 roots), so a restart resets them.
+- Not covered: a `cli` subscriber that runs `queue push` starts a new root at hop 0 (the counter cannot be passed through the wire), so neither the hop cap, nor the budget, nor the static check sees that loop. Keep such a command out of a chain that can reach itself.
+- Static: `queue sub add|edit` refuses a change that closes a cycle of actions with no `when:`, and warns when a `when:` may break it. The daemon logs the same findings at start and never aborts. Only the real delivery chain counts: an action fires for the events of its project and of its descendants, and what it emits reaches the global file and the files of the project of that event and its ancestors. A `to-children` subscriber cannot close a loop (emitted events never travel downwards).
 - An action cannot emit an event starting with `before` (permanent failure).
 - `queue replay` goes through the push RPC and resets the counter to 0.
 
 ### `before*` events
 
 An action on a `before*` pattern only passes through: it never answers the pusher (its stdout is empty) and its result is not a verdict.
+
+### Superseded runs
+
+A run that times out keeps going (it cannot be cancelled) but its context is dead: `context.signal` is aborted, a later `push` is refused (`superseded: ...`, logged) and `resolveRef` throws, so the retry is the only run that emits. The same holds for a push made after the plugin returned. A timeout shorter than 1 s is printed in milliseconds.
 
 ### Compatibility and upgrades
 

@@ -246,7 +246,7 @@ describe('action templates (renderActionTemplate and emit) with the resolver', (
     const { lookup, resolver } = history();
     const envelope = dlqEnvelope({ original: REF });
     const push = vi.fn().mockResolvedValue({ success: true, eventId: 'new' });
-    const context: ActionContext = { push, resolveRef: resolver.forEnvelope(envelope) };
+    const context: ActionContext = { signal: new AbortController().signal, subscriber: 's', push, resolveRef: resolver.forEnvelope(envelope) };
     const result = await emitAction.run({ event: 'task.failed', payload: { id: '{{ payload.original.taskId }}', title: '{{ payload.original.title }}' } }, envelope, context);
     expect(result.success).toBe(true);
     expect(push).toHaveBeenCalledWith({ event: 'task.failed', payload: { id: '7', title: 'Fix it' } });
@@ -257,7 +257,7 @@ describe('action templates (renderActionTemplate and emit) with the resolver', (
     const { resolver } = history();
     const envelope = dlqEnvelope({ original: { $eventRef: 'gone-9' } });
     const push = vi.fn();
-    const result = await emitAction.run({ event: 'task.failed', payload: { id: '{{ payload.original.taskId }}' } }, envelope, { push, resolveRef: resolver.forEnvelope(envelope) });
+    const result = await emitAction.run({ event: 'task.failed', payload: { id: '{{ payload.original.taskId }}' } }, envelope, { signal: new AbortController().signal, subscriber: 's', push, resolveRef: resolver.forEnvelope(envelope) });
     expect(result).toMatchObject({ success: false, permanent: true });
     expect(result.error).toContain('with.payload.id');
     expect(result.error).toContain('gone-9');
@@ -267,7 +267,7 @@ describe('action templates (renderActionTemplate and emit) with the resolver', (
   it('emit with an unreadable history fails but is retried (not permanent)', async () => {
     const resolver = new RefResolver(() => { throw new Error('EBUSY'); });
     const envelope = dlqEnvelope({ original: REF });
-    const result = await emitAction.run({ event: 'task.failed', payload: { id: '{{ payload.original.taskId }}' } }, envelope, { push: vi.fn(), resolveRef: resolver.forEnvelope(envelope) });
+    const result = await emitAction.run({ event: 'task.failed', payload: { id: '{{ payload.original.taskId }}' } }, envelope, { signal: new AbortController().signal, subscriber: 's', push: vi.fn(), resolveRef: resolver.forEnvelope(envelope) });
     expect(result.success).toBe(false);
     expect(result.permanent).toBeUndefined();
     expect(result.error).toContain('EBUSY');
@@ -276,19 +276,23 @@ describe('action templates (renderActionTemplate and emit) with the resolver', (
   it('ActionTransport hands the plugin a ctx.resolveRef bound to the envelope of the run (one lookup for the whole run)', async () => {
     const { lookup, resolver } = history();
     let seen: ActionContext | undefined;
+    // Replaces the version that called resolveRef after the run had returned: a finished run is superseded and its resolveRef now throws, so the calls are made during the run
+    const answers: unknown[] = [];
     const plugin: ActionPlugin = {
       name: 'probe',
       validate: () => undefined,
       run: (_config, _envelope, context) => {
         seen = context;
+        if (context.resolveRef !== undefined) {
+          answers.push(context.resolveRef('base-1', ['original']), context.resolveRef('base-1', ['original']));
+        }
         return Promise.resolve({ success: true });
       },
     };
     const transport = new ActionTransport(createActionRegistry([plugin]), () => ({ push: () => Promise.resolve({ success: true }) }), resolver);
     await transport.dispatch('probe', {}, dlqEnvelope({ original: REF }), 1000, 'sub');
     expect(seen?.resolveRef).toBeTypeOf('function');
-    expect(seen!.resolveRef!('base-1', ['original'])).toBe(BASE_PAYLOAD);
-    expect(seen!.resolveRef!('base-1', ['original'])).toBe(BASE_PAYLOAD);
+    expect(answers).toEqual([BASE_PAYLOAD, BASE_PAYLOAD]);
     expect(lookup).toHaveBeenCalledTimes(1);
     // without a resolver the context is the host's own
     seen = undefined;

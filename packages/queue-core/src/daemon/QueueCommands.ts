@@ -18,7 +18,9 @@ export interface RetryRequest { eventId: string; }
 export interface RetryResponse { status: 'ok' | 'not-found' | 'error'; message?: string; }
 export interface StatusResponse { pendingCount: number; dlqCount: number; daemonRunning: true; uptimeSec: number; pid: number; }
 export interface ListSubscribersRequest { event?: string; cwd: string; }
-export interface SubscriberListResponse { subscribers: ResolvedSubscriber[]; }
+/** `problem`: why the subscriber cannot run (an unknown action, a `with` block the plugin refuses, a missing folder); absent on a healthy one. */
+export type ListedSubscriber = ResolvedSubscriber & { problem?: string };
+export interface SubscriberListResponse { subscribers: ListedSubscriber[]; }
 export interface DlqListResponse { entries: DlqEntry[]; }
 export interface DlqReplayRequest { id: string; }
 // `error`: the replay did not start and the entry is still in the dead-letter queue; `message` says why and what to fix (an unreadable subscribers.yml, a subscriber that was renamed)

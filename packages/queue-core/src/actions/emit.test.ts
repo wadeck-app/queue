@@ -12,8 +12,16 @@ const envelope: EventEnvelope = {
 };
 
 function context(result: ActionPushResult = { success: true, eventId: 'new-id' }): ActionContext & { push: ReturnType<typeof vi.fn> } {
-  return { push: vi.fn().mockResolvedValue(result) };
+  return { signal: new AbortController().signal, subscriber: 'notify-a', push: vi.fn().mockResolvedValue(result) };
 }
+
+describe('emit: {{ subscriber }}', () => {
+  it('renders the subscriber id of the context in the payload', async () => {
+    const ctx = context();
+    await emitAction.run({ event: 'agent.message', payload: { ref: '{{ id }}/{{ subscriber }}' } }, envelope, ctx);
+    expect(ctx.push).toHaveBeenCalledWith({ event: 'agent.message', payload: { ref: 'first-push/notify-a' } });
+  });
+});
 
 describe('emit: validate', () => {
   const validate = (config: Record<string, unknown>): string | undefined => emitAction.validate(config, { event: 'onX' });

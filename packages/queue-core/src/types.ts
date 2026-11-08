@@ -11,7 +11,12 @@ export interface EventMeta {
    * it survives the WAL, the DLQ, retry and dlq-replay. `queue replay` goes through the RPC push and starts again at 0.
    */
   hops?: number;
-  /** Id of the push that created the event, set at the first push: a retry or a dlq-replay gets a new WAL id, so `{{ id }}` of an action template renders this one (stable dedupe key). */
+  /**
+   * The first push of the chain of actions this event belongs to (absent on an event pushed by a client: it is its own root). Set only by the daemon's internal push, never
+   * read from the wire; the per-root emission budget (MAX_ACTION_EMISSIONS_PER_ROOT) counts against it. It survives the WAL, the DLQ, retry and dlq-replay.
+   */
+  rootEventId?: string;
+  /** Id of the push that created the event, set at the first push. The WAL id differs per subscriber, so `{{ id }}` of an action template renders this one: the same for every subscriber of the push, and kept by a retry and a dlq-replay (a `queue replay` is a new push, hence a new id). */
   eventId?: string;
   /**
    * `'queue'` on the events the daemon builds about itself (`queue.dlq.added`, ...). Set only by the daemon's internal push through an internal option,

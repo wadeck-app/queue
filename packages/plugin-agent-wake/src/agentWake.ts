@@ -14,7 +14,11 @@ const MAX_REF_LENGTH = 200;
 
 /** What `from` is when the subscriber does not say: the event that fired the action, e.g. `queue:on.github.push`. */
 const DEFAULT_FROM = 'queue:{{ event }}';
-/** What `ref` is when the subscriber does not say: the id of the source event, stable across retries and replays, so a consumer can ignore a duplicate. */
+/**
+ * What `ref` is when the subscriber does not say: the id of the first push of the source event. The same across the retries and the dlq-replays of a delivery
+ * (so a consumer that dedupes on `ref` ignores the duplicate of an at-least-once delivery), but NOT across `queue replay` (a new push, a new id). It is shared by every
+ * subscriber of that event: two agent-wake subscribers aiming at the same session need `{{ id }}:{{ subscriber }}` or their second message is dropped as a duplicate.
+ */
 const DEFAULT_REF = '{{ id }}';
 
 const ALLOWED_KEYS = ['to', 'text', 'from', 'mode', 'ref'];
@@ -125,8 +129,8 @@ function validate(config: ActionConfig): string | undefined {
 }
 
 /** Renders one field and checks the rendered value; throws ActionTemplateError that names the field. */
-function renderField(field: string, template: string, envelope: EventEnvelope, check: (rendered: string) => string | undefined): string {
-  const rendered = renderActionTemplate(template, envelope, `with.${field}`);
+function renderField(field: string, template: string, envelope: EventEnvelope, subscriber: string, check: (rendered: string) => string | undefined): string {
+  const rendered = renderActionTemplate(template, envelope, `with.${field}`, { subscriber });
   const problem = check(rendered);
   if (problem !== undefined) {
     throw new ActionTemplateError(`with.${field}`, problem);
@@ -155,16 +159,16 @@ async function run(config: ActionConfig, envelope: EventEnvelope, context: Param
   }
   let payload: Record<string, string>;
   try {
-    const to = renderField('to', config['to'] as string, envelope, (rendered) => toProblem(rendered));
-    const text = renderField('text', config['text'] as string, envelope, (rendered) => {
+    const to = renderField('to', config['to'] as string, envelope, context.subscriber, (rendered) => toProblem(rendered));
+    const text = renderField('text', config['text'] as string, envelope, context.subscriber, (rendered) => {
       if (rendered.trim() === '') {
         return "'text' rendered empty (the placeholder points at a missing payload field). Fix: check the field name.";
       }
       const bytes = Buffer.byteLength(rendered, 'utf8');
       return bytes > MAX_TEXT_BYTES ? `'text' rendered ${bytes} bytes, over the ${MAX_TEXT_BYTES} bytes allowed. Fix: insert a smaller field of the payload.` : undefined;
     });
-    const from = renderField('from', (config['from'] as string | undefined) ?? DEFAULT_FROM, envelope, oneLineCheck('from', MAX_FROM_LENGTH));
-    const ref = renderField('ref', (config['ref'] as string | undefined) ?? DEFAULT_REF, envelope, oneLineCheck('ref', MAX_REF_LENGTH));
+    const from = renderField('from', (config['from'] as string | undefined) ?? DEFAULT_FROM, envelope, context.subscriber, oneLineCheck('from', MAX_FROM_LENGTH));
+    const ref = renderField('ref', (config['ref'] as string | undefined) ?? DEFAULT_REF, envelope, context.subscriber, oneLineCheck('ref', MAX_REF_LENGTH));
     payload = { to, text, from, mode: (config['mode'] as string | undefined) ?? 'wake', ref };
   } catch (err) {
     if (err instanceof ActionTemplateError) {
@@ -184,7 +188,7 @@ async function run(config: ActionConfig, envelope: EventEnvelope, context: Param
  * `action: agent-wake`: a strict preset over `emit` for the one contract of w-agent-wake. It emits `agent.message { to, text, from, mode, ref }`
  * and validates what `emit` would let through: the recipient is a session id or `project:<folder>` (also once a placeholder is rendered, so a payload
  * cannot aim the message at an arbitrary target), the text is capped, `mode` is a literal. `from` defaults to `queue:{{ event }}`, `mode` to wake,
- * `ref` to `{{ id }}` (the id of the first push: stable across retries, so the consumer can ignore a duplicate).
+ * `ref` to `{{ id }}` (the id of the first push: the same across retries and dlq-replays, new for a `queue replay`; shared by every subscriber of the event, add `{{ subscriber }}` to tell them apart).
  */
 export const agentWakeAction: ActionPlugin = {
   name: 'agent-wake',
@@ -202,7 +206,7 @@ export const agentWakeAction: ActionPlugin = {
           text: { type: 'string', description: 'The message the session receives' },
           from: { type: 'string', description: 'Who sends it, e.g. queue:on.github.push' },
           mode: { type: 'string', enum: MODES, description: 'wake (default) wakes an idle session; passive only queues the message' },
-          ref: { type: 'string', description: 'Idempotence key: the same ref is the same message (delivery is at least once)' },
+          ref: { type: 'string', description: 'Idempotence key: the same ref is the same message (delivery is at least once). Default {{ id }}, the id of the first push of the source event: the same across retries and dlq-replays, but a new one for a queue replay, and shared by every subscriber of that event; write {{ id }}:{{ subscriber }} when two subscribers message the same session' },
         },
       },
       example: { to: 'project:my-app', text: 'CI failed on main', from: 'queue:on.github.check_run', mode: 'wake', ref: 'c0ffee00-0000-4000-8000-000000000000' },

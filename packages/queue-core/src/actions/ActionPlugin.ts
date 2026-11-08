@@ -32,6 +32,14 @@ export interface ActionPushResult {
 
 /** What an action may do to the outside, handed to `run`. Bound to the envelope the subscriber received. */
 export interface ActionContext {
+  /**
+   * Aborted when this run is over: the daemon timed it out (a retry may already be scheduled) or it returned. A plugin should stop its work when it aborts. A plugin that
+   * ignores it is not left able to act: once aborted, `push` answers a refusal (`success: false`, error starting with "superseded:") and `resolveRef` throws,
+   * so a late call of a timed-out run cannot emit the event twice (the retry emits it).
+   */
+  signal: AbortSignal;
+  /** The id of the subscriber this run is for (`<name>`, or `<project id>/<name>` in a project file): pass it as the `subscriber` option of renderActionTemplate so `{{ subscriber }}` renders it. */
+  subscriber: string;
   push(request: ActionPushRequest): Promise<ActionPushResult>;
   /**
    * Follows the payload references of the event the daemon built (`queue.dlq.*`) when the action renders its templates: pass it as the `resolveRef` option of
