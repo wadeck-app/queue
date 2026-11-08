@@ -29,6 +29,8 @@ func TestHasExplicitConfig(t *testing.T) {
 		{"leading windows path with a slash", []string{"C:/queue"}, true},
 		{"a drive without a separator is not a path", []string{"C:"}, false},
 		{"a colon later in the word is not a drive", []string{"ab:/x"}, false},
+		{"two letters and a slash are not a drive without the colon", []string{"ab/c"}, false},
+		{"two letters and a backslash are not a drive without the colon", []string{`ab\c`}, false},
 		{"a path that is not the first argument is not explicit", []string{"status", "/tmp/queue"}, false},
 	}
 	for _, c := range cases {

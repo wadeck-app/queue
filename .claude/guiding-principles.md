@@ -69,6 +69,10 @@ A test that fails on a loaded or slow machine is a bug in the test. Timeouts (`t
 
 The daemons ask for `QUEUE_DAEMON_PORT` / `QUEUE_RELAY_PORT` (defaults 47910/47911); `createIsolatedCliEnv()` allocates free ports per environment (`iso.daemonPort`, `iso.relayPort`), in-process daemons in tests pass `port: 0`. A test never skips or waits because another daemon holds a port (the user's real daemon, another session's run). The bundle is built once per run into `QUEUE_TEST_BUNDLE_DIR` by `packages/queue-cli/vitest.globalSetup.ts` (use `testBundleFile()`, never `dist-bundle/`), so queue-cli test files run in parallel. Temp files and dirs come from `mkdtemp` / `randomUUID`, never a fixed or timestamp-only name.
 
+## No test reaches the real `orch`
+
+A retry is an `orch add` job: a test that lets it run schedules a REAL job in the developer's orchestrator. Two layers: spawned bundles and daemons find a fake `orch` first on the PATH of `createIsolatedCliEnv()` (`env.orch.readCalls()` gives the recorded arguments; on Windows it is `orch.exe`, a link to node.exe preloaded through NODE_OPTIONS, because `where` + execFile run no `.cmd` shim); in-process daemons go through `armOrchGuard()` (`queue-core/src/orchGuard.ts`), armed by the `vitest.setup.ts` of queue-core, queue-cli, plugin-agent-wake and app-module-queue, which FAILS a test that reaches the scheduler without injecting its own deps or spying on `scheduleRetry`. A new package that can start a daemon in the test process gets the same setup file.
+
 ## From lessons learned
 
 - Never validate behavior with `node dist-bundle/queue.cjs` directly — the correct workflow is `git commit && git push` → CI passes → `npm install -g @wadeck-app/queue-cli` → test with `queue <cmd>`; the Go launcher, file resolution paths, and published package content all diverge from the local bundle.

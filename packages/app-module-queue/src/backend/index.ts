@@ -8,7 +8,7 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, SchemaUnusableError, LogFileNotFoundError, LogFileInUseError, RelayStatusError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, SchemaUnusableError, LogFileNotFoundError, LogFileInUseError, RelayStatusError, UnexpectedDaemonAnswerError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
@@ -307,7 +307,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(await giveUpStuck(configDir));
     } catch (err) {
-      return reply.code(500).send({ error: getErrorMessage(err) });
+      return reply.code(err instanceof UnexpectedDaemonAnswerError ? 502 : 500).send({ error: getErrorMessage(err) });
     }
   });
 
@@ -317,7 +317,7 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(await giveUpPending(configDir, id));
     } catch (err) {
-      const status = err instanceof PendingNotFoundError ? 404 : err instanceof NotInFlightError ? 409 : 500;
+      const status = err instanceof PendingNotFoundError ? 404 : err instanceof NotInFlightError ? 409 : err instanceof UnexpectedDaemonAnswerError ? 502 : 500;
       return reply.code(status).send({ error: getErrorMessage(err) });
     }
   });
@@ -391,7 +391,7 @@ export default function (ctx: ModuleContext): void {
       const answer = dlqClearAnswer(await clearDlqEntry(configDir, id), id);
       return reply.code(answer.code).send(answer.body);
     } catch (err) {
-      return reply.code(500).send({ error: getErrorMessage(err) });
+      return reply.code(err instanceof UnexpectedDaemonAnswerError ? 502 : 500).send({ error: getErrorMessage(err) });
     }
   });
 

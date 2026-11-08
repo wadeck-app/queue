@@ -6,6 +6,8 @@ export default defineConfig({
     environment: 'node',
     restoreMocks: true,
     include: ['src/**/*.test.ts'],
+    // Refuses a test that reaches the real orch (see vitest.setup.ts)
+    setupFiles: ['./vitest.setup.ts'],
     // Builds the bundled CLI once per run into a directory of its own (the integration tests used to rebuild the shared dist-bundle/ each,
     // which cannot run in parallel) and gives the run its own app-core pickup directory.
     globalSetup: ['./vitest.globalSetup.ts'],

@@ -10,7 +10,7 @@ vi.mock('./client.js', () => ({
 }));
 
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
-import { DaemonUnreachableError } from './errors.js';
+import { DaemonUnreachableError, UnexpectedDaemonAnswerError } from './errors.js';
 import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let configDir: string;
@@ -135,5 +135,15 @@ describe('listDlq: project', () => {
     expect(listDlq(configDir).map((e) => e.id)).toEqual(['a', 'b', 'c']);
     expect(listDlq(configDir, '569c412d').map((e) => e.id)).toEqual(['a']);
     expect(listDlq(configDir, 'cafebabe')).toEqual([]);
+  });
+});
+
+describe('clearDlqEntry: a daemon answer without a count is a failure, not a silent switch to the files nor a 200', () => {
+  it.each([[{}], [{ cleared: 'one' }], [{ cleared: -1 }]])('answered %j: UnexpectedDaemonAnswerError and the DLQ file is untouched', async (answer) => {
+    mockIsRunning.mockResolvedValue(true);
+    writeFileSync(join(configDir, 'dlq.ndjson'), dlqLine('d1') + '\n');
+    mockSend.mockResolvedValue(answer);
+    await expect(clearDlqEntry(configDir, 'd1')).rejects.toBeInstanceOf(UnexpectedDaemonAnswerError);
+    expect(readFileSync(join(configDir, 'dlq.ndjson'), 'utf8')).toBe(dlqLine('d1') + '\n');
   });
 });

@@ -34,6 +34,7 @@ import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
 import { runSubCommand } from './subCommand.js';
 import { readFlagValue } from './flagScan.js';
+import { checkCommandFlags } from './commandFlags.js';
 import { subscriberTarget } from './subscriberEntry.js';
 import { createBuiltinActionRegistry } from '../actions/builtinActions.js';
 import { parseProjectFlag, parseDirectionFlag, resolvePushProject, resolveProjectId, onlyProject } from './pushProject.js';
@@ -86,7 +87,7 @@ on.<source>.<type> event) starts it when it is down and the history holds nothin
 last such wait ended; "queue relay start" on a relay started that way keeps it running.
 `;
 
-const RELAY_WEBHOOK_HELP = `queue relay webhook - Webhook configuration and delivery history
+export const RELAY_WEBHOOK_HELP = `queue relay webhook - Webhook configuration and delivery history
 Usage:
   queue relay webhook list [--json]                                List configured webhooks and their health
   queue relay webhook history [--limit N] [--event TYPE] [--source S] [--verified | --rejected] [--payload] [--json]  Show recent deliveries
@@ -97,6 +98,7 @@ Both commands make exactly one HTTP request to the relay, using the relay token 
 const CLI_GROUP_HELP = `queue cli - CLI management commands
 Usage:
   queue cli self-check
+  queue cli version
   queue cli update
   queue cli logs [--follow]
   queue cli --help
@@ -180,6 +182,7 @@ Usage:
   queue logs [--follow]
   queue history [--event <name>] [--event-id <id>] [--subscriber <id>] [--project <name|alias|id>] [--status success|failed|dlq|filtered] [--since <-Nd|-Nh|-Nm>] [--limit|-n <N>] [--offset <N>] [--follow|-f] [--json]   (--project: the flag only, QUEUE_PROJECT does not narrow a view)
   queue cli self-check
+  queue cli version
   queue cli update
   queue cli logs [--follow]
 
@@ -211,6 +214,9 @@ History --json shapes:
   queue history --event-id <id> --json one entry object (the entry of that push), not wrapped
   queue history --follow --json        one entry object per line (NDJSON), oldest first, until interrupted
   --event-id returns one entry and cannot be combined with the filters or paging. --project <name|alias|id> keeps one project's entries (QUEUE_PROJECT does not narrow a view).
+
+Options are checked before the command runs: an option nobody knows (the closest valid one is suggested), a value option without its value, one given twice,
+--option=value (except --project and --id) and a stray word exit 1 with the usage line and do nothing. 'queue wait' exits 4 for the same mistakes.
 
 ${exitCodesHelp()}
 Environment variables:
@@ -956,6 +962,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Every flag of the commands below goes through one strict scanner: an option nobody knows, a missing or repeated value and a stray word are refused with the usage
+  const flagCheck = checkCommandFlags(command, rest);
+  if (flagCheck?.problem !== undefined) {
+    for (const message of flagCheck.problem.messages) process.stderr.write(`[fail] ${message}\n`);
+    process.stderr.write(`Usage: ${flagCheck.problem.usage}\n`);
+    if (flagCheck.problem.hint !== undefined) process.stderr.write(`${flagCheck.problem.hint}\n`);
+    process.exit(1);
+  }
+
   if (command === 'push') {
     // The project option is read by the project-sdk wherever it is (before or after the event and the payload)
     const pushProject = parseProjectFlag(rest, process.env);
@@ -1058,7 +1073,7 @@ async function main(): Promise<void> {
   }
 
   if (command === 'replay') {
-    const eventId = rest[0];
+    const eventId = flagCheck?.positionals[0];
     if (!eventId) {
       process.stderr.write('Usage: queue replay <eventId> [--cwd <directory>]\n');
       process.exit(1);

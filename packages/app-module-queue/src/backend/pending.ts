@@ -1,5 +1,5 @@
 import { listInFlightEntries, abandonInFlightEntryDetailed, abandonStuckEntriesDetailed, countStuckEntries, STUCK_AFTER_MS } from '@wadeck-app/queue-core';
-import { NotInFlightError, PendingNotFoundError } from './errors.js';
+import { NotInFlightError, PendingNotFoundError, UnexpectedDaemonAnswerError } from './errors.js';
 import { shortId } from './ids.js';
 import { describeCount, eventNotSent, tryDaemon } from './dlqAnnounce.js';
 
@@ -68,6 +68,9 @@ export async function giveUpPending(configDir: string, id: string): Promise<{ st
         throw new NotInFlightError(`Event ${id} is no longer in flight: it was delivered, or it is already in the dead-letter queue`);
       case 'rejected':
         throw new Error(`The daemon refused to give up event ${JSON.stringify(id)}: ${response.reason ?? 'no reason given'}`);
+      default:
+        // Not a reason to edit the files behind the back of a daemon that answered: the operation cannot be confirmed
+        throw new UnexpectedDaemonAnswerError(`The daemon answered give-up of event ${JSON.stringify(id)} with ${JSON.stringify((response as { status?: unknown }).status ?? null)}, so it cannot be confirmed that the event moved. ${DAEMON_MISMATCH_FIX}`);
     }
   }
   const result = abandonInFlightEntryDetailed(configDir, id);
@@ -80,6 +83,8 @@ export async function giveUpPending(configDir: string, id: string): Promise<{ st
   return { status: 'moved', message: `Moved to the dead-letter queue. ${eventNotSent(announcedEvents(result.changes.added.length, result.changes.evicted.length), attempt.failure)}` };
 }
 
+const DAEMON_MISMATCH_FIX = "Fix: dashboard and daemon do not agree on the protocol; restart the daemon (queue stop, then the next push starts it again) and check the Pending page.";
+
 function announcedEvents(added: number, evicted: number): string {
   // A move onto a row that already existed adds nothing new to announce: the sentence still has to name what the daemon would have sent
   return [added > 0 && describeCount('added', added), evicted > 0 && describeCount('removed', evicted)].filter(Boolean).join(' and ') || 'queue.dlq.*';
@@ -89,7 +94,11 @@ function announcedEvents(added: number, evicted: number): string {
 export async function giveUpStuck(configDir: string): Promise<{ moved: number; message?: string }> {
   const attempt = await tryDaemon(configDir, (client) => client.send('give-up-stuck', {}));
   if (attempt.reached) {
-    return { moved: attempt.value.moved };
+    const moved: unknown = attempt.value.moved;
+    if (typeof moved !== 'number' || !Number.isInteger(moved) || moved < 0) {
+      throw new UnexpectedDaemonAnswerError(`The daemon answered give-up-stuck without a usable count (${JSON.stringify(moved ?? null)}), so it cannot be confirmed that anything moved. ${DAEMON_MISMATCH_FIX}`);
+    }
+    return { moved };
   }
   const { moved, changes } = abandonStuckEntriesDetailed(configDir);
   if (moved === 0) {

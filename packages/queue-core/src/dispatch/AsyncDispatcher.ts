@@ -11,6 +11,7 @@ import type { QueueLogWriter } from '../storage/EventLogger.js';
 import { projectRefsOf, type HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
 import { getErrorMessage } from '../errors.js';
+import { LogGuard } from './LogGuard.js';
 
 /**
  * Writes a status change of a WAL entry. Returns `false` when it wrote nothing because the entry is no longer in flight (see {@link inFlightWalUpdater});
@@ -32,7 +33,6 @@ const RECORD_ATTEMPTS = 3;
 /** A kept-aside write is retried this many times (one per call of retryUnrecorded, the daemon's idle check) before it is given up. */
 const MAX_UNRECORDED_TRIES = 30;
 /** Bound of the memory of causes already reported. */
-const MAX_SAID = 200;
 
 interface UnrecordedWrite {
   updates: Partial<WalEntry>;
@@ -43,8 +43,8 @@ interface UnrecordedWrite {
 export class AsyncDispatcher {
   private readonly cliTransport = new CliTransport();
   private readonly httpTransport = new HttpTransport();
-  // Causes already reported: a log that stays unwritable would otherwise say the same thing on every dispatch
-  private readonly said = new Set<string>();
+  // A log write never decides what happens to a delivery (see LogGuard)
+  private readonly guard: LogGuard;
   // Results of deliveries that did run but could not be written to the WAL: id -> the write still to do
   private readonly unrecorded = new Map<string, UnrecordedWrite>();
 
@@ -63,7 +63,17 @@ export class AsyncDispatcher {
     private readonly refs?: RefResolver,
     // Called when the retry job of a failed entry could not be created (orch missing or failing): the host reports it and marks the entry. Absent: a diagnostic only
     private readonly onRetryNotScheduled?: (entry: WalEntry, error: Error) => void,
-  ) {}
+  ) {
+    this.guard = new LogGuard(logger, 'AsyncDispatcher', 'the delivery itself, its retry and its move to the dead-letter queue');
+  }
+
+  private diagnostic(level: 'info' | 'warn', message: string): void {
+    this.guard.diagnostic(level, message);
+  }
+
+  private safely(what: string, write: () => void): void {
+    this.guard.safely(what, write);
+  }
 
   /** How many delivered entries still wait for their acknowledgement to be written to the WAL. */
   get unrecordedCount(): number {
@@ -89,36 +99,6 @@ export class AsyncDispatcher {
       }
     }
     return this.unrecorded.size;
-  }
-
-  /** Says something in the daemon log; when the log itself is the problem, on stderr. Never throws. */
-  private diagnostic(level: 'info' | 'warn', message: string): void {
-    try {
-      this.logger.logDiagnostic({ source: 'AsyncDispatcher', level, message });
-    } catch {
-      process.stderr.write(`[queue] AsyncDispatcher: ${message}\n`);
-    }
-  }
-
-  /**
-   * A log write (daemon log or history) must never decide what happens to a delivery: a locked day file (antivirus, indexer) used to leave the entry 'failed' with no retry job
-   * and no DLQ move until the stuck give-up two hours later. A failure is said once per cause, in the daemon log (stderr when that is what failed).
-   */
-  private safely(what: string, write: () => void): void {
-    try {
-      write();
-    } catch (err) {
-      const message = getErrorMessage(err);
-      const key = `${what}\0${message}`;
-      if (this.said.has(key)) {
-        return;
-      }
-      if (this.said.size >= MAX_SAID) {
-        this.said.clear();
-      }
-      this.said.add(key);
-      this.diagnostic('warn', `could not write the ${what} record (${message}); the delivery itself, its retry and its move to the dead-letter queue were not affected. Check that nothing locks the logs and history folders of the queue config directory and that the disk has room. This is said once per cause`);
-    }
   }
 
   async dispatch(

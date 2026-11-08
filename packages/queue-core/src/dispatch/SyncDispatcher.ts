@@ -5,6 +5,7 @@ import type { RefResolver } from './refResolver.js';
 import { runSubscriber, targetOf } from './runSubscriber.js';
 import { OutputCapture } from './OutputCapture.js';
 import { formatDuration } from './formatDuration.js';
+import { LogGuard } from './LogGuard.js';
 import type { QueueLogWriter } from '../storage/EventLogger.js';
 import { projectRefsOf, type HistoryWriter } from '../storage/HistoryLog.js';
 import type { EventEnvelope, ResolvedSubscriber } from '../types.js';
@@ -24,6 +25,8 @@ interface SubscriberResponse {
 export class SyncDispatcher {
   private readonly cliTransport = new CliTransport();
   private readonly httpTransport = new HttpTransport();
+  // A log write never decides the outcome of a before* event nor throws into the push (see LogGuard)
+  private readonly guard: LogGuard;
 
   constructor(
     // Required: the daemon has no usable stderr, an absent logger would make every failure invisible
@@ -36,7 +39,9 @@ export class SyncDispatcher {
     private readonly refs?: RefResolver,
     // The clock of the budget, replaceable by tests
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.guard = new LogGuard(logger, 'SyncDispatcher', 'the result of the before* event');
+  }
 
   /**
    * `timeoutMs` is the time of the WHOLE before* event, as the push protocol says: the subscribers run one after the other and share it. Each one gets what is left
@@ -79,10 +84,10 @@ export class SyncDispatcher {
         // A non-empty stderr on success is still recorded: it is often the only hint of a problem
         // An action's detail is always kept: it is the only trace of what the action did
         if (captured.stderr !== undefined || result.detail !== undefined) {
-          this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured, ...(result.detail !== undefined && { detail: result.detail }) });
+          this.guard.safely('dispatch log', () => this.logger.logDispatch({ event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured, ...(result.detail !== undefined && { detail: result.detail }) }));
         }
         // History records every successful outcome, unlike logDispatch's noise-reduction above
-        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
+        this.guard.safely('history', () => this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) }));
         continue;
       }
 
@@ -101,14 +106,14 @@ export class SyncDispatcher {
       }
 
       if (parsed.action === 'abort') {
-        this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
+        this.guard.safely('history', () => this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) }));
         return { action: 'aborted', reason: parsed.reason ?? 'aborted by subscriber' };
       }
 
       if (captured.stderr !== undefined) {
-        this.logger.logDispatch({ event: sub.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured });
+        this.guard.safely('dispatch log', () => this.logger.logDispatch({ event: sub.event, subscriberId: sub.subscriberId, status: 'success', target, durationMs: result.durationMs, ...captured }));
       }
-      this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) });
+      this.guard.safely('history', () => this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'success', target, ...projectRefsOf(envelope.meta) }));
 
       if (parsed.payload !== undefined) {
         currentPayload = parsed.payload;
@@ -129,7 +134,7 @@ export class SyncDispatcher {
     detail?: string,
   ): SyncResult {
     const resolvedTarget = target ?? targetOf(sub) ?? '';
-    this.logger.logDispatch({
+    this.guard.safely('dispatch log', () => this.logger.logDispatch({
       event: envelope.event,
       subscriberId: sub.subscriberId,
       status: 'failed',
@@ -138,8 +143,8 @@ export class SyncDispatcher {
       error: reason,
       ...captured,
       ...(detail !== undefined && { detail }),
-    });
-    this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed', target: resolvedTarget, ...projectRefsOf(envelope.meta) });
+    }));
+    this.guard.safely('history', () => this.historyLog.logOutcome({ eventId: envelope.id, event: envelope.event, subscriberId: sub.subscriberId, status: 'failed', target: resolvedTarget, ...projectRefsOf(envelope.meta) }));
     return { action: 'aborted', reason };
   }
 }

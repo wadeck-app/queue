@@ -2,6 +2,10 @@
 
 `queue wait` blocks until something happens; an agent launches it with `run_in_background` and is re-invoked when it exits. `queue wait --help` has the full option list.
 
+## Options
+
+An option `queue wait` does not know exits 4 with the closest valid one (`unknown option '--timout' for 'queue wait' (did you mean '--timeout'?)`), for the event wait and for `wait ci`. Also exit 4: a value flag without its value, given twice, or written `--flag=value`.
+
 ## `queue wait <event>`
 
 Blocks until a queue event of that name is recorded (any `queue push`, even with no subscriber).

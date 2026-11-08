@@ -59,6 +59,10 @@ export { ConfigLoader } from './ConfigLoader.js';
 export { findActionCycles } from './actions/findActionCycles.js';
 export type { ActionCycleFinding, ActionCycleOptions, CycleSubscriber } from './actions/findActionCycles.js';
 export { MAX_ACTION_HOPS, MAX_ACTION_EMISSIONS_PER_ROOT } from './actions/hopCap.js';
+// For the vitest setup of every package that can start a daemon in the test process (a test must never reach the real orch)
+export { RetryScheduler } from './dispatch/RetryScheduler.js';
+export type { SchedulerDeps } from './dispatch/RetryScheduler.js';
+export { armOrchGuard, takeOrchGuardCalls, ORCH_GUARD_HINT } from './orchGuard.js';
 export { reservedEventProblem, replayReservedProblem } from './reservedEvents.js';
 export { canResolveRef, RefResolver, EventRefError } from './dispatch/refResolver.js';
 export type { RefLookup, ResolvedEvent } from './dispatch/refResolver.js';

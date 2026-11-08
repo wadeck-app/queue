@@ -1,5 +1,5 @@
 {
-  // Typechecks the files that sit outside tsconfig.json's "include" (rootDir src): the vitest config and its global setup. Emits nothing, never published.
+  // Typechecks the files that sit outside tsconfig.json's "include" (rootDir src): the vitest config, its global setup and its setup file. Emits nothing, never published.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "composite": false,
@@ -7,6 +7,6 @@
     "rootDir": ".",
     "declarationDir": null
   },
-  "include": ["vitest.config.ts", "vitest.globalSetup.ts"],
+  "include": ["vitest.config.ts", "vitest.globalSetup.ts", "vitest.setup.ts"],
   "references": []
 }

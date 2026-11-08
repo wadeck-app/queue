@@ -333,7 +333,7 @@ describe('queue dlq: a missing value never widens the operation', () => {
 		for (const args of [['dlq', 'clear', '--idd', 'x'], ['dlq', 'clear', 'x']]) {
 			const { stderr, exitCode } = await run(args);
 			expect(exitCode, args.join(' ')).toBe(1);
-			expect(stderr).toContain(`Unknown argument '${args[2]}'`);
+			expect(stderr).toMatch(args[2] === 'x' ? /unexpected argument 'x'/ : /unknown option '--idd'/);
 		}
 		expect(sentCommands()).not.toContain('dlq-clear');
 	});

@@ -136,3 +136,30 @@ describe('parseEventWaitArgs: several events at once', () => {
     expect((parseEventWaitArgs(['onFoo', '--timeout', ''], NOW) as { message: string }).message).toContain('--timeout needs a value');
   });
 });
+
+describe('parseEventWaitArgs: an unknown option is a usage error', () => {
+  it('names the option and suggests the closest valid one (a typo used to wait with the default timeout)', () => {
+    const result = parseEventWaitArgs(['onFoo', '--timout', '5m'], NOW) as { ok: boolean; message: string };
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("unknown option '--timout'");
+    expect(result.message).toContain("did you mean '--timeout'?");
+  });
+
+  it('refuses an unknown switch and does not take the word after it for an event name', () => {
+    const result = parseEventWaitArgs(['onFoo', '--jsno'], NOW) as { ok: boolean; message: string };
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("did you mean '--json'?");
+  });
+
+  it('an unrelated option has no suggestion but is still refused', () => {
+    const result = parseEventWaitArgs(['onFoo', '--zzzzzzzzzz'], NOW) as { ok: boolean; message: string };
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("unknown option '--zzzzzzzzzz'");
+    expect(result.message).not.toContain('did you mean');
+  });
+
+  it('every known flag is still accepted', () => {
+    expect(parseEventWaitArgs(['onFoo', '--all', '--json', '--strict'], NOW)).toMatchObject({ ok: true });
+    expect(parseEventWaitArgs(['onFoo', '--any', '-h'], NOW)).toMatchObject({ ok: true });
+  });
+});

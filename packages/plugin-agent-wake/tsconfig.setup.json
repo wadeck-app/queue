@@ -1,0 +1,12 @@
+{
+  // Typechecks the files that sit outside tsconfig.json's "include" (rootDir src): the vitest config and its setup file. Emits nothing, never published.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "rootDir": ".",
+    "declarationDir": null
+  },
+  "include": ["vitest.config.ts", "vitest.setup.ts"],
+  "references": []
+}

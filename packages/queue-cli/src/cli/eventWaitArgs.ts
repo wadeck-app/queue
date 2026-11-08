@@ -1,6 +1,7 @@
 import { PayloadFilter, doubleStarProblem, eventPatternProblem, getErrorMessage } from '@wadeck-app/queue-core';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
+import { nearestFlag } from './flagScan.js';
 import type { EventWaitOptions, EventWaitTarget } from './eventWaitCommand.js';
 
 export const EVENT_WAIT_FLAGS_WITH_VALUE = new Set(['--when', '--since', '--timeout']);
@@ -75,7 +76,13 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
         // The first would win and the second be dropped without a word
         return { ok: false, message: `${arg} is given twice (${JSON.stringify(singles[arg])} and ${JSON.stringify(value)}): give it once.` };
       }
-    } else if (!arg.startsWith('-')) {
+    } else if (arg.startsWith('-') && arg.length > 1) {
+      if (!EVENT_WAIT_KNOWN_FLAGS.includes(arg)) {
+        // A typo like --timout used to be ignored and the wait ran with the default
+        const near = nearestFlag(arg, EVENT_WAIT_KNOWN_FLAGS);
+        return { ok: false, message: `unknown option '${arg}' for 'queue wait'${near === undefined ? '' : ` (did you mean '${near}'?)`}. Fix: correct or remove it. Usage: ${USAGE}` };
+      }
+    } else {
       // A wildcard that is not a whole segment ("dep.pub*") would silently never match: refuse it now
       const patternProblem = waitPatternProblem(arg);
       if (patternProblem !== null) {

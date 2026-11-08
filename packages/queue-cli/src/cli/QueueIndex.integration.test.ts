@@ -217,13 +217,13 @@ describe('queue history (integration)', () => {
   it('--limit without value exits with error', () => {
     const { stderr, exitCode } = runCli(['history', '--limit']);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain('[fail] --limit requires a value');
+    expect(stderr).toContain('[fail] --limit needs');
   });
 
   it('--offset without value exits with error', () => {
     const { stderr, exitCode } = runCli(['history', '--offset']);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain('[fail] --offset requires a value');
+    expect(stderr).toContain('[fail] --offset needs');
   });
 
   it('records a trigger-only entry when no subscriber is configured for the event', async () => {

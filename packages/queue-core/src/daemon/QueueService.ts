@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { LogGuard } from '../dispatch/LogGuard.js';
 import { Wal } from '../storage/Wal.js';
 import { DlqStore, type DlqEntry } from '../storage/DlqStore.js';
 import { EventLogger } from '../storage/EventLogger.js';
@@ -126,6 +127,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     }
   }
   const eventLogger = new EventLogger(join(configDir, 'logs'));
+  // The log and history writes of a push are not fatal (see LogGuard)
+  const pushLogs = new LogGuard(eventLogger, 'QueueDaemon.push', 'the push');
   // The daemon's stderr is ignored: what the queue files have to say (unreadable lines kept aside, a full DLQ) goes to the daemon log, where `queue logs` shows it
   const wal = new Wal(join(configDir, 'wal.ndjson'), { onDiagnostic: (diagnostic) => eventLogger.logDiagnostic(diagnostic) });
   const dlq = new DlqStore(join(configDir, 'dlq.ndjson'), undefined, { onDiagnostic: (diagnostic) => eventLogger.logDiagnostic(diagnostic) });
@@ -595,29 +598,30 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         const evaluation = PayloadFilter.evaluate(sub.when, envelopeFor(sub));
         if (!evaluation.matched) {
           // Durable trace: the daemon's stderr is discarded, a `when:` typo would be invisible
-          eventLogger.logFilterMiss({
+          pushLogs.safely('filter log', () => eventLogger.logFilterMiss({
             event: req.event,
             subscriberId: sub.subscriberId,
-            filter: sub.when,
+            filter: sub.when!,
             reason: evaluation.reason ?? 'unknown reason',
             path: evaluation.path,
             expected: evaluation.expected,
             actual: evaluation.actual,
-          });
-          historyLog.logFiltered({
+          }));
+          pushLogs.safely('history', () => historyLog.logFiltered({
             eventId: envelope.id,
             event: req.event,
             subscriberId: sub.subscriberId,
-            filter: sub.when,
+            filter: sub.when!,
             actual: evaluation.actual,
             ...projectRefsOf(envelopeFor(sub).meta),
-          });
+          }));
         }
         return evaluation.matched;
       });
 
       // Recorded even with zero subscribers so `queue history` surfaces events nobody listens to
-      historyLog.logTrigger({
+      // A history that cannot be written must not fail the push before anything is recorded: it is said once per cause and the push goes on
+      pushLogs.safely('history', () => historyLog.logTrigger({
         eventId: envelope.id,
         event: req.event,
         project: envelope.meta.projectName,
@@ -629,7 +633,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         cwd: req.cwd,
         ...(!(direction.directions.length === 1 && direction.directions[0] === 'to-parents') && { direction: direction.directions }),
         ...(internal.causedBy !== undefined && { causedBy: internal.causedBy }),
-      });
+      }));
 
       if (req.event.startsWith('before')) {
         const timeoutMs = req.timeout ?? 30_000;

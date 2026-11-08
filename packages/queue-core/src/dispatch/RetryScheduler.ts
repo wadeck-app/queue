@@ -2,7 +2,10 @@ import { execFileSync, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { ExecFileException } from 'node:child_process';
 import type { WalEntry } from '../storage/Wal.js';
+import { extname } from 'node:path';
 import { getErrorMessage } from '../errors.js';
+import { resolveNpmShim } from './NpmShim.js';
+import { findWindowsProgram } from './windowsProgram.js';
 
 export type BackoffStrategy = 'exponential' | 'linear';
 
@@ -36,10 +39,16 @@ export interface SchedulerDeps {
   runAsync(file: string, args: string[], callback: (err: ExecFileException | null, stdout: string, stderr: string) => void): void;
 }
 
-function findOrch(): string | null {
-  const isWindows = process.platform === 'win32';
+/**
+ * The orch program on PATH, or null. On Windows the lookup is the one a subscriber command gets (PATH only, PATHEXT order): `where orch` lists the extensionless
+ * sh script that npm installs first, and Node cannot start it (ENOENT), while the `orch.cmd` next to it needs the shim handling below.
+ */
+export function findOrchProgram(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform === 'win32') {
+    return findWindowsProgram('orch', undefined, env) ?? null;
+  }
   try {
-    const result = execFileSync(isWindows ? 'where' : 'which', ['orch'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const result = execFileSync('which', ['orch'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
     const line = result.trim().split('\n')[0]?.trim();
     return line && line.length > 0 ? line : null;
   } catch {
@@ -47,11 +56,51 @@ function findOrch(): string | null {
   }
 }
 
+export interface OrchLaunch {
+  file: string;
+  args: string[];
+}
+
+/**
+ * What to execute to run `found` with `args`. Node cannot start a .cmd (EINVAL) and the retry arguments carry a command line, so an npm-generated
+ * `orch.cmd` is started as `node <its script>` (the same recognition a subscriber command gets, no cmd.exe, nothing to quote); an .exe runs as is.
+ * Anything else on Windows is refused with the way out: running it through cmd.exe would put a command line through cmd's quoting.
+ */
+export function resolveOrchLaunch(found: string, args: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform): OrchLaunch {
+  if (platform !== 'win32') {
+    return { file: found, args };
+  }
+  const extension = extname(found).toLowerCase();
+  if (extension === '.exe' || extension === '.com') {
+    return { file: found, args };
+  }
+  if (extension === '.cmd' || extension === '.bat') {
+    const launch = resolveNpmShim(found, env);
+    if (launch === undefined) {
+      throw new Error(`'${found}' is not a standard npm shim, so it is not started through cmd.exe. Fix: install orch so that an orch.exe or the npm-generated orch.cmd is on the PATH of the daemon.`);
+    }
+    return { file: launch.nodeExe, args: [launch.script, ...args] };
+  }
+  throw new Error(`'${found}' cannot be started by the daemon (Windows starts .exe files and npm-generated .cmd shims only). Fix: put orch.cmd (npm install -g) or orch.exe on the PATH of the daemon, then restart it.`);
+}
+
 const defaultDeps: SchedulerDeps = {
-  findOrch,
+  findOrch: () => findOrchProgram(),
   randomSuffix: () => randomUUID().slice(0, 8),
-  runSync: (file, args) => { execFileSync(file, args, { stdio: 'pipe', windowsHide: true }); },
-  runAsync: (file, args, callback) => { execFile(file, args, { windowsHide: true }, callback); },
+  runSync: (file, args) => {
+    const launch = resolveOrchLaunch(file, args, process.env, process.platform);
+    execFileSync(launch.file, launch.args, { stdio: 'pipe', windowsHide: true });
+  },
+  runAsync: (file, args, callback) => {
+    let launch: OrchLaunch;
+    try {
+      launch = resolveOrchLaunch(file, args, process.env, process.platform);
+    } catch (err) {
+      callback(err as ExecFileException, '', '');
+      return;
+    }
+    execFile(launch.file, launch.args, { windowsHide: true }, callback);
+  },
 };
 
 export interface ScheduleOptions {

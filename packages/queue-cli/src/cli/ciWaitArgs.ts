@@ -25,8 +25,7 @@ export interface CiWaitArgs {
 
 /**
  * The arguments after `queue wait ci`. A value flag without its value (or with an empty one), in the `--flag=value` form or given twice is an error:
- * each used to fall back to the default (30 minutes, the inferred repository...) without a word. An option nobody knows is not an error here (the
- * caller warns about it, as before).
+ * each used to fall back to the default (30 minutes, the inferred repository...) without a word. An option nobody knows is an error too, with the closest valid option.
  */
 export function parseCiWaitArgs(args: readonly string[]): CiWaitArgs | { ok: false; message: string } {
   for (const arg of args) {
@@ -36,7 +35,7 @@ export function parseCiWaitArgs(args: readonly string[]): CiWaitArgs | { ok: fal
     }
   }
   const scan = scanFlags(args, CI_FLAG_SPEC, 'queue wait ci', [], 1);
-  const blocking = scan.issues.find((issue) => issue.kind !== 'unknown');
+  const blocking = scan.issues[0];
   if (blocking !== undefined) {
     return { ok: false, message: blocking.message };
   }

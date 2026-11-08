@@ -1,7 +1,7 @@
 import { listDlqEntries, clearDlqEntriesReturning } from '@wadeck-app/queue-core';
 import type { DlqEntry, DlqReplayResponse, DlqClearResponse } from '@wadeck-app/queue-core';
 import { createQueueAppClient } from './client.js';
-import { DaemonUnreachableError } from './errors.js';
+import { DaemonUnreachableError, UnexpectedDaemonAnswerError } from './errors.js';
 import { shortId } from './ids.js';
 import { describeCount, eventNotSent, tryDaemon } from './dlqAnnounce.js';
 
@@ -19,7 +19,11 @@ export function listDlq(configDir: string, projectId?: string): Array<DlqEntry &
 export async function clearDlqEntry(configDir: string, id?: string): Promise<DlqClearResponse & { message?: string }> {
   const attempt = await tryDaemon(configDir, (client) => client.send('dlq-clear', id === undefined ? {} : { id }));
   if (attempt.reached) {
-    return { cleared: attempt.value.cleared, ...(attempt.value.reason !== undefined && { reason: attempt.value.reason }) };
+    const cleared: unknown = attempt.value.cleared;
+    if (typeof cleared !== 'number' || !Number.isInteger(cleared) || cleared < 0) {
+      throw new UnexpectedDaemonAnswerError(`The daemon answered dlq-clear without a usable count (${JSON.stringify(cleared ?? null)}), so it cannot be confirmed that anything was cleared. Fix: dashboard and daemon do not agree on the protocol; restart the daemon (queue stop, then the next push starts it again) and check the DLQ page.`);
+    }
+    return { cleared, ...(attempt.value.reason !== undefined && { reason: attempt.value.reason }) };
   }
   const removed = clearDlqEntriesReturning(configDir, id);
   if (removed.length === 0) {

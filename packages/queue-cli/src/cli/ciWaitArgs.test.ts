@@ -61,3 +61,15 @@ describe('parseCiWaitArgs', () => {
     expect(message(['abc1234', 'def5678'])).toContain("unexpected argument 'def5678'");
   });
 });
+
+describe('parseCiWaitArgs: an unknown option is a usage error', () => {
+  it('names the option and suggests the closest valid one', () => {
+    const text = message(['--timout', '5m']);
+    expect(text).toContain("unknown option '--timout'");
+    expect(text).toContain("did you mean '--timeout'?");
+  });
+
+  it('refuses an unknown switch next to a valid sha', () => {
+    expect(message(['abc1234', '--jsno'])).toContain("did you mean '--json'?");
+  });
+});

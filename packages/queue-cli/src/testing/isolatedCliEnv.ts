@@ -9,6 +9,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installFakeOrch, type FakeOrch } from './fakeOrch.js';
 import { QUEUE_DAEMON_PORT_ENV, QUEUE_RELAY_PORT_ENV } from '@wadeck-app/queue-core';
 
 /** Nothing listens on the discard port: any npm network access fails fast instead of installing. */
@@ -63,6 +64,11 @@ export interface IsolatedCliEnv {
   daemonPort: number;
   /** Free port this environment's relay daemon asks for (QUEUE_RELAY_PORT). */
   relayPort: number;
+  /**
+   * The fake `orch` first on this environment's PATH: a spawned bundle or daemon can never reach the real orchestrator. It records the arguments of every call
+   * (`orch.readCalls()`) and exits 0.
+   */
+  orch: FakeOrch;
   /** Full env for the spawned CLI: parent env minus steering vars, plus the isolation overrides and `extra`. */
   env: NodeJS.ProcessEnv;
   /** Removes the whole tree. Call from an afterAll/afterEach hook. */
@@ -146,10 +152,14 @@ update-notifier=false
     // A project-level .npmrc naming the @wadeck-app registry outranks the userconfig file;
     // only this env variable beats it (otherwise `npm view` from a test reaches npm.pkg.github.com).
     'npm_config_@wadeck-app:registry': registry,
-  }, opts.extra);
+  });
+  // After the overrides above and before `extra`: the PATH of the parent shell is kept, behind the fake orch
+  // `extra` is taken into account (a PATH or NODE_OPTIONS of the caller is extended, never replaced: replacing it would drop the fake)
+  const orch = installFakeOrch(root, { ...env, ...opts.extra });
+  Object.assign(env, opts.extra, orch.env);
 
   return {
-    root, configDir, npmPrefix, daemonPort, relayPort, env,
+    root, configDir, npmPrefix, daemonPort, relayPort, orch, env,
     cleanup: () => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
   };
 }

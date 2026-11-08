@@ -9,7 +9,7 @@ vi.mock('./client.js', () => ({
 }));
 
 import { listPending, giveUpPending, giveUpStuck } from './pending.js';
-import { InvalidQueryError, PendingNotFoundError, NotInFlightError } from './errors.js';
+import { InvalidQueryError, PendingNotFoundError, NotInFlightError, UnexpectedDaemonAnswerError } from './errors.js';
 import { makeTempDir, removeTempDir } from './tempDir.testUtil.js';
 
 let configDir: string;
@@ -173,5 +173,26 @@ describe('stuck events (in flight for so long that nobody retries them any more)
     expect(result.moved).toBe(1);
     expect(result.message).toContain('Unknown command: give-up-stuck');
     expect(result.message).toContain('restart it');
+  });
+});
+
+describe('a daemon answer this module does not understand is a failure, never a success and never a silent switch to the files', () => {
+  beforeEach(() => {
+    mockIsRunning.mockResolvedValue(true);
+  });
+
+  it.each([[{}], [{ status: 'surprise' }], [{ status: undefined }]])('give-up answered %j: UnexpectedDaemonAnswerError, and the WAL is untouched', async (answer) => {
+    const wal = [walLine('f1', 'failed')].join('\n') + '\n';
+    writeFileSync(join(configDir, 'wal.ndjson'), wal);
+    mockSend.mockResolvedValue(answer);
+    await expect(giveUpPending(configDir, 'f1')).rejects.toBeInstanceOf(UnexpectedDaemonAnswerError);
+    await expect(giveUpPending(configDir, 'f1')).rejects.toThrow(/Fix:.*queue stop/);
+    expect(readFileSync(join(configDir, 'wal.ndjson'), 'utf8')).toBe(wal);
+    expect(existsSync(join(configDir, 'dlq.ndjson'))).toBe(false);
+  });
+
+  it.each([[{}], [{ moved: 'two' }], [{ moved: -1 }], [{ moved: 1.5 }]])('give-up-stuck answered %j: UnexpectedDaemonAnswerError, not a 200 with a bogus count', async (answer) => {
+    mockSend.mockResolvedValue(answer);
+    await expect(giveUpStuck(configDir)).rejects.toBeInstanceOf(UnexpectedDaemonAnswerError);
   });
 });

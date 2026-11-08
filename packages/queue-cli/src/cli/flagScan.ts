@@ -52,6 +52,10 @@ export function scanFlags(args: readonly string[], spec: FlagSpec, cmd: string, 
       if (isMissingValue(next)) {
         const needs = spec.needs?.[arg] ?? `a value, e.g. ${arg} <value>`;
         scan.issues.push({ kind: 'missing-value', message: `${arg} needs ${needs}` });
+        // An empty word is the value that is missing, not a stray word of its own
+        if (next === '') {
+          i++;
+        }
         continue;
       }
       i++;
@@ -65,7 +69,8 @@ export function scanFlags(args: readonly string[], spec: FlagSpec, cmd: string, 
       }
     } else if (spec.switches?.includes(arg) === true) {
       scan.switches.add(arg);
-    } else if (arg.startsWith('-') && arg.length > 1) {
+    } else if (arg.startsWith('-') && arg.length > 1 && !/^-[0-9]/.test(arg)) {
+      // (a negative number such as a payload `-5` is a word, not an option)
       // The word after an unknown option is most likely its value: it is not reported a second time as a stray
       const after = args[i + 1];
       if (after !== undefined && !after.startsWith('-')) {

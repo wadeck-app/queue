@@ -3,7 +3,6 @@
 import { parseCiWaitArgs } from './ciWaitArgs.js';
 import { join as pathJoin } from 'node:path';
 import { EventMatcher, HistoryReader, getErrorMessage, isEventPattern } from '@wadeck-app/queue-core';
-import { warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { CI_EXIT } from './ciWait.js';
@@ -12,7 +11,7 @@ import { createGitPort, inspectRepository, type GitPort } from './ciGit.js';
 import { eventWaitCommand } from './eventWaitCommand.js';
 import { RelayOnDemand, isRelayPattern, isRelaySourcedEvent, targetNeedsRelay } from './relayOnDemand.js';
 import { checkDeclaration, lastSeenAtOf, lastSeenEventOf, patternMatchesKnownEvent, patternWarning, refuseUndeclared, undeclaredWarning, type DeclarationCheck } from './eventWaitCatalog.js';
-import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE, WAIT_DEFAULT_TIMEOUT } from './eventWaitArgs.js';
+import { parseEventWaitArgs, WAIT_DEFAULT_TIMEOUT } from './eventWaitArgs.js';
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
 Usage:
@@ -49,7 +48,7 @@ queue wait <event>: blocks until a queue event of that name (or matching that pa
   the waits that were not satisfied.
   It answers at once when a matching event was recorded since --since, so there is no race with the thing you waited for.
   Find the names, the payload paths for --when and a ready command with "queue events list" and "queue events show <name>".
-  Exit codes: 0 matched | 2 timeout | 4 invalid usage / --strict on an undeclared name. "ci" is reserved for the command below.
+  Exit codes: 0 matched | 2 timeout | 4 invalid usage (including an unknown option: --timout exits 4 and suggests --timeout) / --strict on an undeclared name. "ci" is reserved for the command below.
 
 queue wait ci: blocks until the GitHub CI of a commit is done (events relayed as on.github.workflow_run).
   <sha>              Commit to wait for (full or >= 7 chars); default: HEAD of the current git repository
@@ -70,14 +69,11 @@ and the relay stops by itself 30s after the last such wait ended. A relay starte
 An agent that just pushed should run it in the background (run_in_background) and will be woken up on exit.
 It also answers at once when the CI finished before the command started.
 
-Exit codes: 0 CI passed | 1 CI failed | 2 timeout | 3 no run seen / relay not running | 4 invalid usage
+Exit codes: 0 CI passed | 1 CI failed | 2 timeout | 3 no run seen / relay not running | 4 invalid usage (including an unknown option)
 `;
 
 /** What HistoryReader calls an entry whose record carries no event name. */
 const ORPHAN_EVENT_NAME = '(unknown)';
-
-const FLAGS_WITH_VALUE = new Set(['--repo', '--workflow', '--timeout', '--settle']);
-const KNOWN_FLAGS = ['--repo', '--workflow', '--timeout', '--settle', '--json', '--no-infer', '--help', '-h'];
 
 function fail(message: string): number {
   process.stderr.write(`[fail] ${message}\n`);
@@ -86,7 +82,6 @@ function fail(message: string): number {
 
 /** `queue wait <event> ...`: any target other than "ci" is the name of a queue event (or of several). */
 async function eventWait(configDir: string, args: string[], startRelay: StartRelay): Promise<number> {
-  warnUnknownArgs(args.filter((arg) => arg.startsWith('-')), EVENT_WAIT_KNOWN_FLAGS, 'queue wait', EVENT_WAIT_FLAGS_WITH_VALUE);
   const parsed = parseEventWaitArgs(args, Date.now());
   if (!parsed.ok) {
     return fail(parsed.message);
@@ -199,8 +194,6 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     return fail(parsedArgs.message);
   }
   const positional = parsedArgs.sha;
-  // The SHA is an argument, not noise: it and the value of a flag are not "unknown"
-  warnUnknownArgs(rest.filter((arg) => arg !== positional), KNOWN_FLAGS, 'queue wait ci', FLAGS_WITH_VALUE);
   const sha = positional ?? git.read(['rev-parse', 'HEAD']);
   if (!sha) {
     return fail('No commit given and the current directory is not a git repository. Pass the SHA: queue wait ci <sha>.');

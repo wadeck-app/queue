@@ -37,3 +37,6 @@ export class RelayStatusError extends Error {}
 
 /** The schema an event declares cannot be compiled by the payload validator, so no payload can be checked against it. */
 export class SchemaUnusableError extends Error {}
+
+/** The daemon answered a command with something this module does not understand (an older or newer daemon): the work cannot be confirmed, so the route answers 502. */
+export class UnexpectedDaemonAnswerError extends Error {}

@@ -39,3 +39,18 @@ describe('scanFlags', () => {
     expect(scan.issues[0]!.kind).toBe('unknown');
   });
 });
+
+describe('scanFlags: words that look like options', () => {
+  const spec = { values: ['--a'], switches: ['--s'] };
+
+  it('a negative number is a word, not an unknown option', () => {
+    const scan = scanFlags(['-5', '-12.5'], spec, 'cmd', [], 2);
+    expect(scan.issues).toEqual([]);
+    expect(scan.positionals).toEqual(['-5', '-12.5']);
+  });
+
+  it('an empty value is the missing value, not a second stray-word issue', () => {
+    const scan = scanFlags(['--a', ''], spec, 'cmd');
+    expect(scan.issues.map((issue) => issue.kind)).toEqual(['missing-value']);
+  });
+});
