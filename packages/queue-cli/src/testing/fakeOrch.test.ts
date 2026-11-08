@@ -1,9 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from './isolatedCliEnv.js';
-import { pathKeyOf } from './fakeOrch.js';
+import { isInside, pathKeyOf } from './fakeOrch.js';
 
 describe('the fake orch of an isolated environment', () => {
   let iso: IsolatedCliEnv | undefined;
@@ -23,7 +24,7 @@ describe('the fake orch of an isolated environment', () => {
   // The file to run: refuses (before anything runs) one that is not inside the throwaway tree, so a broken fake can never execute the machine's real orch
   const fakeFile = (e: IsolatedCliEnv): string => {
     const first = lookup(e)[0]!;
-    if (!first.startsWith(e.root)) {
+    if (!isInside(first, e.root)) {
       throw new Error(`the first orch on the PATH is ${first}, not the fake of the environment (${e.root}): refusing to run it`);
     }
     return first;
@@ -32,7 +33,7 @@ describe('the fake orch of an isolated environment', () => {
   it("is the first orch on the PATH of the environment, inside its throwaway tree, never the machine's orch", () => {
     iso = createIsolatedCliEnv();
     const found = lookup(iso);
-    expect(found[0]!.startsWith(iso.root), found.join(' | ')).toBe(true);
+    expect(isInside(found[0]!, iso.root), found.join(' | ')).toBe(true);
     expect(found[0]).toContain('fake-bin');
   });
 
@@ -80,5 +81,40 @@ describe('the fake orch of an isolated environment', () => {
     expect(iso.env['NODE_OPTIONS']!.includes('--require=')).toBe(process.platform === 'win32');
     execFileSync(fakeFile(iso), ['add', 'x'], { env: iso.env, stdio: 'pipe', windowsHide: true });
     expect(iso.orch.readCalls()).toEqual([{ argv: ['add', 'x'] }]);
+  });
+});
+
+describe('isInside - is a path inside a tree, whatever form the platform gives the two paths', () => {
+  let base: string;
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'queue-isinside-'));
+    mkdirSync(join(base, 'root', 'fake-bin'), { recursive: true });
+    mkdirSync(join(base, 'root-other'), { recursive: true });
+    writeFileSync(join(base, 'root', 'fake-bin', 'orch.exe'), '');
+    writeFileSync(join(base, 'root-other', 'orch.exe'), '');
+  });
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  it('accepts a file under the root', () => {
+    expect(isInside(join(base, 'root', 'fake-bin', 'orch.exe'), join(base, 'root'))).toBe(true);
+  });
+
+  it('refuses a sibling folder that merely starts with the same characters (a string prefix test accepts it)', () => {
+    expect(isInside(join(base, 'root-other', 'orch.exe'), join(base, 'root'))).toBe(false);
+  });
+
+  it('refuses a path that climbs out of the root with ..', () => {
+    expect(isInside(join(base, 'root', '..', 'root-other', 'orch.exe'), join(base, 'root'))).toBe(false);
+  });
+
+  it.skipIf(process.platform !== 'win32')('accepts the same folder written in another case (Windows paths are case-insensitive)', () => {
+    expect(isInside(join(base, 'root', 'fake-bin', 'orch.exe').toUpperCase(), join(base, 'root'))).toBe(true);
+  });
+
+  it.skipIf(process.platform !== 'win32')('accepts the 8.3 short form of the root against the long form of the file (what where.exe returned on the CI runner)', () => {
+    // Verbatim arguments: Node would otherwise escape the quotes of the command line and cmd.exe would print garbage
+    const short = (spawnSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${join(base, 'root')}") do @echo %~sI"`], { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true }).stdout ?? '').trim();
+    expect(short, 'the 8.3 short name lookup returned something that is not a path').toMatch(/^[A-Za-z]:\\/);
+    expect(isInside(join(base, 'root', 'fake-bin', 'orch.exe'), short)).toBe(true);
   });
 });

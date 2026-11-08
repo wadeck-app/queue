@@ -5,8 +5,8 @@
 //  - Windows: `where orch` + execFile only run a real executable (a .cmd shim fails with EINVAL, an extensionless script with ENOENT), so `orch.exe` is a hard link
 //    (a copy when the volumes differ) of node.exe, and the recorder is preloaded through NODE_OPTIONS: it acts only when the process is named orch, so every
 //    other node process of the environment is untouched.
-import { chmodSync, copyFileSync, linkSync, mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
-import { basename, delimiter, join } from 'node:path';
+import { chmodSync, copyFileSync, linkSync, mkdirSync, readFileSync, existsSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, isAbsolute, join, relative } from 'node:path';
 
 export interface OrchCall {
   /** What orch was given after its name: `["add", "--once", "<id>", "--delay", "2m", "--command", "queue retry --event <walId>"]`. */
@@ -80,3 +80,20 @@ export function installFakeOrch(root: string, env: NodeJS.ProcessEnv): FakeOrch 
 
 /** The name the fake answers to on this platform, for messages. */
 export const FAKE_ORCH_FILE = process.platform === 'win32' ? 'orch.exe' : basename('orch');
+
+function resolved(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Whether `child` is `root` or under it. Both are resolved to their real path first, because Windows hands out the same folder as an 8.3 short name
+ * (`RUNNER~1`) or a long one depending on who asks (os.tmpdir() against where.exe), and a string prefix test also accepts `root-other` for `root`.
+ */
+export function isInside(child: string, root: string): boolean {
+  const path = relative(resolved(root), resolved(child));
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path));
+}
