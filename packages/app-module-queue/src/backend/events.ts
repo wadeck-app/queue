@@ -1,6 +1,6 @@
 import { Ajv } from 'ajv';
 import { getErrorMessage, getEventDetail, reservedEventProblem, listEvents, listEventDetails, nearestEventNames, type CatalogEntry, type EventDetail, type EventListing, type PushResponse } from '@wadeck-app/queue-core';
-import { InvalidPayloadError, InvalidQueryError, ReservedEventError, TestPayloadNotFoundError } from './errors.js';
+import { InvalidPayloadError, InvalidQueryError, ReservedEventError, SchemaUnusableError, TestPayloadNotFoundError } from './errors.js';
 import { pushEvent } from './push.js';
 import { validateSingleString, type QueryParams } from './historyQuery.js';
 
@@ -178,9 +178,22 @@ function declaredDetailOrThrow(configDir: string, name: string, purpose: string)
   return detail;
 }
 
-function problemsOf(schema: Record<string, unknown>, payload: unknown): Array<{ path: string; message: string }> {
-  // strict: false, the schemas come from programs and may carry keywords this validator does not know
-  const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
+/** What the validator says about a schema it refuses, without its prefix and internal paths ("schema is invalid: data/type must be ..." becomes "type must be ..."). */
+function schemaProblemOf(err: unknown): string {
+  return getErrorMessage(err).replace(/^schema is invalid:\s*/i, '').replace(/\bdata\//g, '').split('\n')[0]!.slice(0, 200);
+}
+
+function problemsOf(name: string, schema: Record<string, unknown>, payload: unknown): Array<{ path: string; message: string }> {
+  let validate: ReturnType<Ajv['compile']>;
+  try {
+    // strict: false, the schemas come from programs and may carry keywords this validator does not know
+    validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
+  } catch (err) {
+    throw new SchemaUnusableError(
+      `The schema declared by ${name} cannot be used to check a payload (${schemaProblemOf(err)}). ` +
+        'Fix: correct the "schema" in the declaration of the event (queue.registerEvents in @wadeck-app/queue-sdk, or the file given to `queue events register`) so that it is a valid JSON Schema.',
+    );
+  }
   if (validate(payload)) {
     return [];
   }
@@ -202,17 +215,22 @@ export function validateEventPayload(configDir: string, name: string, payloadTex
   if (detail.schema === undefined) {
     return { valid: true, errors: [], verdict: `Valid JSON; ${name} declares no schema, so nothing else was checked` };
   }
-  const errors = problemsOf(detail.schema, payload);
+  const errors = problemsOf(name, detail.schema, payload);
   return errors.length === 0
     ? { valid: true, errors: [], verdict: 'The payload matches the schema' }
     : { valid: false, errors, verdict: `${errors.length} problem${errors.length === 1 ? '' : 's'} against the schema` };
+}
+
+/** The options argument of pushEvent, only when there is something in it (the daemon-side default is the dashboard's working directory). */
+function pushOptions(opts: { cwd?: string }): [] | [{ cwd: string }] {
+  return opts.cwd === undefined ? [] : [{ cwd: opts.cwd }];
 }
 
 /**
  * Pushes the declared example payload of an event through the daemon (or, with `payloadText`, the edited one, validated here again:
  * the page is not trusted): it runs the real subscribers of that event.
  */
-export async function pushTestEvent(configDir: string, name: string, payloadText?: string): Promise<PushResponse> {
+export async function pushTestEvent(configDir: string, name: string, payloadText?: string, opts: { cwd?: string } = {}): Promise<PushResponse> {
   // Before anything else: the daemon would refuse it anyway, this says why in the dashboard's own words and never reaches the daemon
   const reserved = reservedPushProblem(name);
   if (reserved !== undefined) {
@@ -224,7 +242,7 @@ export async function pushTestEvent(configDir: string, name: string, payloadText
       throw new InvalidPayloadError(`The payload was not pushed: ${verdict.errors.map((problem) => (problem.path === '' ? problem.message : `${problem.path}: ${problem.message}`)).join('; ')}`);
     }
     const parsed: unknown = JSON.parse(payloadText);
-    return pushEvent(configDir, name, parsed);
+    return pushEvent(configDir, name, parsed, ...pushOptions(opts));
   }
   const detail = declaredDetailOrThrow(configDir, name, 'example payload to push');
   if (detail.example === undefined) {
@@ -232,7 +250,7 @@ export async function pushTestEvent(configDir: string, name: string, payloadText
       `${name} declares no example payload: add an "example" to its declaration (queue.registerEvents in @wadeck-app/queue-sdk, or the file given to \`queue events register\`), or push it by hand with \`queue push ${name} '<json>'\``,
     );
   }
-  return pushEvent(configDir, name, detail.example);
+  return pushEvent(configDir, name, detail.example, ...pushOptions(opts));
 }
 
 export interface EventPageResponse {

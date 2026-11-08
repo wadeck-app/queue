@@ -179,4 +179,29 @@ describe('ciWaitCommand: no run seen, was anything delivered for this repository
     expect(text).toContain('path/branch filter');
     expect(text).not.toContain('reached the relay in the last 24 h');
   });
+
+  describe('--json on exit 3: the same JSON object as the other results, never an empty stdout', () => {
+    it('relay not running: result "relay-not-running" with the reason and the fix', async () => {
+      const h = harness(() => [], { running: false, connected: false });
+      expect(await ciWaitCommand({ ...base, json: true }, h.deps)).toBe(CI_EXIT.NO_RUN);
+      const parsed = JSON.parse(h.out.join('')) as { sha: string; result: string; reason: string; runs: unknown[] };
+      expect(parsed).toMatchObject({ sha: SHA, result: 'relay-not-running', runs: [] });
+      expect(parsed.reason).toContain('queue relay start');
+    });
+
+    it('no run within the start grace: result "no-run" with the reason and the likely causes', async () => {
+      const h = harness(() => []);
+      expect(await ciWaitCommand({ ...base, json: true }, h.deps)).toBe(CI_EXIT.NO_RUN);
+      const parsed = JSON.parse(h.out.join('')) as { sha: string; result: string; reason: string };
+      expect(parsed).toMatchObject({ sha: SHA, result: 'no-run' });
+      expect(parsed.reason).toContain('path/branch filter');
+      expect(parsed.reason).toContain('gh run list --commit');
+    });
+
+    it('without --json nothing is written to stdout on exit 3', async () => {
+      const h = harness(() => [], { running: false, connected: false });
+      await ciWaitCommand(base, h.deps);
+      expect(h.out.join('')).toBe('');
+    });
+  });
 });

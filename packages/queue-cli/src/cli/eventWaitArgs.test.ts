@@ -112,4 +112,27 @@ describe('parseEventWaitArgs: several events at once', () => {
   it('knows --all and --any', () => {
     expect(EVENT_WAIT_KNOWN_FLAGS).toEqual(expect.arrayContaining(['--all', '--any']));
   });
+
+  it.each([
+    [['onFoo', '--timeout', '5m', '--timeout', '10m'], '--timeout is given twice'],
+    [['onFoo', '--since', '5m', '--since', '10m'], '--since is given twice'],
+  ])('rejects a flag given twice, the second would be silently ignored: %j', (args, expected) => {
+    const result = parseEventWaitArgs(args, NOW);
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { message: string }).message).toContain(expected);
+  });
+
+  it.each([
+    [['onFoo', '--timeout=5m'], '--timeout 5m'],
+    [['onFoo', '--since=10m'], '--since 10m'],
+    [['onFoo', '--when=payload.a=b'], '--when payload.a=b'],
+  ])('refuses the --flag=value form and says to write the flag and its value apart: %j', (args, expected) => {
+    const result = parseEventWaitArgs(args, NOW);
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { message: string }).message).toContain(expected);
+  });
+
+  it('rejects a flag with an empty value', () => {
+    expect((parseEventWaitArgs(['onFoo', '--timeout', ''], NOW) as { message: string }).message).toContain('--timeout needs a value');
+  });
 });

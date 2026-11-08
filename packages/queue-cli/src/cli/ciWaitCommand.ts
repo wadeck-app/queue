@@ -75,8 +75,7 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
       relayChecked = true;
       const relay = await deps.relayStatus();
       if (!relay.running) {
-        io.stderr.write(`[fail] The relay client is not running, so no GitHub event can reach the queue. ${RELAY_HINT}\n`);
-        return CI_EXIT.NO_RUN;
+        return noRun('relay-not-running', `The relay client is not running, so no GitHub event can reach the queue. ${RELAY_HINT}`, [], options, io);
       }
       if (!relay.connected) {
         io.stderr.write('[warn] The relay client is running but not connected to the relay right now; waiting for it to reconnect.\n');
@@ -89,12 +88,11 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
         ? options.workflows.some((w) => !verdict.runs.some((r) => r.name === w))
         : verdict.runs.length === 0;
       if (nothingSeen && elapsedMs >= options.startGraceMs) {
-        io.stderr.write(
-          `[fail] ${verdict.reason} after ${Math.round(elapsedMs / 1000)}s. ${deliveryHint(options.repo, deps.readEntries(nowMs - options.lookbackMs))}Likely causes: the workflow has a path/branch filter that skips this commit, ` +
+        const reason =
+          `${verdict.reason} after ${Math.round(elapsedMs / 1000)}s. ${deliveryHint(options.repo, deps.readEntries(nowMs - options.lookbackMs))}Likely causes: the workflow has a path/branch filter that skips this commit, ` +
           `GitHub did not deliver the webhook (see "queue relay webhook history"), or the relay does not forward workflow_run events. ` +
-          `Cross-check with "gh run list --commit ${options.sha}".\n`,
-        );
-        return CI_EXIT.NO_RUN;
+          `Cross-check with "gh run list --commit ${options.sha}".`;
+        return noRun('no-run', reason, verdict.runs, options, io);
       }
     }
 
@@ -115,6 +113,15 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
     }
     await deps.sleep(options.pollMs);
   }
+}
+
+/** Exit 3: the reason goes to stderr, and with --json also to stdout as an object like the other results (an agent reads stdout only). */
+function noRun(result: 'no-run' | 'relay-not-running', reason: string, runs: CiRun[], options: CiWaitCommandOptions, io: WaitIO): number {
+  io.stderr.write(`[fail] ${reason}\n`);
+  if (options.json) {
+    io.stdout.write(JSON.stringify({ sha: options.sha, result, reason, runs }, null, 2) + '\n');
+  }
+  return CI_EXIT.NO_RUN;
 }
 
 function report(

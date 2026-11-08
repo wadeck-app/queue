@@ -8,7 +8,7 @@ const mockPushEvent = vi.hoisted(() => vi.fn());
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
 
 import { getEvents, getEventPage, pushTestEvent, validateEventPayload, excerptOf } from './events.js';
-import { InvalidPayloadError, InvalidQueryError, TestPayloadNotFoundError } from './errors.js';
+import { InvalidPayloadError, InvalidQueryError, SchemaUnusableError, TestPayloadNotFoundError } from './errors.js';
 
 const MINUTE = 60_000;
 const NOW = Date.parse('2026-10-24T12:00:00.000Z');
@@ -206,6 +206,15 @@ describe('pushTestEvent', () => {
     expect(response).toEqual({ status: 'queued', eventId: 'e1' });
   });
 
+  it('pushes from the working directory it is given, for the declared example and for an edited payload', async () => {
+    fixture();
+    mockPushEvent.mockResolvedValue({ status: 'queued', eventId: 'e1' });
+    await pushTestEvent(configDir, 'job.started', undefined, { cwd: '/work/app' });
+    expect(mockPushEvent).toHaveBeenLastCalledWith(configDir, 'job.started', { jobId: 'nightly' }, { cwd: '/work/app' });
+    await pushTestEvent(configDir, 'job.started', '{"jobId":"mine"}', { cwd: '/work/app' });
+    expect(mockPushEvent).toHaveBeenLastCalledWith(configDir, 'job.started', { jobId: 'mine' }, { cwd: '/work/app' });
+  });
+
   it('refuses a declared event without example, naming the fix, and pushes nothing', async () => {
     fixture();
     await expect(pushTestEvent(configDir, 'job.completed')).rejects.toThrowError(TestPayloadNotFoundError);
@@ -386,6 +395,26 @@ describe('validateEventPayload (the edited example, checked against the declared
   it('refuses a name nobody declares, with the closest names', () => {
     expect(() => validateEventPayload(configDir, 'job.completd', '{}')).toThrowError(TestPayloadNotFoundError);
     expect(() => validateEventPayload(configDir, 'job.completd', '{}')).toThrowError(/job\.completed/);
+  });
+});
+
+describe('a declared schema that cannot be compiled', () => {
+  beforeEach(() => {
+    declare('orchestrator', [{ name: 'job.broken', description: 'd', schema: { type: 'not-a-json-schema-type' }, example: { jobId: 'x' } }]);
+  });
+
+  it('validateEventPayload throws a SchemaUnusableError that names the event and the fix, not the validator internals', () => {
+    const run = (): unknown => validateEventPayload(configDir, 'job.broken', '{}');
+    expect(run).toThrowError(SchemaUnusableError);
+    expect(run).toThrowError(/job.broken/);
+    expect(run).toThrowError(/Fix:.*schema/);
+    expect(run).toThrowError(/type must be/);
+    expect(run).not.toThrowError(/schema is invalid|data\/|ajv/i);
+  });
+
+  it('pushTestEvent with an edited payload pushes nothing and says the same', async () => {
+    await expect(pushTestEvent(configDir, 'job.broken', '{}')).rejects.toThrowError(SchemaUnusableError);
+    expect(mockPushEvent).not.toHaveBeenCalled();
   });
 });
 

@@ -8,7 +8,7 @@ import { getBreakdown } from './breakdown.js';
 import { listPending } from './pending.js';
 import { listHistory, getHistoryEntry } from './history.js';
 import { replayEvent } from './replay.js';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError, RelayStatusError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, SchemaUnusableError, LogFileNotFoundError, LogFileInUseError, RelayStatusError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { listDlq, replayDlqEntry, clearDlqEntry } from './dlq.js';
 import { getLogs } from './logs.js';
@@ -27,7 +27,8 @@ import { defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { pushEvent } from './push.js';
 import { parseHistoryQuery, validateSingleString } from './historyQuery.js';
 import { getOverviewRange } from './overviewRange.js';
-import { pushAnswer, dlqReplayAnswer, dlqClearAnswer, retryAnswer } from './httpAnswers.js';
+import { pushAnswer, dlqReplayAnswer, dlqClearAnswer, retryAnswer, withPushOrigin, type PushOrigin } from './httpAnswers.js';
+import { resolveProjectCwd } from './projectCwd.js';
 
 interface QueryParams { [key: string]: string | string[] | undefined }
 
@@ -51,6 +52,23 @@ function logFilesErrorStatus(err: unknown): number {
     return 404;
   }
   return err instanceof LogFileInUseError ? 409 : 500;
+}
+
+/**
+ * Where a push is made from: the working directory of the registered project given as `project` (id), else the explicit `cwd`, else the one of this process
+ * (where app-core runs, which is in no project). Both `project` and `cwd` is refused: the answer could not say which one was used. An empty `project` is absent
+ * (a cleared control of the page).
+ */
+function originOf(body: unknown, explicitCwd: string | undefined): PushOrigin {
+  const project = isRecord(body) && body['project'] !== '' ? body['project'] : undefined;
+  if (project !== undefined && explicitCwd !== undefined) {
+    throw new InvalidQueryError('Give either "project" (the id of a registered project) or "cwd", not both: the push can only come from one working directory.');
+  }
+  if (project !== undefined) {
+    const { cwd, projectName } = resolveProjectCwd(defaultRegistryDir(process.env), project);
+    return { kind: 'project', projectName, cwd };
+  }
+  return explicitCwd === undefined ? { kind: 'process', cwd: process.cwd() } : { kind: 'cwd', cwd: explicitCwd };
 }
 
 /**
@@ -180,11 +198,16 @@ export default function (ctx: ModuleContext): void {
   });
 
   // Deletes what the retention policy would delete now in one directory (kind: logs | history); recomputed here, never the preview.
-  // 400 bad kind, 500 unreadable directory; a file that cannot be deleted is reported in the 200 body
+  // 400 bad kind, 500 unreadable directory. A file that cannot be deleted is a 500 too (the page shows the `error`, a 200 without `successMessage` shows nothing):
+  // the body keeps everything the 200 carries (what was deleted, the failures) plus ok: false, failedCount and the same text as `error`
   ctx.registerRoute('POST', '/log-files/:kind/prune', (req, reply) => {
     const { kind } = req.params;
     try {
-      return reply.code(200).send(pruneLogFiles(configDir, kind));
+      const result = pruneLogFiles(configDir, kind);
+      if (result.failures.length > 0) {
+        return reply.code(500).send({ ...result, ok: false, failedCount: result.failures.length, error: result.message });
+      }
+      return reply.code(200).send(result);
     } catch (err) {
       return reply.code(logFilesErrorStatus(err)).send({ error: getErrorMessage(err) });
     }
@@ -232,25 +255,37 @@ export default function (ctx: ModuleContext): void {
     try {
       return reply.code(200).send(validateEventPayload(configDir, name, body['payload']));
     } catch (err) {
-      return reply.code(err instanceof TestPayloadNotFoundError ? 404 : 500).send({ error: getErrorMessage(err) });
+      const status = err instanceof TestPayloadNotFoundError ? 404 : err instanceof SchemaUnusableError ? 422 : 500;
+      return reply.code(status).send({ error: getErrorMessage(err) });
     }
   });
 
   // Pushes the declared example of the event through the daemon, or the edited one when the body carries { payload: "<json text>" }:
-  // it runs the real subscribers of that event
+  // it runs the real subscribers of that event. A `payload` that is not a string is a 400 (never silently replaced by the example). `project` (id of a registered
+  // project) pushes from its working directory, so that the subscribers limited to it match; the answer's `message` says which directory was used.
   ctx.registerRoute('POST', '/events/:name/push-test', async (req, reply) => {
     const { name } = req.params;
     const body = (req as { body?: unknown }).body;
-    const payloadText = isRecord(body) && typeof body['payload'] === 'string' ? body['payload'] : undefined;
+    if (isRecord(body) && 'payload' in body && typeof body['payload'] !== 'string') {
+      return reply.code(400).send({ error: `POST /events/${name}/push-test: payload must be a string (the JSON text to push), got ${body['payload'] === null ? 'null' : Array.isArray(body['payload']) ? 'an array' : `a ${typeof body['payload']}`}. Omit it to push the declared example.` });
+    }
+    const payloadText = isRecord(body) ? (body['payload'] as string | undefined) : undefined;
     try {
-      const answer = pushAnswer(await pushTestEvent(configDir, name, ...(payloadText === undefined ? [] : [payloadText])));
+      const origin = originOf(body, undefined);
+      const pushed = origin.kind === 'process'
+        ? await (payloadText === undefined ? pushTestEvent(configDir, name) : pushTestEvent(configDir, name, payloadText))
+        : await pushTestEvent(configDir, name, payloadText, { cwd: origin.cwd });
+      const answer = withPushOrigin(pushAnswer(pushed), origin);
       return reply.code(answer.code).send(answer.body);
     } catch (err) {
-      if (err instanceof TestPayloadNotFoundError) {
+      if (err instanceof TestPayloadNotFoundError || err instanceof UnknownProjectError) {
         return reply.code(404).send({ error: getErrorMessage(err) });
       }
-      if (err instanceof InvalidPayloadError || err instanceof ReservedEventError) {
+      if (err instanceof InvalidPayloadError || err instanceof ReservedEventError || err instanceof InvalidQueryError) {
         return reply.code(400).send({ error: getErrorMessage(err) });
+      }
+      if (err instanceof SchemaUnusableError) {
+        return reply.code(422).send({ error: getErrorMessage(err) });
       }
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
@@ -421,7 +456,7 @@ export default function (ctx: ModuleContext): void {
     // Validate body before try block
     if (!isRecord(body)) {
       return reply.code(400).send({
-        error: `POST /push expects a JSON body { event: string, payload?: any, cwd?: string, timeout?: number }; got: ${JSON.stringify(body)}`,
+        error: `POST /push expects a JSON body { event: string, payload?: any, cwd?: string, project?: string, timeout?: number }; got: ${JSON.stringify(body)}`,
       });
     }
 
@@ -443,11 +478,21 @@ export default function (ctx: ModuleContext): void {
     }
 
     try {
-      const answer = pushAnswer(await pushEvent(configDir, event, payload, { cwd: cwd as string | undefined, timeout: timeout as number | undefined }));
+      const origin = originOf(body, cwd as string | undefined);
+      const answer = withPushOrigin(
+        pushAnswer(await pushEvent(configDir, event, payload, { cwd: origin.kind === 'process' ? undefined : origin.cwd, timeout: timeout as number | undefined })),
+        origin,
+      );
       return reply.code(answer.code).send(answer.body);
     } catch (err) {
       if (err instanceof DaemonUnreachableError) {
         return reply.code(503).send({ error: getErrorMessage(err) });
+      }
+      if (err instanceof UnknownProjectError) {
+        return reply.code(404).send({ error: getErrorMessage(err) });
+      }
+      if (err instanceof InvalidQueryError) {
+        return reply.code(400).send({ error: getErrorMessage(err) });
       }
       return reply.code(500).send({ error: getErrorMessage(err) });
     }

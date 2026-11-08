@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { WebSocketServer } from 'ws';
 import { isRecord } from '@wadeck-app/queue-core';
-import { RelayConnection } from './RelayConnection.js';
+import { RelayConnection, computeReconnectDelay } from './RelayConnection.js';
 import { waitFor } from './testing/waitFor.js';
 import { installLogicalClock } from './testing/logicalClock.js';
 
@@ -804,15 +804,21 @@ plugins:
     });
 
     describe('(f) Jitter factor [0.8, 1.2]', () => {
-      // Exported function for testing jitter calculations (will be added to RelayConnection.ts)
-      // computeReconnectDelay(baseMs: number, random: () => number): number
-      it('verifies jitter formula: baseMs * (0.8 + random() * 0.4)', () => {
-        // This will be tested via direct export of computeReconnectDelay function
-        // Expected behavior:
-        // - random() = 0: baseMs * 0.8
-        // - random() = 0.5: baseMs * 1.0
-        // - random() = 1: baseMs * 1.2
-        expect(1).toBe(1); // Placeholder; real test in separate suite
+      it('random() = 0 -> 0.8 x base, 0.5 -> 1.0 x base, 1 -> 1.2 x base', () => {
+        expect(computeReconnectDelay(10_000, 1_000, () => 0)).toBe(8_000);
+        expect(computeReconnectDelay(10_000, 1_000, () => 0.5)).toBe(10_000);
+        expect(computeReconnectDelay(10_000, 1_000, () => 1)).toBe(12_000);
+      });
+
+      it('rounds to whole milliseconds', () => {
+        // 1001 * (0.8 + 0.25 * 0.4) = 900.9
+        expect(computeReconnectDelay(1_001, 1_000, () => 0.25)).toBe(901);
+      });
+
+      it('a base under minMs is raised to minMs BEFORE the jitter (Math.max floor)', () => {
+        expect(computeReconnectDelay(100, 5_000, () => 0.5)).toBe(5_000);
+        expect(computeReconnectDelay(100, 5_000, () => 0)).toBe(4_000);
+        expect(computeReconnectDelay(100, 5_000, () => 1)).toBe(6_000);
       });
     });
 
@@ -2719,7 +2725,7 @@ plugins:
 
   describe('R9: subscriptionCount ack and HTTP 429 handling', () => {
     describe('(a) subscriptionCount ack with multiple plugins: no warning when count >= subscribes sent', () => {
-      it('2 plugins same source, server acks with subscriptionCount 1,2 -> NO warning, logs Subscribed with count', async () => {
+      it('2 plugins, server acks with subscriptionCount 1,2 -> NO warning, logs Subscribed with count', async () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         const receivedMessages: Array<Record<string, unknown>> = [];
@@ -2742,7 +2748,7 @@ plugins:
         writeFileSync(
           plugin2Path,
           `export default {
-  source: 'github',
+  source: 'gitlab',
   mapEvent: (e) => ({ event: \`on.github2.\${e.eventType}\`, payload: e.payload })
 };`
         );
@@ -2817,7 +2823,7 @@ plugins:
     });
 
     describe('(b) subscriptionCount ack missing: warning when > 1 subscribe sent', () => {
-      it('2 plugins same source, server acks WITHOUT subscriptionCount -> exactly one warning naming second plugin', async () => {
+      it('2 plugins, server acks WITHOUT subscriptionCount -> exactly one warning naming second plugin', async () => {
         tmpDir = makeTmpDir();
         const logs: string[] = [];
         const receivedMessages: Array<Record<string, unknown>> = [];
@@ -2840,7 +2846,7 @@ plugins:
         writeFileSync(
           plugin2Path,
           `export default {
-  source: 'test',
+  source: 'test2',
   mapEvent: (e) => ({ event: \`test2.\${e.eventType}\`, payload: e.payload })
 };`
         );
@@ -3010,7 +3016,7 @@ plugins:
         writeFileSync(
           plugin2Path,
           `export default {
-  source: 'test',
+  source: 'test2',
   mapEvent: (e) => ({ event: \`test2.\${e.eventType}\`, payload: e.payload })
 };`
         );

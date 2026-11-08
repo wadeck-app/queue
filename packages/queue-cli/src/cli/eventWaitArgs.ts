@@ -49,9 +49,13 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
+    const joined = [...EVENT_WAIT_FLAGS_WITH_VALUE].find((flag) => arg.startsWith(`${flag}=`));
+    if (joined !== undefined) {
+      return { ok: false, message: `${arg} is not supported: write the flag and its value apart, ${joined} ${arg.slice(joined.length + 1)}` };
+    }
     if (EVENT_WAIT_FLAGS_WITH_VALUE.has(arg)) {
       const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
+      if (value === undefined || value === '' || value.startsWith('--')) {
         return { ok: false, message: `${arg} needs a value.` };
       }
       i++;
@@ -67,6 +71,9 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
         current.whens.push(value);
       } else if (singles[arg] === undefined) {
         singles[arg] = value;
+      } else {
+        // The first would win and the second be dropped without a word
+        return { ok: false, message: `${arg} is given twice (${JSON.stringify(singles[arg])} and ${JSON.stringify(value)}): give it once.` };
       }
     } else if (!arg.startsWith('-')) {
       // A wildcard that is not a whole segment ("dep.pub*") would silently never match: refuse it now

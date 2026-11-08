@@ -9,13 +9,30 @@ export interface RelayStopIO {
   stderr: { write: (s: string) => void };
 }
 
+export const RELAY_STOP_WAIT_MS = 5000;
+const RELAY_STOP_POLL_MS = 100;
+
+/** Time sources and limits of the wait for the daemon to be gone; tests inject their own. */
+export interface RelayStopOptions {
+  waitMs?: number;
+  pollMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
 /**
- * Stop the relay client with three distinct outcomes:
+ * Stop the relay client with three distinct outcomes; success is judged by the daemon being gone, never by the quit call alone
+ * (like `queue stop`):
  * (a) Not running (idempotent) -> [ok], exit 0
- * (b) Running but quit fails -> [fail] with error + log hint, exit 1
- * (c) Success -> [ok], exit 0
+ * (b) Running and still running after the quit and the wait -> [fail] with error + log hint, exit 1
+ * (c) Running and gone after the quit -> [ok], exit 0
  */
-export async function relayStop(client: DaemonClient<RelayCommands>, configDir: string, io: RelayStopIO): Promise<number> {
+export async function relayStop(client: DaemonClient<RelayCommands>, configDir: string, io: RelayStopIO, options: RelayStopOptions = {}): Promise<number> {
+  const waitMs = options.waitMs ?? RELAY_STOP_WAIT_MS;
+  const pollMs = options.pollMs ?? RELAY_STOP_POLL_MS;
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
   // Check if relay is currently running; if not, this is an idempotent stop (case a)
   const isRunning = await client.isRunning().catch(() => false);
   if (!isRunning) {
@@ -24,28 +41,35 @@ export async function relayStop(client: DaemonClient<RelayCommands>, configDir: 
     return 0;
   }
 
-  // Relay is running; attempt to stop it
+  let quitError: unknown;
   try {
     // 'quit' is a built-in daemon command; cast to bypass typing
     await (client.send as (cmd: string, payload?: unknown) => Promise<unknown>)('quit', undefined);
-    // Success case (c)
-    io.stdout.write('[ok] relay client stopped\n');
-    return 0;
   } catch (err) {
-    // Quit failed. Check if relay is still running: if it exited between our
-    // isRunning() check above and now, treat as idempotent success (case a),
-    // not a hard failure (case b).
-    const stillRunning = await client.isRunning().catch(() => false);
-    if (!stillRunning) {
-      // Daemon exited between isRunning() and quit() - idempotent
-      io.stderr.write('[ok] relay client was not running\n');
+    // The daemon may close the connection while it exits: only the state afterwards decides
+    quitError = err;
+  }
+
+  const deadline = now() + waitMs;
+  for (;;) {
+    if (!(await client.isRunning().catch(() => false))) {
+      if (quitError === undefined) {
+        io.stdout.write('[ok] relay client stopped\n');
+      } else {
+        // Exited between the isRunning() check and the quit: idempotent
+        io.stderr.write('[ok] relay client was not running\n');
+      }
       return 0;
     }
-    // Error case (b): relay is still running but quit failed
-    const errorMsg = getErrorMessage(err);
-    const logPath = join(relayStateDir(configDir), 'relay.log');
-    io.stderr.write(`[fail] relay client did not stop: ${errorMsg}\n`);
-    io.stderr.write(`       Check ${logPath} for details\n`);
-    return 1;
+    if (now() >= deadline) {
+      break;
+    }
+    await sleep(pollMs);
   }
+
+  const why = quitError !== undefined ? getErrorMessage(quitError) : `it was still running after ${waitMs} ms`;
+  const logPath = join(relayStateDir(configDir), 'relay.log');
+  io.stderr.write(`[fail] relay client did not stop: ${why}\n`);
+  io.stderr.write(`       Check ${logPath} for details, then stop the process by hand (its pid is in 'queue relay status')\n`);
+  return 1;
 }

@@ -3,6 +3,11 @@ function field(value: unknown, key: string): unknown {
   return typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined;
 }
 
+/** All whitespace runs (newlines included) become one space: a summary is one line. */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 /**
  * One-line description of a GitHub webhook payload (repository, actor, action, ref, commit, PR/issue/run/comment).
  * Null when the payload has none of the known fields. The relay client caps the length.
@@ -37,13 +42,16 @@ export function summarizeGithubPayload(payload: Record<string, unknown>): string
   // Commit message first line
   const commitMsg = field(field(payload, 'head_commit'), 'message');
   if (typeof commitMsg === 'string') {
-    const firstLine = commitMsg.split('\n')[0];
+    const firstLine = oneLine(commitMsg.split('\n')[0]);
     parts.push(`"${firstLine}"`);
   }
 
-  // Commits count
+  // A push that deletes a ref says so (GitHub sets `deleted`; `after` is all zeros) instead of "0 commits"
   const commits = field(payload, 'commits');
-  if (Array.isArray(commits)) {
+  const after = field(payload, 'after');
+  if (field(payload, 'deleted') === true || (typeof after === 'string' && /^0+$/.test(after))) {
+    parts.push('deleted');
+  } else if (Array.isArray(commits)) {
     parts.push(`${commits.length} commits`);
   }
 
@@ -53,7 +61,7 @@ export function summarizeGithubPayload(payload: Record<string, unknown>): string
     const num = field(pr, 'number');
     const title = field(pr, 'title');
     if (typeof num === 'number' && typeof title === 'string') {
-      parts.push(`#${num} ${title}`);
+      parts.push(`#${num} ${oneLine(title)}`);
     }
   }
 
@@ -63,7 +71,7 @@ export function summarizeGithubPayload(payload: Record<string, unknown>): string
     const num = field(issue, 'number');
     const title = field(issue, 'title');
     if (typeof num === 'number' && typeof title === 'string') {
-      parts.push(`#${num} ${title}`);
+      parts.push(`#${num} ${oneLine(title)}`);
     }
   }
 
@@ -90,7 +98,8 @@ export function summarizeGithubPayload(payload: Record<string, unknown>): string
   // Comment body (first 40 chars)
   const comment = field(field(payload, 'comment'), 'body');
   if (typeof comment === 'string') {
-    const truncated = comment.length > 40 ? comment.slice(0, 40) + '...' : comment;
+    const flat = oneLine(comment);
+    const truncated = flat.length > 40 ? flat.slice(0, 40) + '...' : flat;
     parts.push(`comment: "${truncated}"`);
   }
 

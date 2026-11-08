@@ -113,11 +113,17 @@ describe.each(PUSH_ROUTES)('%s: a refused push is not a success', (route, req, m
     expect(body).toMatchObject({ status: 'queued', eventId: 'e1', subscriberCount: 0 });
   });
 
-  it('queued with subscribers: 200, the daemon answer unchanged, no message', async () => {
+  it('queued with subscribers: 200, the daemon answer unchanged; a push (not a replay) adds a message that only says the working directory it used', async () => {
     mock.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 2 });
     const { status, body } = await call(route, req);
     expect(status).toBe(200);
-    expect(body).toEqual({ status: 'queued', eventId: 'e1', subscriberCount: 2 });
+    if (route === 'POST /history/:eventId/replay') {
+      expect(body).toEqual({ status: 'queued', eventId: 'e1', subscriberCount: 2 });
+      return;
+    }
+    expect(body).toMatchObject({ status: 'queued', eventId: 'e1', subscriberCount: 2 });
+    expect(String(body['message'])).toMatch(/^Pushed with the working directory of the dashboard process /);
+    expect(String(body['message'])).not.toMatch(/no subscriber/);
   });
 });
 

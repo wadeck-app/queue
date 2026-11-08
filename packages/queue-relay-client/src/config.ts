@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { z } from 'zod';
-import { getErrorMessage } from '@wadeck-app/queue-core';
+import { getErrorMessage, isRecord, nearestEventNames } from '@wadeck-app/queue-core';
 import { resolveRelayToken } from './secrets.js';
 
 const SubscriptionConfigSchema = z.object({
@@ -10,13 +10,13 @@ const SubscriptionConfigSchema = z.object({
   payloadMatch: z.record(z.string().min(1), z.union([z.string(), z.number(), z.boolean()])).optional(),
   /** Overrides the plugin's own mapEvent-derived event name when set. */
   queueEvent: z.string().nullable().optional(),
-});
+}).strict();
 
 const PluginConfigSchema = z.object({
   /** Package name to dynamically import, e.g. "@wadeck-app/plugin-github". */
   module: z.string().min(1),
   subscriptions: z.array(SubscriptionConfigSchema).min(1),
-});
+}).strict();
 
 // Validate relayUrl: must be wss://, or ws:// with localhost/127.0.0.1/[::1]
 // Returns the validation result and error message if invalid
@@ -75,7 +75,43 @@ export const RelayConfigSchema = z.object({
   /** Token is resolved from env/secrets after this schema validates; may be undefined during parsing. */
   token: z.string().min(1).optional(),
   plugins: z.array(PluginConfigSchema).default([]),
-});
+}).strict();
+
+const TOP_LEVEL_KEYS = ['relayUrl', 'token', 'plugins'];
+const PLUGIN_KEYS = ['module', 'subscriptions'];
+const SUBSCRIPTION_KEYS = ['eventType', 'payloadMatch', 'queueEvent'];
+
+function unknownKeysOf(value: unknown, known: readonly string[], where: string): string[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+  return Object.keys(value)
+    .filter((key) => !known.includes(key))
+    .map((key) => {
+      const suggestion = nearestEventNames(key, [...known])[0];
+      return `${where}: unknown key '${key}'${suggestion === undefined ? ` (valid keys: ${known.join(', ')})` : ` (did you mean '${suggestion}'?)`}`;
+    });
+}
+
+/**
+ * The keys of a parsed relay.yml that nothing reads. A typo such as `eventTypes` would otherwise be dropped and leave a
+ * subscription that matches EVERY event. Works on the raw YAML value; a value of the wrong shape is the schema's to report.
+ */
+export function findUnknownRelayKeys(raw: unknown): string[] {
+  const found = unknownKeysOf(raw, TOP_LEVEL_KEYS, 'top level of the file');
+  if (!isRecord(raw) || !Array.isArray(raw['plugins'])) {
+    return found;
+  }
+  raw['plugins'].forEach((plugin: unknown, pluginIndex) => {
+    found.push(...unknownKeysOf(plugin, PLUGIN_KEYS, `plugins[${pluginIndex}]`));
+    if (isRecord(plugin) && Array.isArray(plugin['subscriptions'])) {
+      plugin['subscriptions'].forEach((subscription: unknown, index) => {
+        found.push(...unknownKeysOf(subscription, SUBSCRIPTION_KEYS, `plugins[${pluginIndex}].subscriptions[${index}]`));
+      });
+    }
+  });
+  return found;
+}
 
 export type RelayConfig = Omit<z.infer<typeof RelayConfigSchema>, 'token'> & {
   /** Always present after loadRelayConfig succeeds; resolved from env/secrets or relay.yml. */
@@ -103,6 +139,14 @@ export function loadRelayConfig(configDir: string): (RelayConfig & { tokenSource
     throw new Error(
       `[queue-relay-client] Failed to parse YAML at ${filePath}: ${getErrorMessage(err)}\n` +
       `Fix the YAML syntax and retry.`
+    );
+  }
+
+  const unknownKeys = findUnknownRelayKeys(raw);
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `[queue-relay-client] Invalid relay.yml at ${filePath}:\n${unknownKeys.map((line) => `  - ${line}`).join('\n')}\n` +
+      `Fix or remove the key(s): they would be ignored, and a misspelled filter widens the subscription (valid subscription keys: ${SUBSCRIPTION_KEYS.join(', ')}).`
     );
   }
 

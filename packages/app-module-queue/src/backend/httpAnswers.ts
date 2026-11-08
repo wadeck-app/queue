@@ -34,6 +34,29 @@ export function pushAnswer(response: PushResponse): HttpAnswer {
   return { code: 200, body: response };
 }
 
+/** Where a push came from, for the answer: a registered project, an explicit folder, or (neither) the working directory of the dashboard process. */
+export type PushOrigin = { kind: 'project'; projectName: string; cwd: string } | { kind: 'cwd'; cwd: string } | { kind: 'process'; cwd: string };
+
+function originNote(origin: PushOrigin): string {
+  if (origin.kind === 'project') {
+    return `Pushed with the working directory of project "${origin.projectName}": ${origin.cwd}.`;
+  }
+  if (origin.kind === 'cwd') {
+    return `Pushed with the working directory ${origin.cwd}.`;
+  }
+  return `Pushed with the working directory of the dashboard process (${origin.cwd}): subscribers limited to a project do not match from there. Fix: give "project" (the id of a registered project) to push from that project.`;
+}
+
+/** Adds to the `message` of a successful push the working directory it was matched against (the subscribers of a project only match their own). A refusal is left as it is. */
+export function withPushOrigin(answer: HttpAnswer, origin: PushOrigin): HttpAnswer {
+  if (answer.code !== 200 || typeof answer.body !== 'object' || answer.body === null) {
+    return answer;
+  }
+  const body = answer.body as { message?: string };
+  const note = originNote(origin);
+  return { code: 200, body: { ...body, message: body.message === undefined ? note : `${body.message} ${note}` } };
+}
+
 export function dlqReplayAnswer(response: DlqReplayResponse, id: string): HttpAnswer {
   if (response.status === 'not-found') {
     return { code: 404, body: { error: `No DLQ entry with id ${id}: it was already replayed or cleared. Reload the page.` } };

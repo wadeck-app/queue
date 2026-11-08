@@ -1,0 +1,63 @@
+/**
+ * `queue wait ci` arguments: a value flag without its value, with an empty value, in the `--flag=value` form or given twice is a usage error
+ * (exit 4 through queueWaitCommand), never a silent fallback to the default (found by review: `--timeout` alone and `--timeout=5m` waited 30 minutes).
+ */
+import { describe, it, expect } from 'vitest';
+import { parseCiWaitArgs } from './ciWaitArgs.js';
+
+function message(args: string[]): string {
+  const parsed = parseCiWaitArgs(args);
+  if (parsed.ok) {
+    throw new Error(`expected a usage error for ${JSON.stringify(args)}, got ${JSON.stringify(parsed)}`);
+  }
+  return parsed.message;
+}
+
+describe('parseCiWaitArgs', () => {
+  it('reads the sha, the single-value flags, the repeatable --workflow and the switches', () => {
+    expect(parseCiWaitArgs(['abc1234', '--repo', 'o/r', '--workflow', 'CI', '--workflow', 'Lint', '--timeout', '5m', '--settle', '2s', '--json', '--no-infer'])).toEqual({
+      ok: true,
+      sha: 'abc1234',
+      repo: 'o/r',
+      workflows: ['CI', 'Lint'],
+      timeout: '5m',
+      settle: '2s',
+      json: true,
+      noInfer: true,
+    });
+  });
+
+  it('a flag before the sha does not hide the sha, and no flag means no value', () => {
+    expect(parseCiWaitArgs(['--workflow', 'CI', 'abc1234'])).toMatchObject({ ok: true, sha: 'abc1234', workflows: ['CI'] });
+    expect(parseCiWaitArgs([])).toEqual({ ok: true, workflows: [], json: false, noInfer: false });
+  });
+
+  it.each([
+    [['--timeout'], '--timeout needs'],
+    [['abc1234', '--timeout'], '--timeout needs'],
+    [['--timeout', '--json'], '--timeout needs'],
+    [['--timeout', ''], '--timeout needs'],
+    [['--repo'], '--repo needs'],
+    [['--repo', ''], '--repo needs'],
+    [['--workflow'], '--workflow needs'],
+    [['--workflow', '--json'], '--workflow needs'],
+    [['--settle'], '--settle needs'],
+  ])('%j is a usage error naming the flag and what to write', (args, expected) => {
+    expect(message(args)).toContain(expected);
+  });
+
+  it('refuses the --flag=value form and says to write the flag and its value apart', () => {
+    expect(message(['--timeout=5m'])).toContain('--timeout 5m');
+    expect(message(['--repo=o/r'])).toContain('--repo o/r');
+    expect(message(['--workflow=CI'])).toContain('--workflow CI');
+  });
+
+  it('refuses a single-value flag given twice: the second would be silently ignored', () => {
+    expect(message(['--timeout', '5m', '--timeout', '10m'])).toContain('--timeout is given twice');
+    expect(message(['--repo', 'a/b', '--repo', 'c/d'])).toContain('--repo is given twice');
+  });
+
+  it('a second positional is a usage error, not a silently ignored word', () => {
+    expect(message(['abc1234', 'def5678'])).toContain("unexpected argument 'def5678'");
+  });
+});

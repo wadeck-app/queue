@@ -1,5 +1,6 @@
 import { loadRelayConfig } from '@wadeck-app/queue-relay-client/dist/config.js';
 import { createRelayApiClient, httpBaseFromRelayUrl, summarizePayload } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
+import { getErrorMessage } from '@wadeck-app/queue-core';
 import githubPlugin from '@wadeck-app/plugin-github';
 import gitlabPlugin from '@wadeck-app/plugin-gitlab';
 import { InvalidQueryError, RelayNotConfiguredError } from './errors.js';
@@ -38,7 +39,14 @@ export interface DeliveryRow {
  * A missing relay.yml or token throws with what to do: an empty list would hide the mistake.
  */
 function openRelayApi(configDir: string): { api: ReturnType<typeof createRelayApiClient>; origin: string } {
-  const config = loadRelayConfig(configDir);
+  let config: ReturnType<typeof loadRelayConfig>;
+  try {
+    config = loadRelayConfig(configDir);
+  } catch (err) {
+    // A missing token or an unreadable relay.yml is the same situation as a missing relay.yml for the dashboard: this machine is not set up to ask the relay.
+    // The message already says what to fix (file, key, location of the token).
+    throw new RelayNotConfiguredError(getErrorMessage(err));
+  }
   if (config === null) {
     throw new RelayNotConfiguredError(
       `No relay.yml in ${configDir}. Create it with relayUrl: wss://<relay-host>/relay-ws and a plugins list (see "queue relay --help").`,

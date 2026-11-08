@@ -46,9 +46,14 @@ describe('listWebhooks', () => {
     await expect(listWebhooks('/cfg')).rejects.toThrowError(/No relay\.yml in \/cfg.*relayUrl/);
   });
 
-  it('lets a configuration error (missing token, bad yaml) through with its own message', async () => {
-    mockLoadRelayConfig.mockImplementation(() => { throw new Error('QUEUE_RELAY_TOKEN is not set: put it in _secrets_/.env.local'); });
-    await expect(listWebhooks('/cfg')).rejects.toThrowError(/QUEUE_RELAY_TOKEN/);
+  it.each([
+    ['missing token', 'No relay token found. Put QUEUE_RELAY_TOKEN in _secrets_/.env.local'],
+    ['bad yaml', '[queue-relay-client] Failed to parse YAML at /cfg/relay.yml: bad indentation. Fix the YAML syntax and retry.'],
+  ])('a configuration error (%s) is a RelayNotConfiguredError (503, like a missing relay.yml) that keeps its own message', async (_name, message) => {
+    mockLoadRelayConfig.mockImplementation(() => { throw new Error(message); });
+    await expect(listWebhooks('/cfg')).rejects.toThrowError(RelayNotConfiguredError);
+    await expect(listWebhooks('/cfg')).rejects.toThrowError(message);
+    await expect(listDeliveries('/cfg', {})).rejects.toThrowError(RelayNotConfiguredError);
   });
 });
 

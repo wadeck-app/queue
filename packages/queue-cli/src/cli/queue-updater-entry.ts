@@ -4,6 +4,7 @@
 import { runUpdater, execNpm, appendLog } from '@wadeck-app/shared-updater';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { join } from 'node:path';
+import { prepareSelfCheck } from './updaterSelfCheck.js';
 import { registerAfterUpdate, readAppModuleVersion } from './registerAfterUpdate.js';
 import { registerWithAppCore } from '../daemon/AppCoreRegistration.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -28,15 +29,12 @@ if (!isReleaseVersion(currentVersion)) {
 
 // Compute self-check command so shared-updater can verify the install after upgrade.
 // Must be set before runUpdater() reads UPDATER_SELF_CHECK_CMD.
-let npmRoot: string | undefined;
-try {
-    npmRoot = execNpm(['root', '-g'], { timeout: 10_000 }).trim();
-    const selfCheckCmd = `${process.execPath} ${join(npmRoot, PKG_NAME, 'queue.cjs')} cli self-check`;
-    if (!process.env['UPDATER_SELF_CHECK_CMD']) {
-        process.env['UPDATER_SELF_CHECK_CMD'] = selfCheckCmd;
-    }
-} catch {
-    // Skip self-check if npm root is unavailable - update proceeds without verification.
+const selfCheck = prepareSelfCheck({ pkgName: PKG_NAME, execPath: process.execPath, execNpm: (args) => execNpm(args, { timeout: 10_000 }), env: process.env });
+const npmRoot = selfCheck.npmRoot;
+if (selfCheck.warning !== undefined) {
+    // stderr is shown by 'queue cli update' (inherited); the log keeps it for a background run
+    process.stderr.write(`[queue-updater] [warn] ${selfCheck.warning}\n`);
+    try { appendLog(configDir, 'warn', selfCheck.warning); } catch { /* the message above is already visible */ }
 }
 
 const appModuleManifest = npmRoot === undefined ? undefined : join(npmRoot, PKG_NAME, 'app-module', 'manifest.json');

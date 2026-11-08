@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage } from '@wadeck-app/queue-core';
-import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
+import { DaemonUnreachableError, ReplayNotFoundError, ReplayError, InvalidQueryError, RelayNotConfiguredError, TestPayloadNotFoundError, SchemaUnusableError, InvalidPayloadError, ReservedEventError, PendingNotFoundError, NotInFlightError, UnknownProjectError, LogFileNotFoundError, LogFileInUseError } from './errors.js';
 import { RelayApiError } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 
 const {
@@ -38,6 +38,7 @@ const {
   mockGetRelayInfo,
   mockListWebhooks,
   mockListDeliveries,
+  mockResolveProjectCwd,
 } = vi.hoisted(() => ({
   mockGetStatus: vi.fn(),
   mockGetActivity: vi.fn(),
@@ -72,6 +73,7 @@ const {
   mockGetRelayInfo: vi.fn(),
   mockListWebhooks: vi.fn(),
   mockListDeliveries: vi.fn(),
+  mockResolveProjectCwd: vi.fn(),
 }));
 
 vi.mock('./status.js', () => ({ getStatus: mockGetStatus }));
@@ -89,6 +91,7 @@ vi.mock('./projects.js', async (importOriginal) => ({ ...(await importOriginal<t
 vi.mock('./related.js', () => ({ getRelatedForProject: mockGetRelatedForProject }));
 vi.mock('./projectScope.js', () => ({ getProjectScope: mockGetProjectScope }));
 vi.mock('./push.js', () => ({ pushEvent: mockPushEvent }));
+vi.mock('./projectCwd.js', () => ({ resolveProjectCwd: mockResolveProjectCwd }));
 vi.mock('./logs.js', () => ({ getLogs: mockGetLogs }));
 vi.mock('./logFiles.js', () => ({ getLogFiles: mockGetLogFiles, pruneLogFiles: mockPruneLogFiles, deleteLogFileEntry: mockDeleteLogFileEntry }));
 vi.mock('./events.js', () => ({ getEvents: mockGetEvents, getEventPage: mockGetEventPage, pushTestEvent: mockPushTestEvent, validateEventPayload: mockValidateEventPayload }));
@@ -878,6 +881,22 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ kind: 'history', deleted: [], failures: [], message: 'Nothing to prune' });
   });
 
+  it('POST /log-files/:kind/prune answers 500 with the failures (ok false, failedCount, error) when some files could not be deleted, so the page shows a failure and not a silent success', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const result = {
+      kind: 'logs',
+      deleted: ['2026-01-01.ndjson'],
+      failures: [{ file: '2026-01-02.ndjson', error: 'EBUSY', fix: 'close the program that holds it' }],
+      message: '1 file deleted. 1 file could not be deleted: 2026-01-02.ndjson: EBUSY. close the program that holds it',
+    };
+    mockPruneLogFiles.mockReturnValue(result);
+    const reply = fakeReply();
+    await routes.get('POST /log-files/:kind/prune')!(fakeReq({ params: { kind: 'logs' } }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(500);
+    expect(reply.send).toHaveBeenCalledWith({ ...result, ok: false, failedCount: 1, error: result.message });
+  });
+
   it('POST /log-files/:kind/prune answers 400 for a bad kind and 500 for any other failure', async () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
@@ -983,7 +1002,7 @@ describe('backend', () => {
     await routes.get('POST /events/:name/push-test')!(fakeReq({ params: { name: 'job.started' } }), asReply(reply));
     expect(mockPushTestEvent).toHaveBeenCalledWith(expect.any(String), 'job.started');
     expect(reply.code).toHaveBeenCalledWith(200);
-    expect(reply.send).toHaveBeenCalledWith({ status: 'queued', eventId: 'e1' });
+    expect(reply.send).toHaveBeenCalledWith({ status: 'queued', eventId: 'e1', message: expect.stringMatching(/^Pushed with the working directory of the dashboard process /) });
   });
 
   it('POST /events/:name/push-test answers 404 without example, 503 when the daemon is down, 500 otherwise', async () => {
@@ -1032,6 +1051,117 @@ describe('backend', () => {
     await routes.get('POST /events/:name/push-test')!(fakeReq({ params: { name: 'queue.dlq.added' } }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(400);
     expect(reply.send).toHaveBeenCalledWith({ error: 'queue.dlq.added is emitted by the queue daemon itself, so it cannot be pushed as a test' });
+  });
+
+  it('POST /events/:name/push-test answers 400 with the reason when the body carries a payload that is not a string, and pushes nothing (validate-payload refuses the same body)', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const handler = routes.get('POST /events/:name/push-test')!;
+    for (const payload of [{ jobId: 'x' }, 42, null, ['a']]) {
+      const reply = fakeReply();
+      await handler(fakeReq({ params: { name: 'job.started' }, body: { payload } }), asReply(reply));
+      expect(reply.code).toHaveBeenCalledWith(400);
+      expect(String((reply.send.mock.calls[0]![0] as { error: string }).error)).toMatch(/payload.*string.*JSON text/);
+    }
+    expect(mockPushTestEvent).not.toHaveBeenCalled();
+  });
+
+  it('POST /events/:name/validate-payload and push-test answer 422 naming the event when its schema cannot be compiled', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const message = 'The schema declared by job.broken cannot be used to check a payload (type must be one of the allowed values). Fix: correct the "schema" in the declaration';
+    mockValidateEventPayload.mockImplementationOnce(() => { throw new SchemaUnusableError(message); });
+    const validation = fakeReply();
+    await routes.get('POST /events/:name/validate-payload')!(fakeReq({ params: { name: 'job.broken' }, body: { payload: '{}' } }), asReply(validation));
+    expect(validation.code).toHaveBeenCalledWith(422);
+    expect(validation.send).toHaveBeenCalledWith({ error: message });
+
+    mockPushTestEvent.mockRejectedValueOnce(new SchemaUnusableError(message));
+    const push = fakeReply();
+    await routes.get('POST /events/:name/push-test')!(fakeReq({ params: { name: 'job.broken' }, body: { payload: '{}' } }), asReply(push));
+    expect(push.code).toHaveBeenCalledWith(422);
+    expect(push.send).toHaveBeenCalledWith({ error: message });
+  });
+
+  it('POST /events/:name/push-test pushes from the working directory of the project it is given, and says which directory was used', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockResolveProjectCwd.mockReturnValue({ cwd: '/work/app', projectName: 'app' });
+    mockPushTestEvent.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 1 });
+    const reply = fakeReply();
+    await routes.get('POST /events/:name/push-test')!(fakeReq({ params: { name: 'job.started' }, body: { project: 'deadbeef' } }), asReply(reply));
+    expect(mockResolveProjectCwd).toHaveBeenCalledWith(expect.any(String), 'deadbeef');
+    expect(mockPushTestEvent).toHaveBeenCalledWith(expect.any(String), 'job.started', undefined, { cwd: '/work/app' });
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({ status: 'queued', eventId: 'e1', subscriberCount: 1, message: 'Pushed with the working directory of project "app": /work/app.' });
+  });
+
+  it('POST /events/:name/push-test without a project says it used the working directory of the dashboard and how to push from a project', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockPushTestEvent.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 1 });
+    const reply = fakeReply();
+    await routes.get('POST /events/:name/push-test')!(fakeReq({ params: { name: 'job.started' } }), asReply(reply));
+    const body = reply.send.mock.calls[0]![0] as { message: string };
+    expect(body.message).toContain(process.cwd());
+    expect(body.message).toMatch(/dashboard/);
+    expect(body.message).toMatch(/project/);
+  });
+
+  it('POST /push resolves a project to its working directory, refuses project together with cwd, and maps an unknown project to 404 and a malformed one to 400', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const handler = routes.get('POST /push')!;
+    mockResolveProjectCwd.mockReturnValue({ cwd: '/work/app', projectName: 'app' });
+    mockPushEvent.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 1 });
+    const ok = fakeReply();
+    await handler(fakeReq({ body: { event: 'onFoo', payload: {}, project: 'deadbeef' } }), asReply(ok));
+    expect(mockPushEvent).toHaveBeenCalledWith(expect.any(String), 'onFoo', {}, { cwd: '/work/app', timeout: undefined });
+    expect(ok.send).toHaveBeenCalledWith({ status: 'queued', eventId: 'e1', subscriberCount: 1, message: 'Pushed with the working directory of project "app": /work/app.' });
+
+    mockPushEvent.mockClear();
+    const both = fakeReply();
+    await handler(fakeReq({ body: { event: 'onFoo', payload: {}, project: 'deadbeef', cwd: '/x' } }), asReply(both));
+    expect(both.code).toHaveBeenCalledWith(400);
+    expect(mockPushEvent).not.toHaveBeenCalled();
+
+    mockResolveProjectCwd.mockImplementationOnce(() => { throw new UnknownProjectError('No project with id deadbeef'); });
+    const unknown = fakeReply();
+    await handler(fakeReq({ body: { event: 'onFoo', payload: {}, project: 'deadbeef' } }), asReply(unknown));
+    expect(unknown.code).toHaveBeenCalledWith(404);
+
+    mockResolveProjectCwd.mockImplementationOnce(() => { throw new InvalidQueryError('project must be the id of a registered project'); });
+    const malformed = fakeReply();
+    await handler(fakeReq({ body: { event: 'onFoo', payload: {}, project: 'zz' } }), asReply(malformed));
+    expect(malformed.code).toHaveBeenCalledWith(400);
+  });
+
+  it('POST /push says which working directory was used: the explicit cwd, or the dashboard process one with the way to push from a project', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const handler = routes.get('POST /push')!;
+    mockPushEvent.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 1 });
+    const explicit = fakeReply();
+    await handler(fakeReq({ body: { event: 'onFoo', payload: {}, cwd: '/some/dir' } }), asReply(explicit));
+    expect((explicit.send.mock.calls[0]![0] as { message: string }).message).toBe('Pushed with the working directory /some/dir.');
+
+    const implicit = fakeReply();
+    await handler(fakeReq({ body: { event: 'onFoo', payload: {} } }), asReply(implicit));
+    const message = (implicit.send.mock.calls[0]![0] as { message: string }).message;
+    expect(message).toContain(process.cwd());
+    expect(message).toMatch(/dashboard/);
+    expect(message).toMatch(/"project"/);
+  });
+
+  it('a push that matched no subscriber keeps its own warning and still says the working directory', async () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    mockPushEvent.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 0 });
+    const reply = fakeReply();
+    await routes.get('POST /push')!(fakeReq({ body: { event: 'onFoo', payload: {}, cwd: '/some/dir' } }), asReply(reply));
+    const message = (reply.send.mock.calls[0]![0] as { message: string }).message;
+    expect(message).toMatch(/no subscriber matches/);
+    expect(message).toContain('/some/dir');
   });
 
   it('POST /dlq/:id/clear, /pending/:id/give-up and /pending/give-up-stuck pass the `message` through when the daemon could not be told, and the operation is a 200', async () => {
@@ -1240,7 +1370,7 @@ describe('backend', () => {
     await routes.get('POST /push')!(fakeReq({ body: null }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(400);
     expect(reply.send).toHaveBeenCalledWith({
-      error: 'POST /push expects a JSON body { event: string, payload?: any, cwd?: string, timeout?: number }; got: null',
+      error: 'POST /push expects a JSON body { event: string, payload?: any, cwd?: string, project?: string, timeout?: number }; got: null',
     });
   });
 
@@ -1251,7 +1381,7 @@ describe('backend', () => {
     await routes.get('POST /push')!(fakeReq({}), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(400);
     expect(reply.send).toHaveBeenCalledWith({
-      error: 'POST /push expects a JSON body { event: string, payload?: any, cwd?: string, timeout?: number }; got: undefined',
+      error: 'POST /push expects a JSON body { event: string, payload?: any, cwd?: string, project?: string, timeout?: number }; got: undefined',
     });
   });
 
@@ -1262,7 +1392,7 @@ describe('backend', () => {
     await routes.get('POST /push')!(fakeReq({ body: 'string' }), asReply(reply));
     expect(reply.code).toHaveBeenCalledWith(400);
     expect(reply.send).toHaveBeenCalledWith({
-      error: 'POST /push expects a JSON body { event: string, payload?: any, cwd?: string, timeout?: number }; got: "string"',
+      error: 'POST /push expects a JSON body { event: string, payload?: any, cwd?: string, project?: string, timeout?: number }; got: "string"',
     });
   });
 
@@ -1362,7 +1492,7 @@ describe('backend', () => {
     await routes.get('POST /push')!(fakeReq({ body: { event: 'onFoo', payload: { a: 1 } } }), asReply(reply));
     expect(mockPushEvent).toHaveBeenCalledWith(expect.any(String), 'onFoo', { a: 1 }, { cwd: undefined, timeout: undefined });
     expect(reply.code).toHaveBeenCalledWith(200);
-    expect(reply.send).toHaveBeenCalledWith({ status: 'queued', eventId: 'e1' });
+    expect(reply.send).toHaveBeenCalledWith({ status: 'queued', eventId: 'e1', message: expect.stringMatching(/^Pushed with the working directory of the dashboard process /) });
   });
 
   it('POST /push returns 503 when DaemonUnreachableError is thrown', async () => {

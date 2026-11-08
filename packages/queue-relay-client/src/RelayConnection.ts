@@ -58,6 +58,8 @@ const NO_CONFIG_RETRY_DELAY_MS = 30_000;
 const DEFAULT_AUTH_BLOCKED_MS = 600_000;
 const DEFAULT_TRY_AGAIN_MS = 60_000;
 const DEFAULT_ABUSE_MS = 300_000;
+const NON_JSON_HEAD_CHARS = 200;
+const NON_JSON_MAX_CAUSES = 20;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 10_000;
 
@@ -69,6 +71,22 @@ export function computeReconnectDelay(baseMs: number, minMs: number, random: () 
   // Apply jitter: 0.8 to 1.2 multiplier
   const jitterFactor = 0.8 + random() * 0.4;
   return Math.round(adjustedMs * jitterFactor);
+}
+
+// A delivery is routed to the first plugin of its source (and the relay keeps one filter per source and connection), so a second
+// entry for the same source would silently never receive anything
+function assertOneEntryPerSource(loaded: readonly LoadedPlugin[]): void {
+  const firstBySource = new Map<string, string>();
+  for (const { plugin, config } of loaded) {
+    const earlier = firstBySource.get(plugin.source);
+    if (earlier !== undefined) {
+      throw new Error(
+        `relay.yml lists the plugins "${earlier}" and "${config.module}", and both handle the source "${plugin.source}": only the first would ever receive a delivery. ` +
+        `Keep one plugin entry per source and put all its subscriptions under it.`
+      );
+    }
+    firstBySource.set(plugin.source, config.module);
+  }
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -117,6 +135,8 @@ export class RelayConnection {
   private hasWarnedAboutSubscriptionReplacement = false;
   // Module names in the order their subscribe was sent, to name the plugin an acknowledgement belongs to
   private subscribedModules: string[] = [];
+  // Beginnings of the non-JSON frames already logged on this connection (see reportNonJsonFrame)
+  private nonJsonFramesLogged = new Set<string>();
   // Heartbeat timer for liveness detection
   private heartbeatTimer: NodeJS.Timeout | null = null;
   // Track last activity time (message, ping, or pong)
@@ -226,6 +246,7 @@ export class RelayConnection {
             config: pluginConfig,
           }))
         );
+        assertOneEntryPerSource(this.loadedPlugins);
       } catch (err) {
         const errorMsg = `Failed to load plugins: ${getErrorMessage(err)}`;
         this.log(`[relay] ${errorMsg}`);
@@ -317,6 +338,7 @@ export class RelayConnection {
       this.acksReceived = 0;
       this.hasWarnedAboutSubscriptionReplacement = false;
       this.subscribedModules = [];
+      this.nonJsonFramesLogged = new Set<string>();
       // Reset activity tracking for heartbeat
       this.lastActivityAt = null;
       let heartbeatStarted = false;
@@ -374,12 +396,19 @@ export class RelayConnection {
         // Track activity for heartbeat liveness
         this.lastActivityAt = Date.now();
         const rawStr = String(raw);
-        const msg: unknown = JSON.parse(rawStr);
+        let msg: unknown;
+        try {
+          msg = JSON.parse(rawStr);
+        } catch (err) {
+          // A proxy or a misbehaving relay answering with HTML or plain text: drop the frame, keep the connection
+          this.reportNonJsonFrame(rawStr, err);
+          return;
+        }
         // Start heartbeat after successful authentication
         if (isRecord(msg) && msg.type === 'authenticated') {
           startHeartbeat();
         }
-        void this.handleMessage(rawStr, config).catch((err) => {
+        void this.handleMessage(msg, rawStr, config).catch((err) => {
           this.log(`[relay] Error handling message: ${getErrorMessage(err)}`);
         });
       });
@@ -494,11 +523,30 @@ export class RelayConnection {
     });
   }
 
+  // Logs a frame that is not JSON once per distinct beginning (a proxy repeats the same page), bounded so that a flood cannot grow the set
+  private reportNonJsonFrame(raw: string, err: unknown): void {
+    const head = raw.slice(0, NON_JSON_HEAD_CHARS);
+    if (this.nonJsonFramesLogged.has(head)) {
+      return;
+    }
+    if (this.nonJsonFramesLogged.size >= NON_JSON_MAX_CAUSES) {
+      return;
+    }
+    this.nonJsonFramesLogged.add(head);
+    const message = `The relay sent a frame that is not JSON (${getErrorMessage(err)}); dropped, the connection is kept. Is a proxy or gateway answering instead of the relay? Frame starts with: ${head}`;
+    this.lastError = message;
+    this.lastErrorAt = new Date().toISOString();
+    this.log(`[relay] ${message}`);
+    if (this.nonJsonFramesLogged.size >= NON_JSON_MAX_CAUSES) {
+      this.log('[relay] Further frames that are not JSON will not be logged.');
+    }
+  }
+
   private async handleMessage(
+    msg: unknown,
     raw: string,
     config: RelayConfig
   ): Promise<void> {
-    const msg: unknown = JSON.parse(raw);
     if (!isRecord(msg)) {
       throw new Error(`The relay sent a message that is not a JSON object: ${raw.slice(0, 100)}`);
     }

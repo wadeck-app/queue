@@ -2,6 +2,7 @@ import { getErrorMessage } from '@wadeck-app/queue-core';
 import { relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { join } from 'node:path';
 import type { RelayStopIO } from './relayStop.js';
+import { missingRelayYmlMessage } from './relayYmlTemplate.js';
 import type { DaemonClient } from '@wadeck-app/singleton-daemon-kit';
 import type { RelayCommands, RelayConfig } from '@wadeck-app/queue-relay-client';
 
@@ -50,18 +51,7 @@ export async function relayStart(deps: RelayStartDeps, configDir: string): Promi
 
   if (config === null) {
     // Missing relay.yml (case b)
-    deps.io.stderr.write(`[fail] No relay.yml in ${configDir}. Create it as:\n`);
-    deps.io.stderr.write(`  relayUrl: wss://<relay-host>/relay-ws\n`);
-    deps.io.stderr.write(`  plugins:\n`);
-    deps.io.stderr.write(`    - module: '@wadeck-app/plugin-github'\n`);
-    deps.io.stderr.write(`      subscriptions:\n`);
-    // payloadMatch: the relay compares top-level keys only; the client also resolves dotted keys (max 8 segments, strict equality)
-    deps.io.stderr.write(`        - eventType: [push, pull_request]\n`);
-    deps.io.stderr.write(`          # payloadMatch: top-level keys are compared by equality; a dotted key (repository.full_name) is checked by this client only\n`);
-    deps.io.stderr.write(`          payloadMatch: { action: opened }\n`);
-    deps.io.stderr.write(`\nThe relay token is stored in <QUEUE_CONFIG_DIR>/_secrets_/.env.local:\n`);
-    deps.io.stderr.write(`  QUEUE_RELAY_TOKEN=<your-relay-consumer-token>\n`);
-    deps.io.stderr.write(`See 'queue relay --help' for more details.\n`);
+    deps.io.stderr.write(missingRelayYmlMessage(configDir));
     return 1;
   }
 

@@ -147,4 +147,27 @@ describe('queue wait ci with git', () => {
     expect(exitCode).toBe(4);
     expect(stderr).toContain('not a git repository');
   });
+
+  it.each([
+    [['--timeout'], '--timeout needs'],
+    [['--timeout=5m'], '--timeout 5m'],
+    [['--repo'], '--repo needs'],
+    [['--workflow'], '--workflow needs'],
+    [['--timeout', '5m', '--timeout', '1m'], '--timeout is given twice'],
+  ])('usage error (exit 4) instead of a silent default for %j', async (args, expected) => {
+    recordRun('My CI');
+    const exitCode = await run(args, fakeGit());
+    expect(exitCode).toBe(4);
+    expect(stderr).toContain(expected);
+    expect(stdout).not.toContain('CI passed');
+  });
+
+  it('--json: a commit that was never pushed (exit 3) still prints a JSON object on stdout', async () => {
+    const exitCode = await run(['--repo', 'o/r', '--json'], fakeGit({ pushed: false }));
+    expect(exitCode).toBe(3);
+    const parsed = JSON.parse(stdout) as { sha: string; result: string; reason: string };
+    expect(parsed).toMatchObject({ sha: HEAD, result: 'no-run' });
+    expect(parsed.reason).toContain('was not pushed');
+    expect(parsed.reason).not.toContain('[fail]');
+  });
 });

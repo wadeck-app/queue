@@ -18,10 +18,13 @@ import { relayStop } from './relayStop.js';
 import { daemonStop } from './daemonStop.js';
 import { exitCodesHelp } from './exitCodes.js';
 import { pinRelay } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
-import { queueWaitCommand } from './waitCli.js';
-import { eventsCommand } from './eventsCli.js';
+import { queueWaitCommand, WAIT_HELP } from './waitCli.js';
+import { eventsCommand, EVENTS_HELP } from './eventsCli.js';
 import { DaemonCommandNotFoundError } from '@wadeck-app/singleton-daemon-kit';
 import { relayStart } from './relayStart.js';
+import { daemonStartFailureMessage, readDaemonLogTail } from './daemonStartFailure.js';
+import { formatUptime, fetchStatus, relayStatusLines } from './relayStatusView.js';
+import { relayYmlTemplate, missingRelayYmlMessage } from './relayYmlTemplate.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
@@ -57,7 +60,7 @@ Usage:
   queue dlq clear [--id <id>]   Without --id the WHOLE DLQ is cleared (the count is printed); --id without a value is an error, an unknown id exits 1
 `;
 
-const RELAY_GROUP_HELP = `queue relay - GitHub/GitLab/Slack/Jira webhook relay client
+export const RELAY_GROUP_HELP = `queue relay - GitHub/GitLab webhook relay client
 Usage:
   queue relay start                                                Start the relay client as a background process (reads relay.yml from QUEUE_CONFIG_DIR)
   queue relay stop                                                 Stop the relay client
@@ -66,14 +69,7 @@ Usage:
   queue relay webhook history [--limit N] [--event TYPE] [--source S] [--verified | --rejected] [--payload] [--json]  Show recent deliveries (1 HTTP request)
 
 relay.yml example (in QUEUE_CONFIG_DIR):
-  relayUrl: wss://<relay-host>/relay-ws
-  plugins:
-    - module: '@wadeck-app/plugin-github'
-      subscriptions:
-        - eventType: [push, pull_request]
-          # payloadMatch compares payload keys by equality; a dotted key (repository.full_name) is checked by this client only, the relay itself only sees top-level keys
-          payloadMatch: { action: opened }
-
+${relayYmlTemplate('  ')}
 Built-in plugins: '@wadeck-app/plugin-github' (events on.github.<type>) and '@wadeck-app/plugin-gitlab' (events on.gitlab.<type>,
 e.g. on.gitlab.merge_request, on.gitlab.pipeline); 'github' and 'gitlab' are accepted as short module names.
 
@@ -88,6 +84,14 @@ The relay client logs to <QUEUE_CONFIG_DIR>/relay-daemon/relay.log.
 Nothing starts it at logon. "queue relay start" runs it until "queue relay stop". "queue wait ci" (or a wait for an
 on.<source>.<type> event) starts it when it is down and the history holds nothing yet, and it stops by itself 30s after the
 last such wait ended; "queue relay start" on a relay started that way keeps it running.
+`;
+
+const RELAY_WEBHOOK_HELP = `queue relay webhook - Webhook configuration and delivery history
+Usage:
+  queue relay webhook list [--json]                                List configured webhooks and their health
+  queue relay webhook history [--limit N] [--event TYPE] [--source S] [--verified | --rejected] [--payload] [--json]  Show recent deliveries
+
+Both commands make exactly one HTTP request to the relay, using the relay token (QUEUE_RELAY_TOKEN from the environment or <configDir>/_secrets_/.env.local).
 `;
 
 const CLI_GROUP_HELP = `queue cli - CLI management commands
@@ -218,6 +222,49 @@ Environment variables:
 
 function usage(): void {
   process.stdout.write(usageText());
+}
+
+/**
+ * The help of the command in `argv` when it asks for it (`--help` / `-h` anywhere after the command), undefined otherwise. A help request never reaches
+ * the action: `queue stop --help` used to stop the daemon and `queue relay start --help` to start the relay.
+ */
+export function commandHelp(command: string, rest: readonly string[]): string | undefined {
+  if (!rest.includes('--help') && !rest.includes('-h')) {
+    return undefined;
+  }
+  switch (command) {
+    case 'dlq':
+      return DLQ_GROUP_HELP;
+    case 'relay':
+      return rest[0] === 'webhook' ? RELAY_WEBHOOK_HELP : RELAY_GROUP_HELP;
+    case 'cli':
+      return CLI_GROUP_HELP;
+    case 'sub':
+    case 'subscribers':
+      return SUB_GROUP_HELP;
+    case 'wait':
+      return WAIT_HELP;
+    case 'events':
+      return EVENTS_HELP;
+    default:
+      return usageLinesOf(command);
+  }
+}
+
+/** The lines of the global usage that describe `queue <command>` (the line and its indented continuation), the whole usage when none does. */
+function usageLinesOf(command: string): string {
+  const lines = usageText().split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line === `  queue ${command}` || line.startsWith(`  queue ${command} `)) {
+      out.push(line);
+      while (lines[i + 1] !== undefined && /^ {3,}\S/.test(lines[i + 1]!)) {
+        out.push(lines[++i]!);
+      }
+    }
+  }
+  return out.length === 0 ? usageText() : `queue ${command}\nUsage:\n${out.join('\n')}\n`;
 }
 
 const noDlqEntryMessage = (id: string): string => `no DLQ entry with id ${id} (queue dlq list shows the ids)`;
@@ -586,16 +633,6 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
   });
 }
 
-function formatUptime(sec: number): string {
-  if (sec < 60) {
-    return `${sec}s`;
-  }
-  if (sec < 3600) {
-    return `${Math.floor(sec / 60)}m ${sec % 60}s`;
-  }
-  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
-}
-
 function getQueueDaemonScriptPath(): string {
   // Bundle layout: queue-daemon.cjs sits next to queue.cjs
   // TSC dev layout: ../daemon/daemon-entry.js relative to dist/cli/QueueIndex.js
@@ -645,6 +682,11 @@ async function waitForDaemon(configDir: string, timeoutMs = 5000): Promise<boole
   return false;
 }
 
+/** The message of a daemon that did not come up: its log tail, the log path and how to see the error. */
+function daemonStartFailure(configDir: string): string {
+  return daemonStartFailureMessage({ configDir, daemonScript: getQueueDaemonScriptPath(), tail: readDaemonLogTail(configDir) });
+}
+
 async function ensureDaemon(configDir: string): Promise<void> {
   const client = createQueueClient(configDir);
   const running = await client.isRunning().catch(() => false);
@@ -659,7 +701,7 @@ async function ensureDaemon(configDir: string): Promise<void> {
     spawnQueueDaemon(configDir);
     const started = await waitForDaemon(configDir, 5000);
     if (!started) {
-      process.stderr.write('[queue] Failed to start daemon within 5s\n');
+      process.stderr.write(daemonStartFailure(configDir));
       process.exit(1);
     }
   }
@@ -775,14 +817,18 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
       }
       return;
     }
-    const response = await client.send('status', undefined);
+    const relayLog = pathJoin(relayStateDir(configDir), 'relay.log');
+    // A relay that answers isRunning but hangs would otherwise end in a generic "Fatal error"
+    let response;
+    try {
+      response = await fetchStatus(() => client.send('status', undefined), 'The relay client', `queue relay stop, then queue relay start; its log is ${relayLog}`);
+    } catch (err) {
+      process.stderr.write(`[fail] ${getErrorMessage(err)}\n`);
+      process.exit(1);
+    }
     const relayPort = readDaemonPort(relayStateDir(configDir));
     if (process.stdout.isTTY && !jsonFlag) {
-      process.stdout.write('[ok]  relay client: running\n');
-      process.stdout.write(`      port:         ${relayPort ?? '?'}\n`);
-      process.stdout.write(`      connected:    ${response.connected ? 'yes' : 'no'}\n`);
-      process.stdout.write(`      uptime:       ${formatUptime(response.uptimeSec)}\n`);
-      process.stdout.write(`      pid:          ${response.pid}\n`);
+      process.stdout.write(relayStatusLines(response, relayPort, relayLog));
     } else {
       process.stdout.write(JSON.stringify({ relayRunning: true, ...response, ...(relayPort !== undefined && { port: relayPort }) }) + '\n');
     }
@@ -794,13 +840,7 @@ async function relayCommand(configDir: string, rest: string[]): Promise<void> {
     const webhookCmd = rest[1];
 
     if (webhookCmd === '--help' || webhookCmd === '-h' || !webhookCmd) {
-      process.stdout.write(`queue relay webhook - Webhook configuration and delivery history
-Usage:
-  queue relay webhook list [--json]                                List configured webhooks and their health
-  queue relay webhook history [--limit N] [--event TYPE] [--source S] [--verified | --rejected] [--payload] [--json]  Show recent deliveries
-
-Both commands make exactly one HTTP request to the relay, using the relay token (QUEUE_RELAY_TOKEN from the environment or <configDir>/_secrets_/.env.local).
-`);
+      process.stdout.write(RELAY_WEBHOOK_HELP);
       return;
     }
 
@@ -818,12 +858,7 @@ Both commands make exactly one HTTP request to the relay, using the relay token 
     }
 
     if (config === null) {
-      process.stderr.write(`[fail] No relay.yml in ${configDir}. Create it as:\n`);
-      process.stderr.write(`  relayUrl: wss://<relay-host>/relay-ws\n`);
-      process.stderr.write(`  plugins:\n`);
-      process.stderr.write(`    - module: '@wadeck-app/plugin-github'\n`);
-      process.stderr.write(`      subscriptions:\n`);
-      process.stderr.write(`        - eventType: [push, pull_request]\n`);
+      process.stderr.write(missingRelayYmlMessage(configDir));
       process.exit(1);
     }
 
@@ -914,6 +949,12 @@ async function main(): Promise<void> {
   const bundlePath = process.env['LAUNCHER_BUNDLE_OVERRIDE'] ?? fileURLToPath(import.meta.url);
 
   try {
+
+  const help = commandHelp(command, rest);
+  if (help !== undefined) {
+    process.stdout.write(help);
+    return;
+  }
 
   if (command === 'push') {
     // The project option is read by the project-sdk wherever it is (before or after the event and the payload)
@@ -1113,7 +1154,13 @@ async function main(): Promise<void> {
       }
       return;
     }
-    const daemonStatus = await client.send('status', undefined);
+    let daemonStatus;
+    try {
+      daemonStatus = await fetchStatus(() => client.send('status', undefined), 'The queue daemon', "queue stop, then queue start; 'queue logs' has the daemon log");
+    } catch (err) {
+      process.stderr.write(`[fail] ${getErrorMessage(err)}\n`);
+      process.exit(1);
+    }
     // the counts of one project come from the queue files (the daemon counts everything), read here like the dashboard does
     const response = projectId === undefined ? daemonStatus : { ...daemonStatus, ...readQueueCounts(configDir, projectId) };
     const { execFileSync: execFS } = await import('node:child_process');
@@ -1175,7 +1222,7 @@ async function main(): Promise<void> {
   if (command === 'dlq') {
     const sub = rest[0];
 
-    if (sub === '--help' || sub === '-h') {
+    if (sub === undefined || sub === '--help' || sub === '-h') {
       process.stdout.write(DLQ_GROUP_HELP);
       return;
     }
@@ -1276,7 +1323,7 @@ async function main(): Promise<void> {
     if (started) {
       process.stderr.write('[ok] daemon started\n');
     } else {
-      process.stderr.write('[fail] daemon failed to start within 5s\n');
+      process.stderr.write(daemonStartFailure(configDir));
       process.exit(1);
     }
     return;

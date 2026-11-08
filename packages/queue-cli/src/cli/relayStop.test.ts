@@ -7,6 +7,12 @@ import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { relayStop } from './relayStop.js';
+
+// An injected clock: sleeping advances it, so no test waits for real time and none asserts on elapsed time
+function fakeClock() {
+  let t = 0;
+  return { now: () => t, sleep: async (ms: number) => { t += ms; } };
+}
 import type { RelayCommands } from '@wadeck-app/queue-relay-client';
 import type { DaemonClient } from '@wadeck-app/singleton-daemon-kit';
 
@@ -52,7 +58,7 @@ describe('relayStop', () => {
       const stderr: string[] = [];
       const io = { stdout: { write: () => undefined }, stderr: { write: (s: string) => { stderr.push(s); } } };
 
-      const exitCode = await relayStop(client, tmpDir, io);
+      const exitCode = await relayStop(client, tmpDir, io, fakeClock());
 
       expect(exitCode).toBe(1);
       const output = stderr.join('');
@@ -85,18 +91,52 @@ describe('relayStop', () => {
   });
 
   describe('(c) success', () => {
-    it('returns 0 and writes [ok] relay client stopped to stdout', async () => {
+    it('returns 0 and writes [ok] relay client stopped to stdout once the daemon is gone', async () => {
       const client = createMockClient({
-        isRunning: vi.fn().mockResolvedValue(true),
+        // running before the quit, still there at the first poll, gone at the second
+        isRunning: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValue(false),
         send: vi.fn().mockResolvedValue(undefined),
       });
       const stdout: string[] = [];
       const io = { stdout: { write: (s: string) => { stdout.push(s); } }, stderr: { write: () => undefined } };
 
-      const exitCode = await relayStop(client, tmpDir, io);
+      const exitCode = await relayStop(client, tmpDir, io, fakeClock());
 
       expect(exitCode).toBe(0);
       expect(stdout.join('')).toContain('[ok] relay client stopped');
+    });
+
+    it('a quit that returns while the daemon is still there is NOT a success: exit 1, nothing on stdout, what to do on stderr', async () => {
+      const client = createMockClient({
+        isRunning: vi.fn().mockResolvedValue(true),
+        send: vi.fn().mockResolvedValue(undefined),
+      });
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const io = { stdout: { write: (s: string) => { stdout.push(s); } }, stderr: { write: (s: string) => { stderr.push(s); } } };
+
+      const exitCode = await relayStop(client, tmpDir, io, fakeClock());
+
+      expect(exitCode).toBe(1);
+      expect(stdout.join('')).toBe('');
+      const output = stderr.join('');
+      expect(output).toContain('[fail] relay client did not stop');
+      expect(output).toContain('still running after 5000 ms');
+      expect(output).toContain('relay.log');
+    });
+
+    it('polls with the injected sleep until the wait is over', async () => {
+      const client = createMockClient({
+        isRunning: vi.fn().mockResolvedValue(true),
+        send: vi.fn().mockResolvedValue(undefined),
+      });
+      const sleeps: number[] = [];
+      const clock = fakeClock();
+      const io = { stdout: { write: () => undefined }, stderr: { write: () => undefined } };
+
+      await relayStop(client, tmpDir, io, { ...clock, waitMs: 300, pollMs: 100, sleep: async (ms: number) => { sleeps.push(ms); await clock.sleep(ms); } });
+
+      expect(sleeps).toEqual([100, 100, 100]);
     });
   });
 });

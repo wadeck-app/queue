@@ -1,5 +1,6 @@
 /** Argument parsing and wiring of `queue wait ci` (the decision logic lives in ciWait.ts / ciWaitCommand.ts). */
 
+import { parseCiWaitArgs } from './ciWaitArgs.js';
 import { join as pathJoin } from 'node:path';
 import { EventMatcher, HistoryReader, getErrorMessage, isEventPattern } from '@wadeck-app/queue-core';
 import { warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
@@ -77,12 +78,6 @@ const ORPHAN_EVENT_NAME = '(unknown)';
 
 const FLAGS_WITH_VALUE = new Set(['--repo', '--workflow', '--timeout', '--settle']);
 const KNOWN_FLAGS = ['--repo', '--workflow', '--timeout', '--settle', '--json', '--no-infer', '--help', '-h'];
-
-function collectValues(args: string[], flag: string): string[] {
-  const values: string[] = [];
-  args.forEach((arg, i) => { if (arg === flag && args[i + 1] !== undefined) values.push(args[i + 1]!); });
-  return values;
-}
 
 function fail(message: string): number {
   process.stderr.write(`[fail] ${message}\n`);
@@ -198,10 +193,14 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
 
   const rest = args.slice(1);
 
-  // The positional SHA is the first token that is neither a flag nor a flag's value
-  const positionalIndex = rest.findIndex((arg, i) => !arg.startsWith('-') && !FLAGS_WITH_VALUE.has(rest[i - 1] ?? ''));
-  const positional = positionalIndex === -1 ? undefined : rest[positionalIndex];
-  warnUnknownArgs(rest.filter((_, i) => i !== positionalIndex), KNOWN_FLAGS, 'queue wait ci', FLAGS_WITH_VALUE);
+  // A value flag without its value, in the --flag=value form or given twice is a usage error: each used to fall back to its default
+  const parsedArgs = parseCiWaitArgs(rest);
+  if (!parsedArgs.ok) {
+    return fail(parsedArgs.message);
+  }
+  const positional = parsedArgs.sha;
+  // The SHA is an argument, not noise: it and the value of a flag are not "unknown"
+  warnUnknownArgs(rest.filter((arg) => arg !== positional), KNOWN_FLAGS, 'queue wait ci', FLAGS_WITH_VALUE);
   const sha = positional ?? git.read(['rev-parse', 'HEAD']);
   if (!sha) {
     return fail('No commit given and the current directory is not a git repository. Pass the SHA: queue wait ci <sha>.');
@@ -211,7 +210,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
   }
 
   const remote = git.read(['remote', 'get-url', 'origin']);
-  const repo = collectValues(rest, '--repo')[0] ?? (remote ? parseGithubRepo(remote) ?? undefined : undefined);
+  const repo = parsedArgs.repo ?? (remote ? parseGithubRepo(remote) ?? undefined : undefined);
   if (!repo) {
     process.stderr.write('[warn] No --repo and no GitHub "origin" remote: any repository with this SHA will match.\n');
   } else if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
@@ -221,17 +220,25 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
   let timeoutMs: number;
   let settleMs: number;
   try {
-    timeoutMs = parseDuration(collectValues(rest, '--timeout')[0] ?? WAIT_DEFAULT_TIMEOUT);
-    settleMs = parseDuration(collectValues(rest, '--settle')[0] ?? '20s');
+    timeoutMs = parseDuration(parsedArgs.timeout ?? WAIT_DEFAULT_TIMEOUT);
+    settleMs = parseDuration(parsedArgs.settle ?? '20s');
   } catch (err) {
     return fail(`${getErrorMessage(err)} (durations look like 30s, 15m, 1h).`);
   }
 
-  const explicitWorkflows = collectValues(rest, '--workflow');
+  const explicitWorkflows = parsedArgs.workflows;
   let workflows = explicitWorkflows;
-  if (!rest.includes('--no-infer')) {
-    const step = inspectRepository(git, { sha, repo, remoteRepo: remote ? parseGithubRepo(remote) : null, infer: explicitWorkflows.length === 0 }, (text) => process.stderr.write(text));
+  if (!parsedArgs.noInfer) {
+    let refusal = '';
+    const step = inspectRepository(git, { sha, repo, remoteRepo: remote ? parseGithubRepo(remote) : null, infer: explicitWorkflows.length === 0 }, (text) => {
+      refusal += text;
+      process.stderr.write(text);
+    });
     if (!step.proceed) {
+      // Exit 3 with --json: the reason is also an object on stdout, like every other result
+      if (parsedArgs.json) {
+        process.stdout.write(JSON.stringify({ sha, result: 'no-run', reason: refusal.trim().replace(/^\[fail\] /, ''), runs: [] }, null, 2) + '\n');
+      }
       return step.exitCode;
     }
     for (const note of step.notes) process.stderr.write(`[info] ${note}\n`);
@@ -250,7 +257,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     startGraceMs: 90_000,
     pollMs: 1000,
     lookbackMs: 24 * 3600_000,
-    json: rest.includes('--json'),
+    json: parsedArgs.json,
   };
 
   const reader = new HistoryReader(pathJoin(configDir, 'history'));

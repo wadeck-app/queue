@@ -34,3 +34,6 @@ export class LogFileInUseError extends Error {}
 
 /** The relay client runs but did not answer its status request (it is hung or restarting). */
 export class RelayStatusError extends Error {}
+
+/** The schema an event declares cannot be compiled by the payload validator, so no payload can be checked against it. */
+export class SchemaUnusableError extends Error {}
