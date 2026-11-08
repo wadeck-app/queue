@@ -167,6 +167,8 @@ describe('retention protection and shared policy', () => {
     put(dir, '2026-01-02.ndjson', 10, 5 * 60 * 1000);
     put(dir, '2026-01-01-launcher.log', 10, 3600 * 1000);
     put(dir, '2026-01-02-launcher.log', 10, 25 * 3600 * 1000);
+    // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+    put(dir, '2026-10-18.ndjson');
 
     const listing = listLogFiles(dir, { kind: 'logs', now: NOW });
     expect(listing.files.filter(f => f.protected).map(f => [f.name, f.protectedReason])).toEqual([
@@ -176,13 +178,15 @@ describe('retention protection and shared policy', () => {
 
     const report = pruneLogDir(dir, { now: NOW, keepDay: TODAY });
 
-    expect(names()).toEqual(['2026-01-01-launcher.log', '2026-01-01.ndjson']);
+    expect(names()).toEqual(['2026-01-01-launcher.log', '2026-01-01.ndjson', '2026-10-18.ndjson']);
     expect(report.deleted.map(d => d.file).sort()).toEqual(['2026-01-02-launcher.log', '2026-01-02.ndjson']);
   });
 
   it('an ENOENT on unlink (deleted between the read and the deletion) is a success: no failure, no warning, counted as gone', () => {
     put(dir, '2020-01-01.ndjson', 10);
     put(dir, '2020-01-02.ndjson', 10);
+    // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+    put(dir, '2026-10-18.ndjson', 10);
     // The dashboard (or the daemon at midnight) deleted the first file just before us
     const unlink = (path: string): void => {
       unlinkSync(path);
@@ -227,6 +231,8 @@ describe('retention protection and shared policy', () => {
 
   it('the failure fix is daemon-oriented by default and dashboard-oriented (launcher held open) on request', () => {
     put(dir, '2020-01-01-launcher.log', 10);
+    // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+    put(dir, '2026-10-18.ndjson', 10);
     const unlink = (): never => {
       throw errno('EBUSY');
     };
@@ -498,5 +504,49 @@ describe('statQueueFiles', () => {
         },
       }),
     ).toThrow(/Cannot read .*wal\.ndjson.*Check its permissions/);
+  });
+});
+
+describe('protectionReason with a modification time later than the clock', () => {
+  const OLD_DAY = '2026-01-01';
+  let dir: string;
+
+  beforeEach(() => {
+    dir = join(tmpdir(), `queue-retention-futuremtime-${crypto.randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // mtime is `ageMs` before NOW (negative: after it)
+  const put = (target: string, name: string, bytes = 10, ageMs = LONG_AGO_MS): void => {
+    writeFileSync(join(target, name), 'x'.repeat(bytes));
+    const mtime = new Date(NOW.getTime() - ageMs);
+    utimesSync(join(target, name), mtime, mtime);
+  };
+  const names = (): string[] => readdirSync(dir).sort();
+
+  it.each(['daemon', 'launcher'] as const)('a %s file with an old name but a future mtime is protected (recently modified): the clock or the file system is wrong and a writer may be active', (variant) => {
+    const future = NOW.getTime() + 3600_000;
+    expect(protectionReason({ day: OLD_DAY, variant, mtimeMs: future }, NOW)).toBe('recently modified');
+  });
+
+  it('an old mtime is not protected, and the window edge is exclusive', () => {
+    expect(protectionReason({ day: OLD_DAY, variant: 'daemon', mtimeMs: NOW.getTime() - 60_000 }, NOW)).toBeUndefined();
+    expect(protectionReason({ day: OLD_DAY, variant: 'daemon', mtimeMs: NOW.getTime() - 59_999 }, NOW)).toBe('recently modified');
+    expect(protectionReason({ day: OLD_DAY, variant: 'launcher', mtimeMs: NOW.getTime() - 24 * 3600_000 }, NOW)).toBeUndefined();
+  });
+
+  it('pruneLogDir keeps such a file and the listing says why', () => {
+    const name = `${OLD_DAY}.ndjson`;
+    put(dir, name, 10, -3600_000);
+    // Yesterday's file: the age pass is counted from the newest file, so it needs a recent one to see the real clock
+    put(dir, '2026-10-18.ndjson');
+    const report = pruneLogDir(dir, { now: NOW, keepDay: TODAY });
+    expect(report.deleted).toEqual([]);
+    expect(names()).toContain(name);
+    expect(listLogFiles(dir, { kind: 'logs', now: NOW }).files.find(f => f.name === name)).toMatchObject({ protected: true, protectedReason: 'recently modified' });
   });
 });

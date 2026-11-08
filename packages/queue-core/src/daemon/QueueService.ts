@@ -111,9 +111,10 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
     }
     return subscribers;
   }
-  const wal = new Wal(join(configDir, 'wal.ndjson'));
-  const dlq = new DlqStore(join(configDir, 'dlq.ndjson'));
   const eventLogger = new EventLogger(join(configDir, 'logs'));
+  // The daemon's stderr is ignored: what the queue files have to say (unreadable lines kept aside, a full DLQ) goes to the daemon log, where `queue logs` shows it
+  const wal = new Wal(join(configDir, 'wal.ndjson'), { onDiagnostic: (diagnostic) => eventLogger.logDiagnostic(diagnostic) });
+  const dlq = new DlqStore(join(configDir, 'dlq.ndjson'), undefined, { onDiagnostic: (diagnostic) => eventLogger.logDiagnostic(diagnostic) });
   // History retention runs when a new day's file is created; what it reports lands in the daemon log (queue logs)
   const historyLog = new HistoryLog(join(configDir, 'history'), lines => {
     for (const line of lines) eventLogger.logDiagnostic({ source: 'HistoryRetention', message: line.message, level: line.level });
@@ -874,7 +875,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       });
       // What the WAL keeps of rows that already left the DLQ (cleared before the WAL was purged with them): the payload must not stay for ever
       try {
-        const { pruned } = pruneOrphanedDlqWalEntries(configDir);
+        const { pruned } = pruneOrphanedDlqWalEntries(configDir, { onDiagnostic: (diagnostic) => eventLogger.logDiagnostic(diagnostic) });
         if (pruned > 0) {
           eventLogger.logDiagnostic({ source: 'QueueDaemon.onStart', message: `removed ${pruned} WAL ${pruned === 1 ? 'entry' : 'entries'} in status dlq that no dead-letter queue row refers to (older than a day)` });
         }

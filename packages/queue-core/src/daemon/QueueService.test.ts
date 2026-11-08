@@ -64,6 +64,19 @@ describe('createQueueService', () => {
     expect(() => service.onShutdown()).not.toThrow();
   });
 
+  it('reports an unreadable WAL line in the daemon log (queue logs), not on a stderr nobody sees, and keeps the line in wal.ndjson.corrupt', () => {
+    const wal = join(configDir, 'wal.ndjson');
+    writeFileSync(wal, 'this is not json\n');
+    const service = createQueueService(configDir);
+
+    service.onStart();
+
+    expect(readFileSync(`${wal}.corrupt`, 'utf-8')).toBe('this is not json\n');
+    const day = new Date().toISOString().slice(0, 10);
+    const records = readFileSync(join(configDir, 'logs', `${day}.ndjson`), 'utf-8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(records.some((r) => r['source'] === 'Wal' && r['level'] === 'warn' && String(r['message']).includes('wal.ndjson.corrupt'))).toBe(true);
+  });
+
   it('exposes the event logger so the host can write its own diagnostics next to the service ones', () => {
     const service = createQueueService(configDir);
     expect(() => service.eventLogger.logDiagnostic({ source: 'test', message: 'hello' })).not.toThrow();

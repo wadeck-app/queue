@@ -30,7 +30,7 @@ export { pruneLogDir, describeRetention, listLogFiles, deleteLogFile, statQueueF
 export type { PruneOptions, PruneReport, PrunedFile, PruneFailure, RetentionKind, RetentionLine, RetentionAudience, RetentionIo, LogVariant, ProtectionReason, ListLogFilesOptions, LogFileInfo, LogFileListing, LogFileRef, DeleteLogFileOptions, DeleteLogFileResult, QueueFileInfo } from './storage/LogRetention.js';
 export { HistoryReader } from './storage/HistoryReader.js';
 export type { CausedBy } from './storage/HistoryLog.js';
-export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage, TriggerRecord } from './storage/HistoryReader.js';
+export type { HistoryEntry, HistoryFilter, HistorySubscriberOutcome, HistoryPage, MalformedHistoryFile, TriggerRecord } from './storage/HistoryReader.js';
 export { DEFAULT_HISTORY_LIMIT } from './storage/HistoryReader.js';
 export type { DlqEntry, DlqAppendResult } from './storage/DlqStore.js';
 export type { ResolvedSubscriber } from './types.js';

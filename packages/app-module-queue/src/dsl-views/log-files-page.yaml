@@ -9,12 +9,12 @@ $sources:
 $actions:
   pruneLogs:
     url: POST /api/modules/queue/log-files/logs/prune
-    confirm: Delete the log files that are past the retention (older than 90 days, then oldest first above 100 MB)? Today's file is never deleted. They cannot be recovered.
+    confirm: Delete the log files that are past the retention (older than the last 91 days, then oldest first above 100 MB)? Today's file is never deleted. They cannot be recovered.
     errorPrefix: Could not prune the logs
     reloadSources: true
   pruneHistory:
     url: POST /api/modules/queue/log-files/history/prune
-    confirm: Delete the history files that are past the retention (older than 90 days, then oldest first above 200 MB)? Events of those days can no longer be replayed. Today's file is never deleted. They cannot be recovered.
+    confirm: Delete the history files that are past the retention (older than the last 91 days, then oldest first above 200 MB)? Events of those days can no longer be replayed. Today's file is never deleted. They cannot be recovered.
     errorPrefix: Could not prune the history
     reloadSources: true
   deleteLogsFile:
@@ -39,7 +39,7 @@ sections:
   # ---- Logs ----
   - $type: PageHeader
     title: Logs
-    subtitle: Daemon logs (UTC day) and launcher logs (local day), kept 90 days and 100 MB in total.
+    subtitle: Daemon logs (UTC day) and launcher logs (local day), kept for the last 91 days (today and the 90 before) and 100 MB in total.
   - $type: Markdown
     text: $sources.files.logs.dirText
   - $type: Progress
@@ -90,7 +90,7 @@ sections:
   # ---- History ----
   - $type: PageHeader
     title: History
-    subtitle: Every pushed event with its payload, kept 90 days and 200 MB in total.
+    subtitle: Every pushed event with its payload, kept for the last 91 days (today and the 90 before) and 200 MB in total.
   - $type: Markdown
     text: $sources.files.history.dirText
   - $type: Progress

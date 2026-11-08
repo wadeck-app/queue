@@ -248,7 +248,7 @@ export function getLogFiles(configDir: string, now: Date = new Date()): LogFiles
   const sections = RETENTION_KINDS.map(kind => sectionOf(listLogFiles(dirOf(configDir, kind), { kind, now })));
   return {
     today: now.toISOString().slice(0, 10),
-    note: `Today (UTC) is **${now.toISOString().slice(0, 10)}**. Days are UTC, except the launcher logs, which use the local day of this machine. Today's file, a future day and a file modified in the last minute are protected.`,
+    note: `Today (UTC) is **${now.toISOString().slice(0, 10)}**. Days are UTC, except the launcher logs, which use the local day of this machine. Files are kept for the last 91 calendar days (today and the 90 before), counted from the newest file when the clock is more than 2 days ahead of it. Never deleted: today's file (for a launcher log also the local today and tomorrow), a future day, and a file modified in the last minute (24 hours for a launcher log) or with a modification time in the future.`,
     sections,
     logs: sections[0]!,
     history: sections[1]!,

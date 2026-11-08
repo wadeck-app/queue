@@ -26,7 +26,8 @@ export function listHistory(
 
   const reader = new HistoryReader(join(configDir, 'history'));
   const page = reader.readPage(filter, finalPagination);
-  return { ...page, entries: page.entries.map(withPayloadText) };
+  // The DSL cannot join a list: the page shows warningText in a badge, API clients read warnings
+  return { ...page, entries: page.entries.map(withPayloadText), ...(page.warnings !== undefined && { warningText: page.warnings.join(' ') }) };
 }
 
 /** Cap on the payload text sent to the dashboard; the full payload stays available via GET /history/<eventId>. */
@@ -40,7 +41,11 @@ const MIN_APP_CORE_FOR_ROUTE_PARAMS = '2026.10.17-023';
  * the DataTable tests to offer the expand toggle.
  */
 export type ApiHistoryEntry = Omit<HistoryEntry, 'payload'> & { payloadText?: string; detailsText?: string; expandable?: true };
-export type ApiHistoryPage = Omit<HistoryPage, 'entries'> & { entries: ApiHistoryEntry[] };
+export type ApiHistoryPage = Omit<HistoryPage, 'entries'> & {
+  entries: ApiHistoryEntry[];
+  /** `warnings` as one text, for the page's warning badge; absent with it. */
+  warningText?: string;
+};
 
 /**
  * The DSL JsonViewer reads `String(row[field])` then JSON.parse, so it needs TEXT, not an object

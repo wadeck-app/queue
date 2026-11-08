@@ -6,6 +6,7 @@ import type { DlqEntry, DlqAppendResult } from './storage/DlqStore.js';
 import { ConfigLoader, type ProjectConfigSource } from './ConfigLoader.js';
 import { ProjectResolver } from './project/ProjectResolver.js';
 import type { ResolvedSubscriber } from './types.js';
+import type { StorageDiagnosticSink } from './storage/StorageDiagnostics.js';
 
 /**
  * The queue's reads and its DLQ clearing, written once for every process that works on the queue files:
@@ -191,10 +192,11 @@ export const ORPHAN_DLQ_WAL_RETENTION_MS = 24 * 3_600_000;
  * Removes the WAL entries in status `dlq` that no DLQ row refers to and that are older than a day: what is left of rows cleared or evicted before the WAL was purged with them
  * (their payload, secrets included, would otherwise stay for ever and every WAL write would rewrite it). Bounded by age so the claim of a give-up in progress is not hit.
  */
-export function pruneOrphanedDlqWalEntries(configDir: string, options: { now?: Date; olderThanMs?: number } = {}): { pruned: number } {
+export function pruneOrphanedDlqWalEntries(configDir: string, options: { now?: Date; olderThanMs?: number; onDiagnostic?: StorageDiagnosticSink } = {}): { pruned: number } {
   const limit = (options.now ?? new Date()).getTime() - (options.olderThanMs ?? ORPHAN_DLQ_WAL_RETENTION_MS);
-  const wal = new Wal(join(configDir, 'wal.ndjson'));
-  const rowIds = new Set(new DlqStore(join(configDir, 'dlq.ndjson')).readAll().map((row) => row.id));
+  const sink = options.onDiagnostic === undefined ? {} : { onDiagnostic: options.onDiagnostic };
+  const wal = new Wal(join(configDir, 'wal.ndjson'), sink);
+  const rowIds = new Set(new DlqStore(join(configDir, 'dlq.ndjson'), undefined, sink).readAll().map((row) => row.id));
   const removed = wal.removeWhere((entry) => entry.status === 'dlq' && !rowIds.has(entry.id) && Date.parse(entry.timestamp) < limit);
   return { pruned: removed.length };
 }

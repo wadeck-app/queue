@@ -179,3 +179,49 @@ describe('follow mode with --limit', () => {
     expect(mockReader.read).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('runFollowMode and malformed history lines', () => {
+  it('warns once per distinct warning, in the initial dump and again only when a new one appears on a poll', async () => {
+    let warnings = ['file-a: 1 malformed line(s) skipped'];
+    const mockReader = {
+      read: vi.fn(() => [makeEntry({ eventId: 'ev-1' })]),
+      malformedWarnings: vi.fn(() => warnings),
+    };
+    const warned: string[] = [];
+
+    await runFollowMode({
+      reader: mockReader,
+      filter: {},
+      limit: 5,
+      json: false,
+      write: () => undefined,
+      warn: (text: string) => warned.push(text),
+      poll: async (interval: NodeJS.Timeout) => {
+        // Poll 1: same warning (not repeated); poll 2: a second file went bad
+        await vi.advanceTimersByTimeAsync(FOLLOW_POLL_INTERVAL_MS);
+        warnings = ['file-a: 1 malformed line(s) skipped', 'file-b: 2 malformed line(s) skipped'];
+        await vi.advanceTimersByTimeAsync(FOLLOW_POLL_INTERVAL_MS);
+        clearInterval(interval);
+      },
+    });
+
+    expect(warned).toEqual(['[warn] file-a: 1 malformed line(s) skipped\n', '[warn] file-b: 2 malformed line(s) skipped\n']);
+  });
+
+  it('works with a reader that reports nothing (no malformedWarnings)', async () => {
+    const warned: string[] = [];
+    await runFollowMode({
+      reader: { read: () => [] },
+      filter: {},
+      limit: 5,
+      json: false,
+      write: () => undefined,
+      warn: (text: string) => warned.push(text),
+      poll: async (interval: NodeJS.Timeout) => {
+        await vi.advanceTimersByTimeAsync(FOLLOW_POLL_INTERVAL_MS);
+        clearInterval(interval);
+      },
+    });
+    expect(warned).toEqual([]);
+  });
+});

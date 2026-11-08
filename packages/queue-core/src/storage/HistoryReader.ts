@@ -66,8 +66,18 @@ export interface HistoryFilter {
   sinceMs?: number;
 }
 
+/** A day file holding lines that are not valid JSON (they are skipped, never fatal): how many, and the first one (truncated). */
+export interface MalformedHistoryFile {
+  /** File name, e.g. 2026-10-19.ndjson. */
+  file: string;
+  count: number;
+  sample: string;
+}
+
 export interface HistoryPage {
   entries: HistoryEntry[];
+  /** One sentence per file with malformed lines (they were skipped); absent when every line was readable. */
+  warnings?: string[];
   /** Total entries matching the filter, before slicing -- for a "Showing X-Y of Z" footer. */
   total: number;
   limit: number;
@@ -93,6 +103,54 @@ const EVENT_ID_KEY = /"eventId":"((?:[^"\\]|\\.)*)"/;
 // What precedes the type of a record in its line: the opening brace and the `ts` key HistoryLog writes first
 const TRIGGER_LINE_HEAD = /^\{"ts":"[^"\\]*",$/;
 const SUBSCRIBER_KEY = /"subscriberId":"((?:[^"\\]|\\.)*)"/;
+// A malformed line is reported with its first characters only
+const SAMPLE_CHARS = 120;
+// What a record line starts with (HistoryLog writes `ts` first): a second one inside a line means two records were glued together
+const RECORD_START = '{"ts":"';
+
+/**
+ * The malformed lines met by one operation, per file. `seen` (partial scans only) keeps a line met twice by the same operation (two passes over a file)
+ * from being counted twice; a full scan visits every line once and needs none.
+ */
+interface Tally {
+  files: Map<string, MalformedHistoryFile>;
+  seen: Set<string> | undefined;
+}
+
+function newTally(partial: boolean): Tally {
+  return { files: new Map(), seen: partial ? new Set() : undefined };
+}
+
+function noteMalformed(tally: Tally, file: string, line: string): void {
+  const trimmed = line.trim();
+  if (tally.seen !== undefined) {
+    const key = `${file}\0${trimmed}`;
+    if (tally.seen.has(key)) {
+      return;
+    }
+    tally.seen.add(key);
+  }
+  const known = tally.files.get(file);
+  if (known === undefined) {
+    tally.files.set(file, { file, count: 1, sample: trimmed.slice(0, SAMPLE_CHARS) });
+  } else {
+    known.count++;
+  }
+}
+
+/** One line of a day file as a record: undefined for an empty line, and for a line that is not JSON (which is noted in the tally, not thrown). */
+function parseRecordLine(tally: Tally, file: string, line: string): Record<string, unknown> | undefined {
+  const trimmed = line.trim();
+  if (trimmed === '') {
+    return undefined;
+  }
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    noteMalformed(tally, file, trimmed);
+    return undefined;
+  }
+}
 
 /** A JSON string body (still escaped) back to text. */
 function unescapeJson(body: string): string {
@@ -134,9 +192,35 @@ export class HistoryReader {
   // Keyed by filename, so `queue history --follow` -- which holds one reader across many
   // polls -- only re-reads/re-parses a day file once its mtime actually changes, instead of
   // paying full directory I/O + JSON.parse on every tick as history grows.
-  private readonly fileCache = new Map<string, { mtimeMs: number; records: Record<string, unknown>[] }>();
+  private readonly fileCache = new Map<string, { mtimeMs: number; records: Record<string, unknown>[]; malformed?: MalformedHistoryFile }>();
+  // What the operations met so far, per file: a line that is not valid JSON is skipped (it used to make every read throw, for as long as the file lived) and listed here
+  private readonly malformedByFile = new Map<string, MalformedHistoryFile>();
 
   constructor(private readonly historyDir: string) {}
+
+  /**
+   * The day files in which an operation of this reader met lines that are not valid JSON (a write cut short by a crash, two records glued together, a hand edit),
+   * oldest file first. Those lines are skipped and every other line is read normally, so check this after reading: it is how the skip is made visible.
+   * A full read reports every such line; the targeted lookups (findTrigger, findByEventId, readProject) report the ones they came across.
+   */
+  malformedLines(): MalformedHistoryFile[] {
+    return [...this.malformedByFile.values()].sort((a, b) => a.file.localeCompare(b.file)).map((m) => ({ ...m }));
+  }
+
+  /** {@link malformedLines} as one actionable sentence per file (with the path), for a CLI [warn] line or an API `warnings` field. */
+  malformedWarnings(): string[] {
+    return this.malformedLines().map(
+      (m) =>
+        `${join(this.historyDir, m.file)}: ${m.count} malformed line(s) skipped (first: ${m.sample}). A write interrupted by a crash most likely left it; every other line of the file is read normally. ` +
+        `Repair or delete that line in the file if you do not need it.`,
+    );
+  }
+
+  private commit(tally: Tally): void {
+    for (const [file, malformed] of tally.files) {
+      this.malformedByFile.set(file, malformed);
+    }
+  }
 
   read(filter: HistoryFilter = {}): HistoryEntry[] {
     const acc = new Map<string, Accumulator>();
@@ -146,6 +230,11 @@ export class HistoryReader {
     for (const cachedFile of [...this.fileCache.keys()]) {
       if (!files.includes(cachedFile)) {
         this.fileCache.delete(cachedFile);
+      }
+    }
+    for (const reported of [...this.malformedByFile.keys()]) {
+      if (!files.includes(reported)) {
+        this.malformedByFile.delete(reported);
       }
     }
     for (const file of files) {
@@ -173,6 +262,7 @@ export class HistoryReader {
       return bytes === undefined ? [] : [{ file, bytes }];
     });
     const needle = Buffer.from(projectId, 'utf-8');
+    const tally = newTally(true);
     const candidates = new Set<string>();
     for (const { file, bytes } of files) {
       let from = 0;
@@ -181,7 +271,7 @@ export class HistoryReader {
         const lineEnd = bytes.indexOf(10, hit);
         const line = bytes.toString('utf-8', lineStart, lineEnd === -1 ? bytes.length : lineEnd);
         const body = EVENT_ID_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
-        const eventId = body !== undefined ? unescapeJson(body) : (parseRecordLine(file, line)?.['eventId'] as string | undefined);
+        const eventId = body !== undefined ? unescapeJson(body) : (parseRecordLine(tally, file, line)?.['eventId'] as string | undefined);
         if (eventId) {
           candidates.add(eventId);
         }
@@ -195,7 +285,7 @@ export class HistoryReader {
         for (const line of bytes.toString('utf-8').split('\n')) {
           const body = EVENT_ID_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
           if (body !== undefined && candidates.has(unescapeJson(body))) {
-            const record = parseRecordLine(file, line);
+            const record = parseRecordLine(tally, file, line);
             if (record !== undefined) {
               this.applyRecord(acc, record);
             }
@@ -203,6 +293,7 @@ export class HistoryReader {
         }
       }
     }
+    this.commit(tally);
     return this.toEntries(acc)
       .filter(e => this.matches(e, { projectId }))
       .sort((a, b) => b.ts.localeCompare(a.ts));
@@ -243,6 +334,15 @@ export class HistoryReader {
     // The id as it is written in the file (JSON-escaped, quotes included)
     const needle = Buffer.from(`"type":"trigger","eventId":${JSON.stringify(eventId)}`, 'utf-8');
     const files = this.listFiles();
+    const tally = newTally(true);
+    try {
+      return this.scanForTrigger(eventId, needle, files, tally);
+    } finally {
+      this.commit(tally);
+    }
+  }
+
+  private scanForTrigger(eventId: string, needle: Buffer, files: string[], tally: Tally): { trigger: TriggerRecord; file: string; files: string[] } | undefined {
     for (let i = files.length - 1; i >= 0; i--) {
       const file = files[i]!;
       const bytes = this.readDayFile(file);
@@ -256,7 +356,8 @@ export class HistoryReader {
           continue;
         }
         const lineEnd = bytes.indexOf(10, hit);
-        const record = parseRecordLine(file, bytes.toString('utf-8', lineStart, lineEnd === -1 ? bytes.length : lineEnd));
+        // A hit on a torn line is skipped (and reported), the older hits and files are still searched
+        const record = parseRecordLine(tally, file, bytes.toString('utf-8', lineStart, lineEnd === -1 ? bytes.length : lineEnd));
         if (record !== undefined && record['type'] === 'trigger' && record['eventId'] === eventId) {
           return { trigger: toTriggerRecord(record), file, files };
         }
@@ -269,13 +370,14 @@ export class HistoryReader {
    * Looks up a single entry by its exact eventId, for `queue replay <eventId>`: the same entry as `read().find(...)`, without parsing
    * every line of the history. Only the lines that carry the id are parsed; the day files before the trigger's day cannot hold a record of the
    * event, so they are not even searched. An id with no trigger (a retry's WAL id) is looked for in every day file and gives an orphan entry.
-   * A malformed line that does not carry the id is not noticed (`read()` would throw on it).
+   * A malformed line that does not carry the id is not noticed (`read()` reports it).
    */
   findByEventId(eventId: string): HistoryEntry | undefined {
     const located = this.locateTrigger(eventId);
     const files = located === undefined ? this.listFiles() : located.files.slice(located.files.indexOf(located.file));
     const needle = Buffer.from(JSON.stringify(eventId), 'utf-8');
     const acc = new Map<string, Accumulator>();
+    const tally = newTally(true);
     for (const file of files) {
       const bytes = this.readDayFile(file);
       if (bytes === undefined) {
@@ -289,7 +391,7 @@ export class HistoryReader {
         const body = EVENT_ID_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
         // The id as the `eventId` key of the record, not as a value further on (a payload, a causedBy): compare the decoded key
         if (body !== undefined && unescapeJson(body) === eventId) {
-          const record = parseRecordLine(file, line);
+          const record = parseRecordLine(tally, file, line);
           if (record !== undefined) {
             this.applyRecord(acc, record);
           }
@@ -297,6 +399,7 @@ export class HistoryReader {
         from = lineEnd === -1 ? bytes.length : lineEnd + 1;
       }
     }
+    this.commit(tally);
     return this.toEntries(acc)[0];
   }
 
@@ -310,7 +413,8 @@ export class HistoryReader {
     const limit = pagination.limit ?? DEFAULT_HISTORY_LIMIT;
     const offset = pagination.offset ?? 0;
     const all = this.read(filter);
-    return { entries: all.slice(offset, offset + limit), total: all.length, limit, offset };
+    const warnings = this.malformedWarnings();
+    return { entries: all.slice(offset, offset + limit), total: all.length, limit, offset, ...(warnings.length > 0 && { warnings }) };
   }
 
   /**
@@ -414,6 +518,7 @@ export class HistoryReader {
   /** Calls `visit` with the time and the raw line of every record of that type in the `lookbackMs` before `nowMs`. */
   private forEachRecord(type: 'trigger' | 'outcome' | 'filtered', nowMs: number, lookbackMs: number, visit: (ts: number, line: string) => void): void {
     const oldestDay = new Date(nowMs - lookbackMs).toISOString().slice(0, 10);
+    const tally = newTally(false);
     for (const file of this.listFiles()) {
       if (file.slice(0, 10) < oldestDay) {
         continue;
@@ -433,9 +538,15 @@ export class HistoryReader {
         if (Number.isNaN(ts) || ts > nowMs) {
           continue;
         }
+        // The head looks right, but a torn line (cut short, or glued to the next record) must not be counted: read() skips it, and both must agree
+        if (!isIntactRecordLine(line)) {
+          noteMalformed(tally, file, line);
+          continue;
+        }
         visit(ts, line);
       }
     }
+    this.commit(tally);
   }
 
   /**
@@ -497,6 +608,7 @@ export class HistoryReader {
     }
     const cached = this.fileCache.get(file);
     if (cached && cached.mtimeMs === mtimeMs) {
+      this.setMalformed(file, cached.malformed);
       return cached.records;
     }
 
@@ -506,19 +618,26 @@ export class HistoryReader {
     }
     const content = bytes.toString('utf-8');
     const records: Record<string, unknown>[] = [];
+    const tally = newTally(false);
     for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed === '') {
-        continue;
-      }
-      try {
-        records.push(JSON.parse(trimmed));
-      } catch (err) {
-        throw new Error(`Malformed history record in ${file}: ${trimmed} (${(err as Error).message})`);
+      const record = parseRecordLine(tally, file, line);
+      if (record !== undefined) {
+        records.push(record);
       }
     }
-    this.fileCache.set(file, { mtimeMs, records });
+    const malformed = tally.files.get(file);
+    this.fileCache.set(file, { mtimeMs, records, ...(malformed !== undefined && { malformed }) });
+    this.setMalformed(file, malformed);
     return records;
+  }
+
+  // A full scan of a file knows everything about it: a file that is clean now (repaired by hand) stops being reported
+  private setMalformed(file: string, malformed: MalformedHistoryFile | undefined): void {
+    if (malformed === undefined) {
+      this.malformedByFile.delete(file);
+    } else {
+      this.malformedByFile.set(file, malformed);
+    }
   }
 
   private applyRecord(acc: Map<string, Accumulator>, record: Record<string, unknown>): void {
@@ -594,16 +713,20 @@ export class HistoryReader {
   }
 }
 
-/** One line of a day file as a record; an empty line is none, a line that is not JSON throws (as {@link HistoryReader.read} does). */
-function parseRecordLine(file: string, line: string): Record<string, unknown> | undefined {
-  const trimmed = line.trim();
-  if (trimmed === '') {
-    return undefined;
+/**
+ * Whether a line that starts like a record is one complete record, without parsing it in the common case: a complete line ends with a brace and holds no second
+ * record start; anything else is parsed to know. The aggregates read tens of MB, which is why the common case is not parsed.
+ */
+function isIntactRecordLine(line: string): boolean {
+  const trimmed = line.trimEnd();
+  if (trimmed.endsWith('}') && trimmed.indexOf(RECORD_START, 1) === -1) {
+    return true;
   }
   try {
-    return JSON.parse(trimmed) as Record<string, unknown>;
-  } catch (err) {
-    throw new Error(`Malformed history record in ${file}: ${trimmed} (${(err as Error).message})`);
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
   }
 }
 

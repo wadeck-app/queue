@@ -308,9 +308,13 @@ describe('HistoryReader', () => {
     expect(entries.map(e => e.eventId)).toEqual(['ev-2']);
   });
 
-  it('throws on a malformed record instead of silently skipping it', () => {
+  // Replaces 'throws on a malformed record instead of silently skipping it', which pinned the bug: one torn line made the whole history unreadable for 90 days.
+  // The line is now skipped AND reported (see HistoryReader.malformed.test.ts), never silently.
+  it('skips a malformed record without throwing and reports it instead of hiding it', () => {
     writeFileSync(join(historyDir, '2026-01-01.ndjson'), 'not json\n', 'utf-8');
-    expect(() => new HistoryReader(historyDir).read()).toThrow(/Malformed history record/);
+    const reader = new HistoryReader(historyDir);
+    expect(reader.read()).toEqual([]);
+    expect(reader.malformedLines()).toEqual([{ file: '2026-01-01.ndjson', count: 1, sample: 'not json' }]);
   });
 
   describe('per-file caching (queue history --follow polls the same reader repeatedly)', () => {
@@ -739,8 +743,11 @@ describe('HistoryReader.readProject (the pruned read of one project)', () => {
     expect(new HistoryReader(join(historyDir, 'nothing')).readProject('aaaaaaaa')).toEqual([]);
   });
 
-  it('names the file and the line of a record that is not JSON when it mentions the id, like read() does', () => {
+  // Replaces 'names the file and the line of a record that is not JSON ... like read() does' (it expected a throw): readProject() now skips and reports, like read()
+  it('skips a record that is not JSON when it mentions the id, and reports the file and the line like read() does', () => {
     writeFileSync(join(historyDir, '2026-01-01.ndjson'), 'aaaaaaaa {broken\n');
-    expect(() => new HistoryReader(historyDir).readProject('aaaaaaaa')).toThrow(/Malformed history record in 2026-01-01\.ndjson/);
+    const reader = new HistoryReader(historyDir);
+    expect(reader.readProject('aaaaaaaa')).toEqual([]);
+    expect(reader.malformedLines()).toEqual([{ file: '2026-01-01.ndjson', count: 1, sample: 'aaaaaaaa {broken' }]);
   });
 });

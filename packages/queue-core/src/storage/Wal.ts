@@ -3,6 +3,7 @@ import { renameReplacing } from './AtomicRename.js';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
 import { FileLock } from './FileLock.js';
+import { quarantineCorruptLines, removeStaleTempFiles, stderrDiagnosticSink, type StorageDiagnosticSink } from './StorageDiagnostics.js';
 
 export interface WalEntry {
   id: string;
@@ -32,9 +33,13 @@ export class Wal {
 
   private readonly now: () => number;
   private readonly ackedRetentionMs: number;
+  private readonly diagnostics: StorageDiagnosticSink;
+  private tempFilesCleaned = false;
 
-  constructor(filePath: string, options: { now?: () => number; ackedRetentionMs?: number } = {}) {
+  /** @param options.onDiagnostic Where unreadable lines are reported (the daemon passes EventLogger.logDiagnostic); default: stderr. */
+  constructor(filePath: string, options: { now?: () => number; ackedRetentionMs?: number; onDiagnostic?: StorageDiagnosticSink } = {}) {
     this.filePath = filePath;
+    this.diagnostics = options.onDiagnostic ?? stderrDiagnosticSink;
     this.lock = new FileLock(`${filePath}.lock`);
     this.now = options.now ?? Date.now;
     this.ackedRetentionMs = options.ackedRetentionMs ?? ACKED_RETENTION_MS;
@@ -69,17 +74,25 @@ export class Wal {
   append(entry: WalEntry): void {
     this.ensureFile();
     this.lock.withLock((held) => {
-      this.commitEntries(this.withoutOldAcked([...this.readAll(), entry]), held);
+      this.commitEntries(this.withoutOldAcked([...this.readForRewrite(), entry]), held);
     });
   }
 
   readAll(): WalEntry[] {
-    if (!existsSync(this.filePath)) {
-      return [];
+    const { entries, corrupt } = this.parse();
+    for (const line of corrupt) {
+      process.stderr.write(`[queue] WAL: skipping malformed line: ${line.slice(0, 80)}\n`);
     }
-    const content = readFileSync(this.filePath, 'utf-8');
+    return entries;
+  }
+
+  private parse(): { entries: WalEntry[]; corrupt: string[] } {
     const entries: WalEntry[] = [];
-    for (const line of content.split('\n')) {
+    const corrupt: string[] = [];
+    if (!existsSync(this.filePath)) {
+      return { entries, corrupt };
+    }
+    for (const line of readFileSync(this.filePath, 'utf-8').split('\n')) {
       const trimmed = line.trim();
       if (!trimmed) {
         continue;
@@ -87,15 +100,22 @@ export class Wal {
       try {
         entries.push(JSON.parse(trimmed) as WalEntry);
       } catch {
-        process.stderr.write(`[queue] WAL: skipping malformed line: ${trimmed.slice(0, 80)}\n`);
+        corrupt.push(trimmed);
       }
     }
+    return { entries, corrupt };
+  }
+
+  /** The entries to rewrite the file from, under the lock: the unreadable lines the rewrite is about to drop are kept aside and reported first. */
+  private readForRewrite(): WalEntry[] {
+    const { entries, corrupt } = this.parse();
+    quarantineCorruptLines(this.filePath, corrupt, 'Wal', this.diagnostics);
     return entries;
   }
 
   updateEntry(id: string, updates: Partial<WalEntry>): void {
     this.lock.withLock((held) => {
-      const updated = this.readAll().map(e => (e.id === id ? { ...e, ...updates } : e));
+      const updated = this.readForRewrite().map(e => (e.id === id ? { ...e, ...updates } : e));
       this.commitEntries(this.withoutOldAcked(updated), held);
     });
   }
@@ -107,7 +127,7 @@ export class Wal {
    */
   updateEntryIf(id: string, predicate: (entry: WalEntry) => boolean, updates: Partial<WalEntry>): WalConditionalUpdate {
     return this.lock.withLock((held) => {
-      const entries = this.readAll();
+      const entries = this.readForRewrite();
       const current = entries.find((e) => e.id === id);
       if (current === undefined) {
         return { status: 'not-found' };
@@ -133,7 +153,7 @@ export class Wal {
   upsert(entry: WalEntry): void {
     this.ensureFile();
     this.lock.withLock((held) => {
-      const others = this.readAll().filter((e) => e.id !== entry.id);
+      const others = this.readForRewrite().filter((e) => e.id !== entry.id);
       this.commitEntries(this.withoutOldAcked([...others, entry]), held);
     });
   }
@@ -144,7 +164,7 @@ export class Wal {
       return [];
     }
     return this.lock.withLock((held) => {
-      const entries = this.readAll();
+      const entries = this.readForRewrite();
       const removed = entries.filter(predicate);
       if (removed.length > 0) {
         this.commitEntries(this.withoutOldAcked(entries.filter((e) => !removed.includes(e))), held);
@@ -159,6 +179,11 @@ export class Wal {
 
   /** Replaces the file atomically (readers never see a half-written file). Must be called with the lock held. */
   private commit(content: string, held: FileLock): void {
+    // The leftovers of writers that died between the write and the rename: once per instance, before the first write
+    if (!this.tempFilesCleaned) {
+      this.tempFilesCleaned = true;
+      removeStaleTempFiles(this.filePath);
+    }
     // One temp file per process: a shared name made concurrent writers rename each other's file away
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
     writeFileSync(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });

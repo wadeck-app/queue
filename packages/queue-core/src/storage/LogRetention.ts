@@ -22,6 +22,10 @@ const RECENT_MTIME_MS = 60 * 1000;
 const LAUNCHER_RECENT_MTIME_MS = DAY_MS;
 // No log can predate the Unix epoch: such a name is not a log file of ours
 const FIRST_LOG_DAY_MS = 0;
+// The age pass counts from the newest file's day plus this margin at most: a clock that jumped ahead (or a daemon idle for weeks) must not age the whole directory at once
+const CLOCK_MARGIN_DAYS = 2;
+// One run never deletes more than half of the files by age when it is more than this many files: that is a clock or configuration problem, not retention
+const MASS_DELETE_MIN_FILES = 10;
 
 /** Which directory is pruned: it selects the file names that may be deleted, the default limits and the wording of the messages. */
 export type RetentionKind = 'logs' | 'history';
@@ -130,7 +134,8 @@ function localDay(date: Date, offsetDays = 0): string {
  * Why a file must not be deleted now, undefined when it may be. Shared by the retention and by the deletion of one file.
  * Protected: the UTC day of `now` and any later day (clock skew), for a launcher file also the host-local today and tomorrow
  * (the launcher's day boundary), and a file modified recently (a minute; a day for a launcher file). A modification time
- * later than `now` is not "recent": it cannot be told from a test clock, and the day rules already cover a real future.
+ * later than `now` is protected too, like a future day in a name: a clock or file system that disagrees with ours means a writer may be active,
+ * and deleting on that evidence is the unsafe side to err on.
  */
 export function protectionReason(file: { day: string; variant: LogVariant; mtimeMs: number }, now: Date, keepDay?: string): ProtectionReason | undefined {
   const today = utcDay(now);
@@ -142,7 +147,8 @@ export function protectionReason(file: { day: string; variant: LogVariant; mtime
   }
   const age = now.getTime() - file.mtimeMs;
   const window = file.variant === 'launcher' ? LAUNCHER_RECENT_MTIME_MS : RECENT_MTIME_MS;
-  if (age >= 0 && age < window) return 'recently modified';
+  // A negative age (mtime in the future) is protected on purpose, see above
+  if (age < window) return 'recently modified';
   return undefined;
 }
 
@@ -178,6 +184,15 @@ function collectLogFiles(dir: string, names: string[], kind: RetentionKind, io: 
     if (!info) continue;
     try {
       const stat = lstat(join(dir, name));
+      // A directory or a link named like a log file is not ours to delete (unlink would fail every new day with advice that does not fit): it is reported, not counted
+      if (!stat.isFile()) {
+        failures.push({
+          file: name,
+          error: `${join(dir, name)} is not a regular file (a directory or a link named like a ${kind === 'history' ? 'history' : 'log'} file)`,
+          fix: `Remove or rename ${join(dir, name)} by hand: the retention only deletes regular files, and ignores this one (it is not counted in the sizes) until then.`,
+        });
+        continue;
+      }
       files.push({ name, ...info, bytes: stat.size, mtimeMs: stat.mtimeMs });
     } catch (err) {
       // Gone between the directory read and now: nothing to retain
@@ -194,17 +209,19 @@ function collectLogFiles(dir: string, names: string[], kind: RetentionKind, io: 
 
 interface Policy {
   kind: RetentionKind;
+  dir: string;
   maxAgeDays: number;
   maxTotalBytes: number;
   now: Date;
   keepDay: string;
 }
 
-function policyOf(options: { kind?: RetentionKind; maxAgeDays?: number; maxTotalBytes?: number; now: Date; keepDay: string }): Policy {
+function policyOf(dir: string, options: { kind?: RetentionKind; maxAgeDays?: number; maxTotalBytes?: number; now: Date; keepDay: string }): Policy {
   const kind = options.kind ?? 'logs';
   const isHistory = kind === 'history';
   return {
     kind,
+    dir,
     maxAgeDays: options.maxAgeDays ?? (isHistory ? HISTORY_MAX_AGE_DAYS : LOG_MAX_AGE_DAYS),
     maxTotalBytes: options.maxTotalBytes ?? (isHistory ? HISTORY_MAX_TOTAL_BYTES : LOG_MAX_TOTAL_BYTES),
     now: options.now,
@@ -224,14 +241,35 @@ function applyPolicy(files: LogFile[], policy: Policy, remove: (file: LogFile, r
     if (reason) f.protectedReason = reason;
   }
 
-  // Step 1: age
-  const todayMs = Date.UTC(policy.now.getUTCFullYear(), policy.now.getUTCMonth(), policy.now.getUTCDate());
+  // Step 1: age, counted from the clock but never from further than CLOCK_MARGIN_DAYS after the newest file: after a forward clock jump
+  // or a long idle, "now" says nothing about what is old, and trusting it deleted the whole directory (including yesterday)
+  const nowDayMs = Date.UTC(policy.now.getUTCFullYear(), policy.now.getUTCMonth(), policy.now.getUTCDate());
+  const newestDayMs = files.reduce((max, f) => Math.max(max, parseLogDay(f.day)!), -Infinity);
+  const anchorMs = Math.min(nowDayMs, newestDayMs + CLOCK_MARGIN_DAYS * DAY_MS);
+  const warnings: string[] = [];
+  const label = isHistory ? 'history' : 'log';
+  if (files.length > 0 && nowDayMs > anchorMs) {
+    const newestDay = new Date(newestDayMs).toISOString().slice(0, 10);
+    const ahead = Math.round((nowDayMs - newestDayMs) / DAY_MS);
+    warnings.push(
+      `The clock is ${ahead} days ahead of the newest ${label} file (${newestDay}): the daemon was idle that long or the system clock jumped forward. ` +
+        `The ${policy.maxAgeDays}-day age limit is counted from ${new Date(anchorMs).toISOString().slice(0, 10)} instead of today, so nothing newer than that is deleted: the age retention is held back until the clock is sane or a new day file exists. Check the system date.`,
+    );
+  }
   const ageReason = `older than ${policy.maxAgeDays} days`;
+  const overAge = (f: LogFile): boolean => !f.protectedReason && (anchorMs - parseLogDay(f.day)!) / DAY_MS > policy.maxAgeDays;
+  const agedCount = files.filter(overAge).length;
   // A file whose deletion just failed is not tried again by the size pass (one failure entry per file)
   const failedToRemove = new Set<LogFile>();
+  const massDelete = agedCount > MASS_DELETE_MIN_FILES && agedCount > files.length / 2;
+  if (massDelete) {
+    warnings.push(
+      `The age retention would delete ${agedCount} of ${files.length} ${label} files in one run, which looks like a clock or configuration problem, so it deleted none of them. ` +
+        `If they are really obsolete, delete them by hand in ${policy.dir} or from the Log files page of the dashboard.`,
+    );
+  }
   let kept = files.filter(f => {
-    if (f.protectedReason) return true;
-    if ((todayMs - parseLogDay(f.day)!) / DAY_MS <= policy.maxAgeDays) return true;
+    if (!overAge(f) || massDelete) return true;
     if (remove(f, ageReason)) return false;
     failedToRemove.add(f);
     return true;
@@ -250,6 +288,8 @@ function applyPolicy(files: LogFile[], policy: Policy, remove: (file: LogFile, r
   }
 
   report.remainingBytes = total();
+  const ageWarning = warnings.join(' ');
+  if (ageWarning !== '') report.warning = ageWarning;
   if (report.remainingBytes > policy.maxTotalBytes) {
     if (kept.every(f => f.protectedReason)) {
       if (kept.every(f => f.day === policy.keepDay)) {
@@ -265,6 +305,8 @@ function applyPolicy(files: LogFile[], policy: Policy, remove: (file: LogFile, r
     } else {
       report.warning = `${isHistory ? 'History still uses' : 'Logs still use'} ${report.remainingBytes} bytes, over the ${policy.maxTotalBytes} byte cap, because some files could not be deleted (see failures).`;
     }
+    // The size warning follows the age warning: both are true and the user needs both
+    if (ageWarning !== '') report.warning = `${ageWarning} ${report.warning}`;
   }
   return kept;
 }
@@ -276,7 +318,7 @@ function applyPolicy(files: LogFile[], policy: Policy, remove: (file: LogFile, r
  * With `dryRun`, nothing is deleted and `deleted` is what a real run would delete.
  */
 export function pruneLogDir(dir: string, options: PruneOptions): PruneReport {
-  const policy = policyOf(options);
+  const policy = policyOf(dir, options);
   const unlink = options.unlink ?? unlinkSync;
   const audience = options.audience ?? 'daemon';
   const { files, failures } = collectLogFiles(dir, readdirSync(dir), policy.kind, options);
@@ -355,7 +397,7 @@ export interface LogFileListing {
  * (a dry run), so the preview cannot drift from the deletion. A missing directory is an empty listing; an unreadable existing one throws.
  */
 export function listLogFiles(dir: string, options: ListLogFilesOptions): LogFileListing {
-  const policy = policyOf({ ...options, keepDay: utcDay(options.now) });
+  const policy = policyOf(dir, { ...options, keepDay: utcDay(options.now) });
   const listing: LogFileListing = {
     kind: policy.kind,
     dir,

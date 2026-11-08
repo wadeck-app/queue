@@ -183,7 +183,7 @@ describe('RPC give-up (the daemon runs the move and emits what it moved)', () =>
 
   it('answers not-found and not-in-flight like the file operation, and emits nothing', async () => {
     await projectWith(YAML(failingCli('onNever')));
-    new Wal(join(configDir, 'wal.ndjson')).append(walEntry('done', { status: 'acked' }));
+    new Wal(join(configDir, 'wal.ndjson')).append(walEntry('done', { status: 'acked', ackedAt: new Date().toISOString() }));
     const svc = service();
     expect(svc.commands['give-up']({ id: 'nope' })).toEqual({ status: 'not-found' });
     expect(svc.commands['give-up']({ id: 'done' })).toEqual({ status: 'not-in-flight' });

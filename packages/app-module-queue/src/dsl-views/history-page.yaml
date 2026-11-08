@@ -64,6 +64,11 @@ sections:
         ariaLabel: Project
         placeholder: Any project
         options: $sources.projects.options
+  # Lines of a day file that could not be read (a write cut short by a crash) are skipped: say so instead of showing a quietly shorter history
+  - $type: Badge
+    $if: $sources.history.warningText
+    label: $sources.history.warningText
+    variant: warning
   - $type: DataTable
     rows: $sources.history.entries
     # `row` is not injected into the expansion: pass it with $ctx.row.

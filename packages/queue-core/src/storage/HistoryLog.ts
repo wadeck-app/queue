@@ -1,5 +1,5 @@
 import type { EventMeta } from '../types.js';
-import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, closeSync, fstatSync, readSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { pruneLogDir, describeRetention, type PruneOptions, type PruneReport, type RetentionLine } from './LogRetention.js';
 
@@ -74,6 +74,28 @@ export interface HistoryWriter {
   logFiltered(entry: FilteredHistoryEntry): void;
 }
 
+/**
+ * Appends one line to an ndjson file, on a line of its own: if the file is not empty and does not end with a newline (a crash cut the previous append short),
+ * a newline is written first, in the same write. Without it the new record is glued to the torn tail and both are lost to every reader.
+ */
+function appendLine(file: string, line: string): void {
+  const fd = openSync(file, 'a+');
+  try {
+    const size = fstatSync(fd).size;
+    let separator = '';
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      readSync(fd, last, 0, 1, size - 1);
+      if (last[0] !== 0x0a) {
+        separator = '\n';
+      }
+    }
+    writeSync(fd, separator + line, null, 'utf-8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export class HistoryLog implements HistoryWriter {
   private readonly historyDir: string;
   private readonly onRetention: (lines: RetentionLine[]) => void;
@@ -131,7 +153,7 @@ export class HistoryLog implements HistoryWriter {
     const file = join(this.historyDir, `${day}.ndjson`);
     // A new day's file is the one moment the retention runs (not on every write)
     if (!existsSync(file)) this.runRetention(day);
-    appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), type, ...entry }) + '\n', 'utf-8');
+    appendLine(file, JSON.stringify({ ts: new Date().toISOString(), type, ...entry }) + '\n');
   }
 
   logTrigger(entry: TriggerHistoryEntry): void {

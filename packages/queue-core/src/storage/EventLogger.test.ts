@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventLogger } from './EventLogger.js';
@@ -171,7 +171,13 @@ describe('EventLogger', () => {
     });
 
     it('prunes real old files with the default retention on a new day', () => {
+      // The test clock is pinned to 2026-10-19 while a file written now gets the real mtime (later than that): set the mtime explicitly, far in the past
+      const longAgo = new Date('2020-01-01T00:00:00.000Z');
       writeFileSync(join(logsDir, '2020-01-01.ndjson'), 'old');
+      utimesSync(join(logsDir, '2020-01-01.ndjson'), longAgo, longAgo);
+      // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+      writeFileSync(join(logsDir, '2026-10-18.ndjson'), 'yesterday');
+      utimesSync(join(logsDir, '2026-10-18.ndjson'), longAgo, longAgo);
       logger.logDiagnostic({ source: 'test', message: 'first' });
       expect(readRecords(logsDir).some(r => String(r['message']).includes('2020-01-01.ndjson'))).toBe(true);
     });

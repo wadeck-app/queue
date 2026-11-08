@@ -3,6 +3,7 @@ import { renameReplacing } from './AtomicRename.js';
 import { dirname } from 'node:path';
 import type { EventMeta } from '../types.js';
 import { FileLock } from './FileLock.js';
+import { quarantineCorruptLines, removeStaleTempFiles, stderrDiagnosticSink, type StorageDiagnosticSink } from './StorageDiagnostics.js';
 import type { DlqAddedInfo } from '../dlqEvents.js';
 
 export interface DlqEntry {
@@ -35,10 +36,14 @@ export class DlqStore {
   private readonly maxSize: number;
   // Serialises the read-modify-write of every writer process (the daemon, app-core's queue module)
   private readonly lock: FileLock;
+  private readonly diagnostics: StorageDiagnosticSink;
+  private tempFilesCleaned = false;
 
-  constructor(filePath: string, maxSize = 1000) {
+  /** @param options.onDiagnostic Where unreadable lines and the "limit reached" notice are reported (the daemon passes EventLogger.logDiagnostic); default: stderr. */
+  constructor(filePath: string, maxSize = 1000, options: { onDiagnostic?: StorageDiagnosticSink } = {}) {
     this.filePath = filePath;
     this.maxSize = maxSize;
+    this.diagnostics = options.onDiagnostic ?? stderrDiagnosticSink;
     this.lock = new FileLock(`${filePath}.lock`);
   }
 
@@ -52,9 +57,15 @@ export class DlqStore {
   /** Replaces the file atomically (readers never see a half-written file). Must be called with the lock held. */
   private write(entries: DlqEntry[], held: FileLock): void {
     this.ensureDir();
+    // The leftovers of writers that died between the write and the rename: once per instance, before the first write
+    if (!this.tempFilesCleaned) {
+      this.tempFilesCleaned = true;
+      removeStaleTempFiles(this.filePath);
+    }
     // One temp file per process: a shared name made concurrent writers rename each other's file away
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
-    writeFileSync(tmpPath, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length > 0 ? '\n' : ''), 'utf-8');
+    // 0600 like the WAL: the rows carry push payloads
+    writeFileSync(tmpPath, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length > 0 ? '\n' : ''), { encoding: 'utf-8', mode: 0o600 });
     held.assertHeld();
     renameReplacing(tmpPath, this.filePath);
   }
@@ -67,14 +78,20 @@ export class DlqStore {
   append(entry: DlqEntry): DlqAppendResult {
     this.ensureDir();
     return this.lock.withLock((held) => {
-      let entries = this.readAll();
+      let entries = this.readForRewrite();
       const existing = entries.some((e) => e.id === entry.id);
       let evicted: DlqEntry | undefined;
       if (existing) {
         entries = entries.filter((e) => e.id !== entry.id);
       } else if (entries.length >= this.maxSize) {
-        process.stderr.write(`[queue] DLQ limit reached (${this.maxSize}). Removing oldest entry.\n`);
         evicted = entries[0];
+        this.diagnostics({
+          source: 'DlqStore',
+          level: 'warn',
+          message:
+            `DLQ limit reached (${this.maxSize}): the oldest entry ${evicted!.id} (event ${evicted!.event}, subscriber ${evicted!.subscriberId}, moved at ${evicted!.movedAt}) was removed to make room and can no longer be replayed. ` +
+            `Replay or clear the dead-letter queue (queue dlq) before it drops more.`,
+        });
         entries = entries.slice(1);
       }
       entries.push(entry);
@@ -92,7 +109,7 @@ export class DlqStore {
   setAnnounce(id: string, announce: 'pending' | 'skipped' | undefined): boolean {
     this.ensureDir();
     return this.lock.withLock((held) => {
-      const entries = this.readAll();
+      const entries = this.readForRewrite();
       const index = entries.findIndex((e) => e.id === id);
       if (index === -1) {
         return false;
@@ -113,12 +130,20 @@ export class DlqStore {
   }
 
   readAll(): DlqEntry[] {
-    if (!existsSync(this.filePath)) {
-      return [];
+    const { entries, corrupt } = this.parse();
+    for (const line of corrupt) {
+      process.stderr.write(`[queue] DLQ: skipping malformed line: ${line.slice(0, 80)}\n`);
     }
-    const content = readFileSync(this.filePath, 'utf-8');
+    return entries;
+  }
+
+  private parse(): { entries: DlqEntry[]; corrupt: string[] } {
     const entries: DlqEntry[] = [];
-    for (const line of content.split('\n')) {
+    const corrupt: string[] = [];
+    if (!existsSync(this.filePath)) {
+      return { entries, corrupt };
+    }
+    for (const line of readFileSync(this.filePath, 'utf-8').split('\n')) {
       const trimmed = line.trim();
       if (!trimmed) {
         continue;
@@ -126,9 +151,16 @@ export class DlqStore {
       try {
         entries.push(JSON.parse(trimmed) as DlqEntry);
       } catch {
-        process.stderr.write(`[queue] DLQ: skipping malformed line\n`);
+        corrupt.push(trimmed);
       }
     }
+    return { entries, corrupt };
+  }
+
+  /** The rows to rewrite the file from, under the lock: the unreadable lines the rewrite is about to drop are kept aside and reported first. */
+  private readForRewrite(): DlqEntry[] {
+    const { entries, corrupt } = this.parse();
+    quarantineCorruptLines(this.filePath, corrupt, 'DlqStore', this.diagnostics);
     return entries;
   }
 
@@ -142,7 +174,7 @@ export class DlqStore {
     const wanted = new Set(typeof ids === 'string' ? [ids] : ids);
     this.ensureDir();
     return this.lock.withLock((held) => {
-      const before = this.readAll();
+      const before = this.readForRewrite();
       const removed = before.filter((e) => wanted.has(e.id));
       this.write(before.filter((e) => !wanted.has(e.id)), held);
       return removed;
@@ -158,7 +190,7 @@ export class DlqStore {
   clearEntries(): DlqEntry[] {
     this.ensureDir();
     return this.lock.withLock((held) => {
-      const removed = this.readAll();
+      const removed = this.readForRewrite();
       this.write([], held);
       return removed;
     });

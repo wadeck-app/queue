@@ -223,6 +223,17 @@ describe('backend', () => {
     expect(reply.send).toHaveBeenCalledWith({ entries: [], total: 42, limit: 5, offset: 10 });
   });
 
+  it('GET /history sends the warnings of skipped malformed lines to the client unchanged (the page, not a bare list, so nothing is hidden)', () => {
+    const { routes, ctx } = collectRoutes();
+    backend(ctx);
+    const page = { entries: [], total: 0, limit: 20, offset: 0, warnings: ['h/2026-01-01.ndjson: 1 malformed line(s) skipped'], warningText: 'h/2026-01-01.ndjson: 1 malformed line(s) skipped' };
+    mockListHistory.mockReturnValue(page);
+    const reply = fakeReply();
+    routes.get('GET /history')!(fakeReq({ query: {} }), asReply(reply));
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith(page);
+  });
+
   it('GET /history omits limit/offset when not provided, letting listHistory default them', () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);

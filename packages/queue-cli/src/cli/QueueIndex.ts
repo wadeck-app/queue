@@ -408,15 +408,29 @@ export function parseHistoryFlags(args: string[]): { filter: HistoryFilter; json
 // Helper to inject dependencies into follow mode for testing (with AbortSignal support).
 // When signal is aborted, the follow loop stops without clearing the interval.
 export async function runFollowMode(deps: {
-  reader: { read: (filter?: HistoryFilter) => HistoryEntry[] };
+  reader: { read: (filter?: HistoryFilter) => HistoryEntry[]; malformedWarnings?: () => string[] };
   filter?: HistoryFilter;
   limit: number;
   json: boolean;
   write: (text: string) => void;
+  /** Where the [warn] lines go (default: stderr, so a piped stdout stays clean). */
+  warn?: (text: string) => void;
   poll?: (intervalHandle: NodeJS.Timeout) => Promise<void>;
   signal?: AbortSignal;
 }): Promise<void> {
   const { reader, filter, limit, json, write, poll, signal } = deps;
+  const warn = deps.warn ?? ((text: string): void => void process.stderr.write(text));
+
+  // A torn line is skipped by the reader and reported by it; a live tail says so once per distinct warning, not at every poll
+  const warned = new Set<string>();
+  const reportMalformed = (): void => {
+    for (const warning of reader.malformedWarnings?.() ?? []) {
+      if (!warned.has(warning)) {
+        warned.add(warning);
+        warn(`[warn] ${warning}\n`);
+      }
+    }
+  };
 
   // Follow mode prints one entry per line (chronological), not the array/newest-first shape
   // of a one-shot read: a live tail is a stream of updates, not a snapshot document.
@@ -426,6 +440,7 @@ export async function runFollowMode(deps: {
 
   // Read all current entries, then take only the N most recent (tail -n semantics)
   const allRead = reader.read(filter);
+  reportMalformed();
   const sorted = [...allRead].sort((a, b) => a.ts.localeCompare(b.ts));
   const initial = sorted.slice(-limit);
 
@@ -440,6 +455,7 @@ export async function runFollowMode(deps: {
   if (poll) {
     const interval = setInterval(() => {
       const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
+      reportMalformed();
       snapshot = next;
       for (const entry of changed) printEntry(entry);
     }, FOLLOW_POLL_INTERVAL_MS);
@@ -460,6 +476,7 @@ export async function runFollowMode(deps: {
         return;
       }
       const { changed, snapshot: next } = diffNewEntries(snapshot, reader.read(filter));
+      reportMalformed();
       snapshot = next;
       for (const entry of changed) printEntry(entry);
     }, FOLLOW_POLL_INTERVAL_MS);
@@ -498,8 +515,13 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
   }
 
   const reader = new HistoryReader(pathJoin(configDir, 'history'));
+  // A line the reader skipped is said on stderr (a [warn], stdout stays the data), whatever the command printed
+  const warnMalformed = (): void => {
+    for (const warning of reader.malformedWarnings()) process.stderr.write(`[warn] ${warning}\n`);
+  };
   if (eventId !== undefined) {
     const entry = reader.findByEventId(eventId);
+    warnMalformed();
     if (entry === undefined) {
       process.stderr.write(
         `[fail] No history entry for eventId ${eventId}. The history keeps at most ${HISTORY_MAX_AGE_DAYS} days and ${HISTORY_MAX_TOTAL_BYTES / (1024 * 1024)} MB, so an older event is gone; check the id with 'queue history' (the eventId is the id of the push, not the id of a retry or a DLQ entry).\n`,
@@ -513,6 +535,7 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
 
   if (!follow) {
     const page = reader.readPage(filter, { limit, offset });
+    warnMalformed();
     if (json) {
       process.stdout.write(JSON.stringify(page, null, 2) + '\n');
       return;

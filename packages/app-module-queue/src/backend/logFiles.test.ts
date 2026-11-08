@@ -105,6 +105,13 @@ describe('getLogFiles', () => {
     expect(response.logs).toBe(response.sections[0]);
     expect(response.history).toBe(response.sections[1]);
     expect(response.note).toContain(TODAY);
+    // The note states the whole policy: the exact age (91 calendar days: today and the 90 before) and every protection, launcher and future-mtime rules included
+    expect(response.note).toContain('last 91 calendar days (today and the 90 before)');
+    expect(response.note).toContain('tomorrow');
+    expect(response.note).toContain('24 hours');
+    expect(response.note).toContain('last minute');
+    expect(response.note).toContain('future');
+    expect(response.note).toContain('modification time');
     expect(logs.totalBytes).toBe(2208);
     expect(response.sections[1]!.files.map(f => f.id)).toEqual(['history:2026-10-10:daemon']);
     const ids = response.sections.flatMap(s => s.files.map(f => f.id));
@@ -163,9 +170,11 @@ describe('pruneLogFiles', () => {
   it('prunes the history directory on its own', () => {
     put('logs', '2026-01-01.ndjson');
     put('history', '2026-01-01.ndjson', 7);
+    // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+    put('history', '2026-10-18.ndjson', 0);
     const result = pruneLogFiles(configDir, 'history', NOW, fakeLogger());
     expect(names('logs')).toEqual(['2026-01-01.ndjson']);
-    expect(names('history')).toEqual([]);
+    expect(names('history')).toEqual(['2026-10-18.ndjson']);
     expect(result.message).toBe('Deleted 1 history file, 7 B freed.');
   });
 
@@ -195,18 +204,21 @@ describe('pruneLogFiles', () => {
     expect(names('logs')).toEqual(['2026-01-01.ndjson']);
   });
 
-  it('reports a file that cannot be deleted in the 200 body with the dashboard fix, and keeps going', () => {
-    // A directory named like a log file cannot be unlinked, on Windows and POSIX alike
+  // Was 'reports a file that cannot be deleted ...' with the dashboard fix of a failed unlink: a directory named like a log file is no longer handed to unlink
+  // (that pinned the misleading "held open" advice), it is reported as not a regular file with its own fix
+  it('reports a directory named like a log file in the 200 body, with a fix that says to remove it by hand, and keeps going', () => {
     mkdirSync(join(configDir, 'logs', '2020-01-01.ndjson'), { recursive: true });
     put('logs', '2020-01-02.ndjson', 3);
+    // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+    put('logs', '2026-10-18.ndjson', 0);
     const logger = fakeLogger();
 
     const result = pruneLogFiles(configDir, 'logs', NOW, logger);
 
     expect(result.deleted.map(d => d.file)).toEqual(['2020-01-02.ndjson']);
     expect(result.failures).toHaveLength(1);
-    // The wording depends on the error code of the platform (EPERM on Windows, EISDIR elsewhere), both dashboard-oriented
-    expect(result.failures[0]!.fix).toMatch(/held open by a running program|then try again/);
+    expect(result.failures[0]!.error).toContain('not a regular file');
+    expect(result.failures[0]!.fix).toContain('by hand');
     expect(result.message).toContain('1 file could not be deleted: 2020-01-01.ndjson');
     expect(logger.diagnostics[0]!.level).toBe('warn');
   });
@@ -218,6 +230,8 @@ describe('pruneLogFiles', () => {
 
   it('still succeeds when the audit line cannot be written, and says so in the message', () => {
     put('logs', '2026-01-01.ndjson');
+    // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+    put('logs', '2026-10-18.ndjson', 0);
     const logger: QueueLogWriter = {
       logDispatch: vi.fn(),
       logFilterMiss: vi.fn(),
@@ -226,7 +240,7 @@ describe('pruneLogFiles', () => {
       },
     };
     const result = pruneLogFiles(configDir, 'logs', NOW, logger);
-    expect(names('logs')).toEqual([]);
+    expect(names('logs')).toEqual(['2026-10-18.ndjson']);
     expect(result.message).toContain('The audit line could not be written to the day log: EACCES: logs');
   });
 
@@ -234,6 +248,8 @@ describe('pruneLogFiles', () => {
     // The real clock: the default logger stamps the day file with it
     const now = new Date();
     put('logs', '2020-01-01.ndjson');
+    // Yesterday's file: the age pass is counted from the newest file (at most 2 days after it), so it needs a recent one to see the real clock
+    put('logs', `${new Date(now.getTime() - 24 * 3600_000).toISOString().slice(0, 10)}.ndjson`, 0);
     pruneLogFiles(configDir, 'logs', now);
     const dayFile = join(configDir, 'logs', `${now.toISOString().slice(0, 10)}.ndjson`);
     expect(existsSync(dayFile)).toBe(true);
