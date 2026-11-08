@@ -151,7 +151,7 @@ describe('resolveNpmShim - files (pure fs, every platform)', () => {
     const nodeDir = join(workDir, 'nodecmd');
     mkdirSync(nodeDir, { recursive: true });
     writeFileSync(join(nodeDir, 'node.cmd'), '');
-    expect(() => resolveNpmShim(join(shimDir, 'argv.cmd'), { PATH: nodeDir, PATHEXT: '.CMD;.EXE' })).toThrow(/is not an .exe/);
+    expect(() => resolveNpmShim(join(shimDir, 'argv.cmd'), { PATH: nodeDir, PATHEXT: '.cmd;.exe' })).toThrow(/is not an .exe/);
   });
 
   it('resolves a script inside a folder whose name merely starts with two dots', () => {
