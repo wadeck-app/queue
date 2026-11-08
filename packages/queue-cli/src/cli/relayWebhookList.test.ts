@@ -157,3 +157,22 @@ describe('relayWebhookList', () => {
     expect(vi.mocked(io.stderr.write).mock.calls.length).toBe(0);
   });
 });
+
+describe('relayWebhookList payload URL label', () => {
+  it('names the webhook source in the label, never GitHub for a GitLab webhook', async () => {
+    const id = '334cccca-41e2-431f-9ee7-a5f2258bbe4f';
+    const client: RelayApiClient = {
+      listWebhookConfigs: vi.fn().mockResolvedValue([
+        { id, source: 'gitlab', name: 'wadeck-app/app-core', createdAt: '2026-11-08T12:07:21.150Z', webhookUrl: `/webhook/gitlab/${id}` },
+      ]),
+      listDeliveries: vi.fn(),
+    };
+    const io = { stdout: { write: vi.fn() }, stderr: { write: vi.fn() } };
+
+    await relayWebhookList(client, io, { origin: 'https://assistant.wadeck.ch' });
+
+    const output = vi.mocked(io.stdout.write).mock.calls.map(c => c[0]).join('');
+    expect(output).toContain('<- payload URL for the gitlab webhook');
+    expect(output).not.toContain('GitHub');
+  });
+});

@@ -1,6 +1,7 @@
 import { loadRelayConfig } from '@wadeck-app/queue-relay-client/dist/config.js';
 import { createRelayApiClient, httpBaseFromRelayUrl, summarizePayload } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import githubPlugin from '@wadeck-app/plugin-github';
+import gitlabPlugin from '@wadeck-app/plugin-gitlab';
 import { InvalidQueryError, RelayNotConfiguredError } from './errors.js';
 import { parseDigits, validateSingleString, type QueryParams } from './historyQuery.js';
 
@@ -8,7 +9,7 @@ export const DEFAULT_DELIVERY_LIMIT = 20;
 export const MAX_DELIVERY_LIMIT = 200;
 
 /** Which plugins describe the deliveries of their source: the same list as the CLI's built-in relay plugins. */
-const PLUGINS = [githubPlugin];
+const PLUGINS = [githubPlugin, gitlabPlugin];
 
 export interface WebhookRow {
   id: string;

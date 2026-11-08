@@ -43,7 +43,7 @@ export async function relayWebhookList(
       return 0;
     }
 
-    // One block per webhook: the full id and URL matter (they are pasted into the GitHub webhook settings)
+    // One block per webhook: the full id and URL matter (they are pasted into the sender's webhook settings)
     for (const config of configs) {
       const url = (options.origin ?? '') + config.webhookUrl;
       const stats = config.stats;
@@ -54,7 +54,7 @@ export async function relayWebhookList(
 `);
       io.stdout.write(`  id:      ${config.id}
 `);
-      io.stdout.write(`  url:     ${url}   <- payload URL for the GitHub webhook
+      io.stdout.write(`  url:     ${url}   <- payload URL for the ${config.source} webhook
 `);
       io.stdout.write(`  health:  ${health}
 

@@ -65,6 +65,14 @@ describe('listDeliveries', () => {
     expect(JSON.stringify(deliveries)).not.toContain('payload');
   });
 
+  it('describes a GitLab delivery with the GitLab plugin', async () => {
+    mockListDeliveries.mockResolvedValue([
+      delivery({ source: 'gitlab', eventType: 'issue', payload: { project: { path_with_namespace: 'g/p' }, user: { username: 'wadeck' } } }),
+    ]);
+    const { deliveries } = await listDeliveries('/cfg', {});
+    expect(deliveries[0]).toMatchObject({ source: 'gitlab', eventType: 'issue', status: 'verified', summary: 'g/p | by wadeck' });
+  });
+
   it('asks for 20 deliveries with their payload (to describe them) by default', async () => {
     mockListDeliveries.mockResolvedValue([]);
     await listDeliveries('/cfg', {});
