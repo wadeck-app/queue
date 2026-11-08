@@ -7,12 +7,11 @@
  *
  * This test builds the real launcher (needs `go` and `bash` in PATH, throws with instructions when missing, no
  * silent skip), copies it next to a stub queue.cjs and runs it with throwaway HOME / XDG / QUEUE_CONFIG_DIR.
- * The real config dir is only read, never written: other sessions use the real `queue` concurrently, so its files change on their own and
- * the test only looks for a trace of THIS test's throwaway directory in the real launcher logs.
+ * The developer's real ~/.config/queue is never read or written: every launcher run gets a throwaway HOME / USERPROFILE / XDG_CONFIG_HOME
+ * (createIsolatedCliEnv), so it cannot reach the real directory, and the assertions look at the throwaway directories only.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -48,20 +47,7 @@ function launcherFiles(configDir: string): string[] {
   return out;
 }
 
-/** True when a launcher log of the developer's real dir names the needle (a path of this test's throwaway tree): the launcher wrote there what belongs elsewhere. */
-function realLauncherLogsMention(realConfigDir: string, needle: string): boolean {
-  const logs = join(realConfigDir, 'logs');
-  if (!existsSync(logs)) {
-    return false;
-  }
-  return readdirSync(logs)
-    .filter(n => n.endsWith('-launcher.log'))
-    .some(n => readFileSync(join(logs, n), 'utf8').includes(needle));
-}
-
 describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
-  // Read-only: the tests below never point anything at the real dir.
-  const realConfigDir = join(homedir(), '.config', 'queue');
   let iso: IsolatedCliEnv;
   let launcherExe: string;
   let stubArgsFile: string;
@@ -131,8 +117,6 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
     expect(launcherFiles(xdgQueueDir)).toEqual([]);
     // The flag the launcher feeds itself must not reach node.
     expect(JSON.parse(readFileSync(stubArgsFile, 'utf8'))).toEqual(['start']);
-    // The developer's real dir was not touched.
-    expect(realLauncherLogsMention(realConfigDir, iso.root)).toBe(false);
   });
 
   it('--config beats QUEUE_CONFIG_DIR', () => {
@@ -151,7 +135,6 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
 
     expect(res.status, `launcher exited ${res.status}: ${res.stderr}`).toBe(0);
     expect(launcherFiles(iso.configDir).length).toBeGreaterThan(0);
-    expect(realLauncherLogsMention(realConfigDir, iso.root)).toBe(false);
   });
 
   it('QUEUE_DAEMON_PORT / QUEUE_RELAY_PORT reach the node process the launcher starts (the launcher itself hard-codes no port)', () => {

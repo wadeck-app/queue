@@ -14,6 +14,8 @@ function readRecords(logsDir: string): Record<string, unknown>[] {
     .map((line): Record<string, unknown> => JSON.parse(line));
 }
 
+const NL = String.fromCharCode(10);
+
 describe('EventLogger', () => {
   let logsDir: string;
   let logger: EventLogger;
@@ -30,6 +32,26 @@ describe('EventLogger', () => {
   afterEach(() => {
     vi.useRealTimers();
     rmSync(logsDir, { recursive: true, force: true });
+  });
+
+  it('puts the record after a torn last line (a crash in the middle of an append) on a line of its own, so it is readable', () => {
+    const dayFile = join(logsDir, '2026-10-19.ndjson');
+    const torn = '{"ts":"2026-10-19T11:00:00.000Z","type":"dispatch","event":"onTorn","subscri';
+    writeFileSync(dayFile, '{"ts":"2026-10-19T10:00:00.000Z","type":"diagnostic","message":"ok"}' + NL + torn, 'utf-8');
+
+    logger.logDiagnostic({ source: 'test', message: 'after the crash' });
+
+    const lines = readFileSync(dayFile, 'utf-8').split(NL);
+    expect(lines[1]).toBe(torn);
+    expect(JSON.parse(lines[2]!)).toMatchObject({ type: 'diagnostic', message: 'after the crash' });
+    expect(lines[3]).toBe('');
+  });
+
+  it('adds no separator to an empty file or to one that ends with a newline', () => {
+    const dayFile = join(logsDir, '2026-10-19.ndjson');
+    logger.logDiagnostic({ source: 'test', message: 'one' });
+    logger.logDiagnostic({ source: 'test', message: 'two' });
+    expect(readFileSync(dayFile, 'utf-8').split(NL).map(l => (l === '' ? '' : (JSON.parse(l) as { message: string }).message))).toEqual(['one', 'two', '']);
   });
 
   it('logDispatch persists stdout and stderr of a failed dispatch', () => {

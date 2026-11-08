@@ -173,8 +173,13 @@ describe('ActionTransport', () => {
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
     try {
-      await transportWith(() => new Promise<ActionResult>((_resolve, reject) => setTimeout(() => reject(new Error('late')), 60))).dispatch('probe', {}, envelope, 20, 'sub');
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      let failLate: (error: Error) => void = () => undefined;
+      const result = await transportWith(() => new Promise<ActionResult>((_resolve, reject) => { failLate = reject; })).dispatch('probe', {}, envelope, 20, 'sub');
+      expect(result.success).toBe(false);
+      // The plugin fails only now, after the dispatch gave up on it; Node reports an unhandled rejection before the next check phase, so one setImmediate turn is enough
+      failLate(new Error('late'));
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
       expect(unhandled).not.toHaveBeenCalled();
     } finally {
       process.off('unhandledRejection', unhandled);

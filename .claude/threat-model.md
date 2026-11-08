@@ -90,7 +90,7 @@ Local event-queue daemon on a single developer machine. No network exposure beyo
 
 ### Relay payload contents and token transport
 
-- **Threat (data):** Relay payloads (GitHub PR bodies, commit author emails, private-repo content) are pushed like any other payload, so they land verbatim in `wal.ndjson`, `dlq.ndjson` and `history/` (90 days, 200 MB). The client applies no size cap and no field projection.
+- **Threat (data):** Relay payloads (GitHub PR bodies, commit author emails, private-repo content) are pushed like any other payload, so they land verbatim in `wal.ndjson`, `dlq.ndjson` and `history/` (91 calendar days, 200 MB). The client applies no size cap and no field projection.
 - **Mitigation:** `eventType`/`payloadMatch` in `relay.yml` limit what is delivered; `relay.log` records delivery ids, event names and errors but never payloads.
 - **Risk accepted:** Same as "Sensitive data in WAL / DLQ" and "history/" above; do not subscribe to events whose payloads must not be stored locally.
 - **Threat (token):** The Consumer token is sent as the first websocket message.

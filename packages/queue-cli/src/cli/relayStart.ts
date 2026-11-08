@@ -55,8 +55,9 @@ export async function relayStart(deps: RelayStartDeps, configDir: string): Promi
     deps.io.stderr.write(`  plugins:\n`);
     deps.io.stderr.write(`    - module: '@wadeck-app/plugin-github'\n`);
     deps.io.stderr.write(`      subscriptions:\n`);
-    // payloadMatch is a flat top-level equality check today (the relay does not resolve dotted paths)
+    // payloadMatch: the relay compares top-level keys only; the client also resolves dotted keys (max 8 segments, strict equality)
     deps.io.stderr.write(`        - eventType: [push, pull_request]\n`);
+    deps.io.stderr.write(`          # payloadMatch: top-level keys are compared by equality; a dotted key (repository.full_name) is checked by this client only\n`);
     deps.io.stderr.write(`          payloadMatch: { action: opened }\n`);
     deps.io.stderr.write(`\nThe relay token is stored in <QUEUE_CONFIG_DIR>/_secrets_/.env.local:\n`);
     deps.io.stderr.write(`  QUEUE_RELAY_TOKEN=<your-relay-consumer-token>\n`);

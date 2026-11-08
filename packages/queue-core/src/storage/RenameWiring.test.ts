@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Wal, type WalEntry } from './Wal.js';
 import { DlqStore, type DlqEntry } from './DlqStore.js';
+import { readCatalog, writeSourceDeclaration } from '../catalog/EventCatalog.js';
 
 // The wiring of the transient-EPERM retry: Wal and DlqStore must replace their file through renameReplacing. A direct renameSync in either would
 // fail the whole operation on the first EPERM a scanner causes (the intermittent failure the retry was added for), and nothing else proved it.
@@ -26,7 +27,7 @@ function dlqEntry(id: string): DlqEntry {
   return { id, event: 'test.event', payload: { x: 1 }, meta: { cwd: '/tmp' }, subscriberId: 'sub-1', attempts: 3, lastError: 'boom', movedAt: new Date().toISOString() };
 }
 
-describe('Wal and DlqStore replace their file through the transient-EPERM retry', () => {
+describe('Wal, DlqStore and the event catalog replace their file through the transient-EPERM retry', () => {
   let dir: string;
 
   beforeEach(() => {
@@ -84,5 +85,15 @@ describe('Wal and DlqStore replace their file through the transient-EPERM retry'
     expect(dlq.remove('d1')).toBe(1);
     expect(dlq.readAll().map(e => e.id)).toEqual(['d2']);
     expect(renameMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('writeSourceDeclaration (event catalog) survives one EPERM and the declaration is stored', () => {
+    failOnce();
+    writeSourceDeclaration(dir, { source: 'task', events: [{ name: 'onTaskCreated', description: 'A task was created.' }] }, new Date('2026-10-24T10:00:00.000Z'));
+    const catalog = readCatalog(dir);
+    expect(catalog.problems).toEqual([]);
+    expect(catalog.sources.map(s => s.source)).toEqual(['task']);
+    expect(renameMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(String(renameMock.mock.calls[0]![0])).toMatch(/\.tmp$/);
   });
 });

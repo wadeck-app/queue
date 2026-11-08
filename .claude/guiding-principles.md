@@ -14,7 +14,7 @@ An event is not considered dispatched until the WAL entry is updated to `status:
 
 ## Config is merged: global first, then project-local
 
-`~/.config/queue/subscribers.yml` is loaded first; the `subscribers.yml` in the config folder of the registered project (and of its parents) is merged on top. A `.queue/subscribers.yml` above the cwd is no longer read: it is an error naming the file and its destination. Subscribers from both apply. Never document or implement a "project overrides global" semantics — they accumulate.
+`<config dir>/subscribers.yml` (default `~/.config/queue`) is loaded first; the `subscribers.yml` in the config folder of the registered project (and of its parents, root first) is appended after it (`ConfigLoader.load`). A `.queue/subscribers.yml` above the cwd is no longer read: it is an error naming the file and its destination. Subscribers from all files apply. Never document or implement a "project overrides global" semantics — they accumulate; only `cwd`/`env` resolve per file, subscriber over event over file.
 
 ## Errors must be loud, not silent
 
@@ -28,9 +28,9 @@ Queue records what happened (status, exit code, output tails) and never interpre
 
 The deployment contract is: `git commit` + `git push` → CI publishes → `queue cli update`. Never validate behavior by editing `node_modules` or running `node dist-bundle/queue.cjs` directly. Test with the globally installed `queue` binary after `npm install -g`.
 
-## `QUEUE_CONFIG_DIR` env var is the only supported config location override
+## The config directory resolves in one order, shared by the launcher and Node
 
-Do not add other config location mechanisms. Document this env var in `--help` output.
+`--config <dir>` (launcher only, wins), then `QUEUE_CONFIG_DIR`, then `$XDG_CONFIG_HOME/queue`, then `~/.config/queue` (`getQueueConfigDir`, `launcher-main.go.tmpl`). Do not add another mechanism. `QUEUE_CONFIG_DIR` is the one documented in `--help`; tests set it (and `XDG_CONFIG_HOME`/`HOME`) through `createIsolatedCliEnv()`.
 
 ## Retry defaults: 5 retries, exponential backoff, 30s timeout
 

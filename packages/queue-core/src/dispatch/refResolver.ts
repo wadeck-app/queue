@@ -1,5 +1,5 @@
 import type { EventEnvelope } from '../types.js';
-import { HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES } from '../storage/LogRetention.js';
+import { describeHistoryLimits } from '../storage/LogRetention.js';
 import { KEEP_AS_DATA, type ResolveRef } from '../walkPayloadPath.js';
 
 /**
@@ -56,12 +56,8 @@ export class EventRefError extends Error {
   }
 }
 
-function historyLimits(): string {
-  return `the history keeps at most ${HISTORY_MAX_AGE_DAYS} days and ${Math.round(HISTORY_MAX_TOTAL_BYTES / (1024 * 1024))} MB`;
-}
-
 function missingMessage(refId: string): string {
-  return `the base event ${refId} that this event refers to is no longer in the history (${historyLimits()}, older or larger parts are pruned). ` +
+  return `the base event ${refId} that this event refers to is no longer in the history (${describeHistoryLimits()}, older or larger parts are pruned). ` +
     `Fix: read the data you need from the base event before then, or look it up by hand with 'queue history --event-id ${refId} --json'.`;
 }
 

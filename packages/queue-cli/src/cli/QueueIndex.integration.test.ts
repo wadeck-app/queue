@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { spawnOwned, waitFor, removeDirWhenFree, withHangGuard } from '../testWaitFor.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { runQueueCli, type CliResult } from '../testing/runCli.js';
 import { testBundleFile } from '../testing/testBundle.js';
 
 const bundlePath = testBundleFile('queue.cjs');
@@ -30,25 +31,8 @@ function isolatedEnv(): NodeJS.ProcessEnv {
   return iso.env;
 }
 
-function runCli(args: string[], extraEnv: Record<string, string> = {}): {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-} {
-  const result = spawnSync(process.execPath, [bundlePath, ...args], {
-    encoding: 'utf-8',
-    // Hang guard only, never a performance limit
-    timeout: 300_000,
-    env: {
-      ...isolatedEnv(),
-      ...extraEnv,
-    },
-  });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    exitCode: result.status ?? -1,
-  };
+function runCli(args: string[], extraEnv: Record<string, string> = {}): CliResult {
+  return runQueueCli(isolatedEnv(), args, { extraEnv });
 }
 
 interface HistoryPageEntry {
@@ -415,6 +399,14 @@ describe('queue replay (integration)', () => {
 });
 
 describe('queue relay start (integration)', () => {
+  it('relay --help describes payloadMatch as the code behaves: dotted keys are checked by the client, the relay only sees top-level keys', () => {
+    const { stdout, exitCode } = runCli(['relay', '--help']);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).not.toContain('not supported yet');
+    expect(stdout).toContain('a dotted key (repository.full_name) is checked by this client only');
+  });
+
   it('exits 1 and reports [fail] No relay.yml when relay.yml does not exist', () => {
     const { stderr, exitCode } = runCli(['relay', 'start']);
 

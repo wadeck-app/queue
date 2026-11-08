@@ -67,10 +67,29 @@ export interface IsolatedCliEnv {
 /**
  * @param opts.registry registry URL for npm (default: unreachable).
  * @param opts.extra    extra env entries, applied last.
+ * @param opts.allocatePorts test seam: replaces the allocation of the two free ports (receives the root of the tree, to check what a failure leaves behind).
+ *
+ * The throwaway tree is removed again when building the environment fails half way (no free port, a directory that cannot be created): the caller gets the
+ * error and no environment, so nobody could call cleanup().
  */
-export function createIsolatedCliEnv(opts: { registry?: string; extra?: NodeJS.ProcessEnv } = {}): IsolatedCliEnv {
-  const registry = opts.registry ?? UNREACHABLE_REGISTRY;
+export function createIsolatedCliEnv(opts: IsolatedCliEnvOptions = {}): IsolatedCliEnv {
   const root = mkdtempSync(join(tmpdir(), 'queue-test-iso-'));
+  try {
+    return buildIsolatedCliEnv(root, opts);
+  } catch (err) {
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    throw err;
+  }
+}
+
+interface IsolatedCliEnvOptions {
+  registry?: string;
+  extra?: NodeJS.ProcessEnv;
+  allocatePorts?: (root: string) => { daemonPort: number; relayPort: number };
+}
+
+function buildIsolatedCliEnv(root: string, opts: IsolatedCliEnvOptions): IsolatedCliEnv {
+  const registry = opts.registry ?? UNREACHABLE_REGISTRY;
   const home = join(root, 'home');
   const configDir = join(home, '.config', 'queue');
   const npmPrefix = join(root, 'npm-prefix');
@@ -93,7 +112,7 @@ update-notifier=false
   writeFileSync(npmUserConfig, npmConfig);
   writeFileSync(npmGlobalConfig, npmConfig);
 
-  const { daemonPort, relayPort } = allocateFreePorts();
+  const { daemonPort, relayPort } = (opts.allocatePorts ?? allocateFreePorts)(root);
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (!STRIPPED.test(k)) {

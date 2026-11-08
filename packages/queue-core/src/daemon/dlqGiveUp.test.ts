@@ -187,7 +187,7 @@ describe('RPC give-up (the daemon runs the move and emits what it moved)', () =>
     const svc = service();
     expect(svc.commands['give-up']({ id: 'nope' })).toEqual({ status: 'not-found' });
     expect(svc.commands['give-up']({ id: 'done' })).toEqual({ status: 'not-in-flight' });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => svc.isIdle());
     expect(added()).toEqual([]);
     expect(listDlqEntries(configDir)).toEqual([]);
   });
@@ -234,7 +234,7 @@ describe('RPC give-up (the daemon runs the move and emits what it moved)', () =>
     const answers = Array.from({ length: 25 }, () => svc.commands['give-up']({ id: 'w1' }).status);
     expect(answers.filter((status) => status === 'moved')).toHaveLength(1);
     await waitFor('the event', () => added().length === 1 && svc.isIdle());
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => svc.isIdle());
     expect(added()).toHaveLength(1);
   });
 
@@ -283,7 +283,7 @@ describe('RPC give-up-stuck', () => {
     expect(wal().find((entry) => entry.id === 'fresh')!.status).toBe('failed');
     // the same call again moves nothing and emits nothing more
     expect(svc.commands['give-up-stuck']({})).toEqual({ moved: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => svc.isIdle());
     expect(added()).toHaveLength(13);
   });
 
@@ -292,7 +292,7 @@ describe('RPC give-up-stuck', () => {
     new Wal(join(configDir, 'wal.ndjson')).append(walEntry('fresh', { status: 'failed', timestamp: new Date().toISOString() }));
     const svc = service();
     expect(svc.commands['give-up-stuck']({ olderThanMs: 0, entries: [{ entry: dlqEntry('forged'), reason: 'given-up' }], kind: 'added' })).toEqual({ moved: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => svc.isIdle());
     expect(added()).toEqual([]);
     expect(listDlqEntries(configDir)).toEqual([]);
   });

@@ -25,7 +25,7 @@ import { relayStart } from './relayStart.js';
 import { diffNewEntries } from './HistoryFollower.js';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
-import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES, replayReservedProblem, InvalidPortEnvError, QUEUE_DAEMON_PORT_ENV, QUEUE_RELAY_PORT_ENV, assertPortEnvValid, readPortEnv } from '@wadeck-app/queue-core';
+import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, describeHistoryLimits, replayReservedProblem, InvalidPortEnvError, QUEUE_DAEMON_PORT_ENV, QUEUE_RELAY_PORT_ENV, assertPortEnvValid, readPortEnv } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
 import { pushFailure } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
@@ -57,7 +57,7 @@ Usage:
   queue dlq clear [--id <id>]   Without --id the WHOLE DLQ is cleared (the count is printed); --id without a value is an error, an unknown id exits 1
 `;
 
-const RELAY_GROUP_HELP = `queue relay - GitHub/Slack/Jira webhook relay client
+const RELAY_GROUP_HELP = `queue relay - GitHub/GitLab/Slack/Jira webhook relay client
 Usage:
   queue relay start                                                Start the relay client as a background process (reads relay.yml from QUEUE_CONFIG_DIR)
   queue relay stop                                                 Stop the relay client
@@ -71,8 +71,11 @@ relay.yml example (in QUEUE_CONFIG_DIR):
     - module: '@wadeck-app/plugin-github'
       subscriptions:
         - eventType: [push, pull_request]
-          # payloadMatch compares top-level payload keys by equality (dotted paths are not supported yet)
+          # payloadMatch compares payload keys by equality; a dotted key (repository.full_name) is checked by this client only, the relay itself only sees top-level keys
           payloadMatch: { action: opened }
+
+Built-in plugins: '@wadeck-app/plugin-github' (events on.github.<type>) and '@wadeck-app/plugin-gitlab' (events on.gitlab.<type>,
+e.g. on.gitlab.merge_request, on.gitlab.pipeline); 'github' and 'gitlab' are accepted as short module names.
 
 Relay token (stored securely, not in relay.yml):
   Put your consumer token in <QUEUE_CONFIG_DIR>/_secrets_/.env.local:
@@ -532,7 +535,7 @@ async function queueHistoryCommand(configDir: string, args: string[]): Promise<v
     warnMalformed();
     if (entry === undefined) {
       process.stderr.write(
-        `[fail] No history entry for eventId ${eventId}. The history keeps at most ${HISTORY_MAX_AGE_DAYS} days and ${HISTORY_MAX_TOTAL_BYTES / (1024 * 1024)} MB, so an older event is gone; check the id with 'queue history' (the eventId is the id of the push, not the id of a retry or a DLQ entry).\n`,
+        `[fail] No history entry for eventId ${eventId}. Retention: ${describeHistoryLimits()}, so an older event is gone; check the id with 'queue history' (the eventId is the id of the push, not the id of a retry or a DLQ entry).\n`,
       );
       process.exit(1);
     }

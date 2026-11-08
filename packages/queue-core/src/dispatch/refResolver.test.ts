@@ -112,7 +112,7 @@ describe('RefResolver', () => {
     expect(error.permanent).toBe(true);
     expect(error.refId).toBe('gone-9');
     expect(error.message).toContain('gone-9');
-    expect(error.message).toContain(`${HISTORY_MAX_AGE_DAYS} days`);
+    expect(error.message).toContain(`last ${HISTORY_MAX_AGE_DAYS + 1} calendar days`);
     expect(error.message).toContain(`${Math.round(HISTORY_MAX_TOTAL_BYTES / (1024 * 1024))} MB`);
     expect(error.message).toContain('queue history --event-id gone-9');
   });

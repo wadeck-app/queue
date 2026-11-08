@@ -4,6 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import { getLogFiles } from './logFiles.js';
+import { registeredRoutes } from './registeredRoutes.testUtil.js';
 
 type Node = Record<string, unknown>;
 
@@ -12,7 +13,7 @@ const doc = yaml.load(readFileSync(join(here, '../dsl-views/log-files-page.yaml'
 const sections = doc['sections'] as Node[];
 const actions = doc['$actions'] as Record<string, { url: string; confirm?: string; reloadSources?: boolean; errorPrefix?: string; successMessage?: string }>;
 const tables = sections.filter((s) => s['$type'] === 'DataTable') as Array<{ rows: string; columns: Node[] }>;
-const indexSource = readFileSync(join(here, 'index.ts'), 'utf-8');
+const registered = registeredRoutes();
 
 // "POST /api/modules/queue/log-files/{kind}/..." -> "POST /log-files/:kind/..."
 function routeOf(url: string): string {
@@ -91,8 +92,8 @@ describe('log-files-page.yaml', () => {
     expect(actions['deleteLogsFile']!.url).toBe('POST /api/modules/queue/log-files/{kind}/{day}/{variant}/delete');
     expect(actions['deleteHistoryFile']!.url).toBe(actions['deleteLogsFile']!.url);
     // The literal prune URLs are matched by the parameterised route
-    expect(indexSource).toContain("registerRoute('POST', '/log-files/:kind/prune'");
-    expect(indexSource).toContain("registerRoute('POST', '/log-files/:kind/:day/:variant/delete'");
+    expect(registered).toContain('POST /log-files/:kind/prune');
+    expect(registered).toContain('POST /log-files/:kind/:day/:variant/delete');
     expect(routeOf(actions['deleteLogsFile']!.url)).toBe('POST /log-files/:kind/:day/:variant/delete');
   });
 

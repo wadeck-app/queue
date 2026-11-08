@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { CommandTemplateError } from './commandTemplate.js';
 import { findWindowsProgram, isFile } from './windowsProgram.js';
 
@@ -85,6 +85,19 @@ export function parseNpmShim(text: string): string | undefined {
 }
 
 /**
+ * The absolute path of the script named by a shim, or undefined when it is not strictly below the shim directory. The parser already refuses '..' and absolute
+ * paths; this is the second guard on the resolved path. A folder merely named '..lib' is inside: only '..' as a whole segment climbs out.
+ */
+export function scriptInside(shimDir: string, rel: string): string | undefined {
+  const script = resolve(shimDir, ...rel.split(/[\\/]/));
+  const fromShim = relative(shimDir, script);
+  if (fromShim === '' || fromShim === '..' || fromShim.startsWith('..' + sep) || isAbsolute(fromShim)) {
+    return undefined;
+  }
+  return script;
+}
+
+/**
  * Recognises a standard npm-generated .cmd shim and returns how to start it without cmd.exe, or undefined when `shimPath` is anything else
  * (the caller then keeps the cmd.exe path with its metacharacter refusal). Throws CommandTemplateError when the shim is recognised but node cannot be found.
  */
@@ -103,9 +116,8 @@ export function resolveNpmShim(shimPath: string, env: NodeJS.ProcessEnv): NpmShi
     return undefined;
   }
   const shimDir = dirname(resolve(shimPath));
-  const script = resolve(shimDir, ...rel.split(/[\\/]/));
-  const fromShim = relative(shimDir, script);
-  if (fromShim === '' || fromShim.startsWith('..') || isAbsolute(fromShim) || !isFile(script)) {
+  const script = scriptInside(shimDir, rel);
+  if (script === undefined || !isFile(script)) {
     return undefined;
   }
 

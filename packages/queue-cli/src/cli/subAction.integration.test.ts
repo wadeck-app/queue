@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { testBundleFile } from '../testing/testBundle.js';
+import { runQueueCli, type CliResult } from '../testing/runCli.js';
 
 // The bundled CLI against a throwaway config dir: `queue sub add|edit|list` with type action. No daemon is needed (the --scope flag reads the file).
 
-const bundlePath = testBundleFile('queue.cjs');
 
 let iso: IsolatedCliEnv;
 let subscribersFile: string;
@@ -26,9 +24,8 @@ beforeEach(() => {
   rmSync(subscribersFile, { force: true });
 });
 
-function runCli(args: string[]): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync(process.execPath, [bundlePath, ...args], { encoding: 'utf-8', timeout: 300_000, env: iso.env });
-  return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.status ?? -1 };
+function runCli(args: string[]): CliResult {
+  return runQueueCli(iso.env, args);
 }
 
 function readSubscribers(): Record<string, Array<Record<string, unknown>>> {

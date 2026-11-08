@@ -2,52 +2,51 @@
 
 ## Purpose
 
-A local event-queue daemon and CLI for developer workflow automation. Projects publish named events; subscribers (CLI commands or HTTP calls) react to them, with configurable retries, backoff, and payload filtering.
+A local event-queue daemon and CLI for developer workflow automation. Programs and people publish named events; subscribers (a CLI command, an HTTP call or a built-in action) react to them, with retries, backoff and payload filtering. Agents wait for events instead of polling.
 
 ## Architecture
 
 ```
-queue push <event> <json>              queue-relay-client (own daemon, port 47911)
-  → QueueDaemon (singleton, port 47910)      → RelayConnection (WS to remote relay)
-      → ConfigLoader (global + project          → plugin-github / plugin-slack / ... (RelayPlugin)
-         subscribers.yml)                   → wakes QueueDaemon on demand, then calls `push`
-      → PayloadFilter (when: expression filter)        ↑
-      → SyncDispatcher (before* events — blocking, can abort)
-      → AsyncDispatcher (on* events — WAL + retry)
-          → HttpTransport | CliTransport
-          → RetryScheduler (on failure)
-          → DLQ (after all retries exhausted)
+queue push / queue-sdk (push protocol 1.5.0)      queue-relay-client (own daemon, QUEUE_RELAY_PORT)
+  -> QueueDaemon (singleton, QUEUE_DAEMON_PORT)     -> RelayConnection (WS to the remote webhook relay)
+     (queue-core createQueueService)                -> RelayPlugin per source (plugin-github)
+       -> ConfigLoader: global + project              -> client-side eventType / payloadMatch
+          subscribers.yml, project registry           -> push into QueueDaemon (starts it on demand)
+       -> PayloadFilter (`when`)
+       -> SyncDispatcher   (before.* : blocking, can abort)
+       -> AsyncDispatcher  (other events: WAL, retry, DLQ)
+            -> transports: CliTransport | HttpTransport | ActionTransport (ActionPlugin: emit, agent-wake)
+            -> RetryScheduler -> DLQ after the retries
+       -> HistoryLog / EventLogger / EventCatalog -> `queue history|logs|events|wait`, dashboard
 ```
 
-`queue-relay-client` is a separate always-on process, decoupled from `QueueDaemon`'s intentional 60s idle-shutdown (see guiding-principles.md). It connects to a remote webhook relay over WebSocket, authenticates with a Consumer token, and routes incoming envelopes to per-Source plugin packages (`@wadeck-app/plugin-github`, future `plugin-slack`/`plugin-jira`) via the `RelayPlugin` contract -- each plugin only knows how to map one Source's envelope to a Queue event; `queue-relay-client` itself has no Source-specific code. Managed via `queue relay start|stop|status`.
-
-## Config model
-
-- Global config: `~/.config/queue/subscribers.yml` (override: `QUEUE_CONFIG_DIR`)
-- Project config: `subscribers.yml` in the config folder of the registered project of the cwd (`project add`); the old `.queue/subscribers.yml` walk-up is an error
-- Project name: inferred from nearest `.queue` marker directory name
-- Subscriber types: `cli` (shell command) or `http` (HTTP request)
-- Conditional dispatch: `when:` field accepts a JSONPath/expression filter against the event payload
-- Relay client config: `relay.yml` in `QUEUE_CONFIG_DIR` (relay URL, Consumer token, which plugin packages to load + their subscription filters) — see `packages/queue-relay-client`
-
-## Current state (as of 2026-08)
-
-Implemented: push, retry, status, list-subscribers, dlq list/replay/clear, history, WAL persistence, DLQ, async/sync dispatch, HTTP/CLI transports, exponential/linear backoff, payload filtering, event pattern matching, idle self-shutdown.
-
-Known gaps (from `.claude/plans/2026-08-28_cli-best-practices-gaps.md`):
-
-| Priority | Gap |
+| Part | Role |
 |---|---|
-| CRITICAL | `queue cli self-check` — currently uses `--version` as substitute, no real health checks |
-| High | `queue dlq --help` falls through to unknown; add `--help` handling |
-| High | Exit codes and `QUEUE_CONFIG_DIR` not documented in `--help` |
-| High | `ConfigDir.migrateIfNeeded('queue')` not called in `main()` |
-| High | `queue cli update` — manual foreground update not implemented |
-| Medium | `runQueueCommand` still reads `process.argv` directly; needs injectable `argv`/deps for unit tests |
+| `queue-core` | Config, dispatch, WAL (`wal.ndjson`), DLQ (`dlq.ndjson`, 1000 rows), history, logs, retention, event catalog, action registry; no CLI code |
+| `queue-cli` | The `queue` command, the daemon and relay daemon entries, the bundle; registers built-in actions |
+| `queue-sdk` | Zero-dependency client for other programs: finds/starts the daemon, never throws; push protocol with its own SemVer (`docs/push-protocol.md`) |
+| `queue-relay-client`, `plugin-github` | Consume a webhook relay and turn deliveries into queue events; the client stays source-agnostic |
+| `plugin-agent-wake` | The `agent-wake` action preset |
+| `app-module-queue` | app-core dashboard module (pages, widgets, routes under `/api/modules/queue/`); see `CLAUDE.md` and `docs/project-integration.md` |
 
-## Intended direction
+## Contracts that define the product
 
-- Close the CLI best-practices gaps above before adding new features
-- `queue cli self-check` must perform typed health checks (daemon client instantiable, config dir writable, bundle version present) and respect `CLI_SELF_CHECK_QUIET=1`
-- Human-readable `status` output (detect TTY; JSON only when `!isTTY || --json`)
-- `queue logs` rename/alias to `queue cli logs` for consistency with the `cli` subcommand group
+- `before.*` events are synchronous and can abort; others are asynchronous and WAL-tracked. See `guiding-principles.md`.
+- Storage: WAL and DLQ are locked, rewritten files. `history/` (terse audit trail, replayable) keeps the last 91 calendar days and 200 MB; `logs/` (verbose per-dispatch trail) the last 91 days and 100 MB. See `threat-model.md`.
+- Subscribers: `cli`, `http` or `action`, from `<config dir>/subscribers.yml` plus the `subscribers.yml` of the registered project and its parents; they accumulate. Defaults: 5 retries, exponential backoff, 30 s timeout. See `docs/subscribers.md`.
+- The daemon starts on demand and stops after 60 s without pending work; the relay starts on demand for `queue wait ci`. See `guiding-principles.md`.
+- Config dir: `--config` (launcher), `QUEUE_CONFIG_DIR`, `$XDG_CONFIG_HOME/queue`, `~/.config/queue`.
+- Events are declared in a catalog and observed (`queue events`); `queue wait <event|pattern>` blocks until one is recorded (`docs/wait.md`).
+
+## Known gaps
+
+Facts only; the product boundary is in `out-of-scope.md`.
+
+| Gap | Detail |
+|---|---|
+| No cross-push ordering, no deduplication | By design (`out-of-scope.md`) |
+| The remote relay does not replay missed events to a connecting client | A wait only sees events that arrive while the relay is connected |
+| `main()` in `QueueIndex.ts` reads `process.argv` directly | Exported command functions take injected deps, `main()` does not |
+| Two copies of the `relay.yml` template in the CLI | `relayStart.ts` and `QueueIndex.ts` (webhook subcommands) |
+| DLQ capped at 1000 rows | The oldest row is dropped with a warning |
+| History/logs are pruned only when a new day file is created | Between two new days the directories can exceed their size limit; the Log files page runs the policy on demand |

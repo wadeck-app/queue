@@ -92,7 +92,7 @@ describe('a replay that cannot run answers an error and leaves everything as it 
     expect(listDlqEntries(configDir).map((row) => row.id)).toEqual(['r2']);
     expect(wal()).toEqual(before);
     expect(lines.mock.calls.some((call) => call[0].source === 'QueueDaemon.dlq-replay')).toBe(true);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => svc.isIdle());
     expect(removed()).toEqual([]);
     expect(svc.isIdle()).toBe(true);
   });
@@ -110,7 +110,7 @@ describe('a replay that cannot run answers an error and leaves everything as it 
     expect(response.message).toContain('Fix:');
     expect(listDlqEntries(configDir).map((row) => row.id)).toEqual(['r1']);
     expect(wal()).toEqual(before);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => svc.isIdle());
     expect(existsSync(marker)).toBe(false);
     expect(removed()).toEqual([]);
   });
@@ -143,7 +143,7 @@ describe('a replay that cannot run answers an error and leaves everything as it 
     expect(response.status).toBe('error');
     expect(response.message).toContain('r4');
     expect(response.message).toContain('removed');
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => svc.isIdle());
     expect(existsSync(marker)).toBe(false);
     expect(wal().some((entry) => entry.id === 'r4')).toBe(false);
     expect(svc.isIdle()).toBe(true);

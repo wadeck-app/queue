@@ -77,7 +77,6 @@ describe('renameReplacing classifies the failure before waiting', () => {
 
   it.each(['EPERM', 'EACCES'])('throws %s at once, without sleeping, when the existing target is not writable (read-only), and lists every cause', (code) => {
     let calls = 0;
-    const started = Date.now();
     let message = '';
     try {
       renameReplacing('wal.ndjson.1.tmp', 'wal.ndjson', {
@@ -88,7 +87,6 @@ describe('renameReplacing classifies the failure before waiting', () => {
     } catch (err) {
       message = (err as Error).message;
     }
-    expect(Date.now() - started).toBeLessThan(200);
     expect(calls).toBe(1);
     expect(message).toContain(`Could not replace wal.ndjson: ${code}`);
     expect(message).toContain('from wal.ndjson.1.tmp');
@@ -145,30 +143,30 @@ describe('renameReplacing classifies the failure before waiting', () => {
       .toThrow(/Could not replace a: EBUSY on rename from a\.tmp after 3 attempts.*another program holds the file open.*read-only.*permissions/s);
   });
 
-  // The real thing: a read-only file on Windows must fail fast with the permission advice, not after a second of blocking and a misleading message
-  it.skipIf(process.platform !== 'win32')('REAL read-only target on Windows (attrib +R): fails in well under 200 ms and names the read-only case', () => {
+  // The real thing: a read-only file on Windows must fail at once with the permission advice, not after retries and a misleading message.
+  // "At once" is asserted by the behavior (no sleep, one message naming the read-only case), never by elapsed time.
+  it.skipIf(process.platform !== 'win32')('REAL read-only target on Windows (attrib +R): never waits (no retry sleep) and names the read-only case', () => {
     const dir = mkdtempSync(join(tmpdir(), 'queue-atomic-rename-'));
     const target = join(dir, 'wal.ndjson');
     const source = join(dir, 'wal.ndjson.1.tmp');
     writeFileSync(target, 'old');
     writeFileSync(source, 'new');
     execFileSync('attrib', ['+R', target]);
+    const sleeps: number[] = [];
     let message = '';
-    let elapsed = Infinity;
     try {
-      const started = performance.now();
       try {
-        renameReplacing(source, target);
+        renameReplacing(source, target, { sleep: ms => { sleeps.push(ms); } });
       } catch (err) {
         message = (err as Error).message;
       }
-      elapsed = performance.now() - started;
     } finally {
       execFileSync('attrib', ['-R', target]);
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
+    expect(sleeps).toEqual([]);
     expect(message).toContain('Could not replace');
     expect(message).toContain('read-only');
-    expect(elapsed).toBeLessThan(200);
+    expect(message).not.toContain('attempts');
   });
 });

@@ -102,34 +102,39 @@ describe('HistoryReader.findTrigger', () => {
     });
   });
 
-  describe('cost', () => {
-    function bigHistory(): void {
-      for (let day = 1; day <= 5; day++) {
-        const date = `2026-01-0${day}`;
-        writeDay(date, Array.from({ length: 300 }, (_, i) => trigger(date, `ev-${day}-${i}`, { payload: { n: i } })));
-      }
+  // The cost of a lookup is observed through what it cannot have looked at: a line that is not valid JSON is reported by the reader that parsed it,
+  // so a lookup that parses only the line of its hit reports nothing, while a full read() reports every one of them.
+  describe('only the lines of the hit are parsed', () => {
+    const TORN_LINES = 40;
+    function historyWithTornLines(): void {
+      const good = (date: string, id: string): string => JSON.stringify(trigger(date, id));
+      const lines = [good('2026-01-01', 'ev-1'), ...Array.from({ length: TORN_LINES }, (_, i) => `{"ts":"torn ${i}"`), good('2026-01-01', 'ev-2')];
+      writeFileSync(join(historyDir, '2026-01-01.ndjson'), lines.join('\n') + '\n', 'utf-8');
     }
 
-    it('parses only the line of the hit, while read() parses every line', () => {
-      bigHistory();
-      const parse = vi.spyOn(JSON, 'parse');
+    it('control: a full read() reports every torn line', () => {
+      historyWithTornLines();
+      const reader = new HistoryReader(historyDir);
 
-      new HistoryReader(historyDir).read();
-      const readCalls = parse.mock.calls.length;
-      parse.mockClear();
-      const found = new HistoryReader(historyDir).findTrigger('ev-5-150');
+      reader.read();
 
-      expect(readCalls).toBeGreaterThanOrEqual(1500);
-      expect(found?.eventId).toBe('ev-5-150');
-      expect(parse.mock.calls.length).toBe(1);
+      expect(reader.malformedLines()).toEqual([expect.objectContaining({ count: TORN_LINES })]);
+    });
+
+    it('findTrigger reports none of them: it parsed the line of the hit only', () => {
+      historyWithTornLines();
+      const reader = new HistoryReader(historyDir);
+
+      expect(reader.findTrigger('ev-2')?.eventId).toBe('ev-2');
+      expect(reader.malformedLines()).toEqual([]);
     });
 
     it('an id absent from the history parses nothing at all', () => {
-      bigHistory();
-      const parse = vi.spyOn(JSON, 'parse');
+      historyWithTornLines();
+      const reader = new HistoryReader(historyDir);
 
-      expect(new HistoryReader(historyDir).findTrigger('absent')).toBeUndefined();
-      expect(parse.mock.calls.length).toBe(0);
+      expect(reader.findTrigger('absent')).toBeUndefined();
+      expect(reader.malformedLines()).toEqual([]);
     });
   });
 });
@@ -167,17 +172,12 @@ describe('HistoryReader.findByEventId (same answers as read().find, without pars
     expect(found).toEqual(new HistoryReader(historyDir).read().find((e) => e.eventId === 'wal-1'));
   });
 
-  it('parses only the lines that carry the id', () => {
-    for (let day = 1; day <= 3; day++) {
-      const date = `2026-01-0${day}`;
-      writeDay(date, Array.from({ length: 200 }, (_, i) => trigger(date, `ev-${day}-${i}`)));
-    }
-    const parse = vi.spyOn(JSON, 'parse');
+  it('parses only the lines that carry the id: torn lines elsewhere in the history are not even reported', () => {
+    const lines = [JSON.stringify(trigger('2026-01-01', 'ev-1')), ...Array.from({ length: 40 }, (_, i) => `{"ts":"torn ${i}"`), JSON.stringify(trigger('2026-01-01', 'ev-2'))];
+    writeFileSync(join(historyDir, '2026-01-01.ndjson'), lines.join('\n') + '\n', 'utf-8');
+    const reader = new HistoryReader(historyDir);
 
-    const found = new HistoryReader(historyDir).findByEventId('ev-3-10');
-
-    expect(found?.eventId).toBe('ev-3-10');
-    // The hit line twice at most (locate, then collect); nowhere near the 600 lines
-    expect(parse.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(reader.findByEventId('ev-2')?.eventId).toBe('ev-2');
+    expect(reader.malformedLines()).toEqual([]);
   });
 });

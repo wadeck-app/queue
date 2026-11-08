@@ -61,6 +61,17 @@ describe('relayStart', () => {
   });
 
   describe('missing relay.yml case', () => {
+    it('the template tells how payloadMatch matches (dotted keys are checked by the client only)', async () => {
+      deps.client.isRunning.mockResolvedValue(false);
+      deps.loadConfig.mockReturnValue(null);
+
+      await relayStart(asDeps(deps), '/config');
+
+      const stderr = deps.io.stderr.write.mock.calls.map(c => c[0]).join('');
+      expect(stderr).not.toContain('does not resolve dotted paths');
+      expect(stderr).toContain('a dotted key (repository.full_name) is checked by this client only');
+    });
+
     it('returns 1 when relay.yml does not exist', async () => {
       deps.client.isRunning.mockResolvedValue(false);
       deps.loadConfig.mockReturnValue(null);

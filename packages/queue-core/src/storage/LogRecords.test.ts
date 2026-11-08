@@ -43,6 +43,19 @@ describe('parseLogRecord', () => {
     expect(parseLogRecord(miss())).toMatchObject({ outcome: 'miss', event: 'on.github.workflow_job', subscriberId: 'on.github.workflow_job[0]' });
   });
 
+  // Subscriber ids are names now ('notify', 'notify@onA', '<project id>/notify'), not '<event>[<index>]': the event comes from the record's own field
+  it.each([['notify'], ['notify@onA'], ['3f2a9c1e/notify@onA']])('takes the event of a dispatch from its event field when the subscriber id is %s', (subscriberId) => {
+    expect(parseLogRecord(dispatch({ subscriberId, event: 'onA' }))).toMatchObject({ event: 'onA', subscriberId });
+  });
+
+  it('takes the event of a filter miss from its event field too', () => {
+    expect(parseLogRecord(miss({ subscriberId: 'notify@onA', event: 'onA' }))).toMatchObject({ outcome: 'miss', event: 'onA' });
+  });
+
+  it('keeps reading the event from an old subscriber id (event[index]) when the record has no event field', () => {
+    expect(parseLogRecord(dispatch({ subscriberId: 'onOld[1]' }))).toMatchObject({ event: 'onOld' });
+  });
+
   it('reads a diagnostic as info, named by its source', () => {
     const record = parseLogRecord(JSON.stringify({ ts: '2026-01-02T10:00:00.000Z', type: 'diagnostic', source: 'QueueDaemon.push', message: 'config error' }));
     expect(record).toMatchObject({ outcome: 'info', event: 'QueueDaemon.push' });

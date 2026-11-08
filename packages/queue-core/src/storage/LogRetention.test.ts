@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, readdirSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { pruneLogDir, listLogFiles, describeRetention, LOG_MAX_AGE_DAYS, LOG_MAX_TOTAL_BYTES, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES, type PruneOptions, type PruneReport } from './LogRetention.js';
+import { pruneLogDir, listLogFiles, describeRetention, describeHistoryLimits, LOG_MAX_AGE_DAYS, LOG_MAX_TOTAL_BYTES, HISTORY_MAX_AGE_DAYS, HISTORY_MAX_TOTAL_BYTES, type PruneOptions, type PruneReport } from './LogRetention.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const TODAY = '2026-10-19';
@@ -240,6 +240,10 @@ describe('pruneLogDir for the history directory', () => {
     expect(report.failures).toHaveLength(1);
     expect(report.failures[0]!.file).toBe('2020-01-01.ndjson');
     expect(report.failures[0]!.fix).toContain('delete it by hand');
+  });
+
+  it('words the history limits as the calendar days really kept (today and the 90 days before), not as "at most 90 days"', () => {
+    expect(describeHistoryLimits()).toBe('the history keeps the last 91 calendar days (today and the 90 days before) and 200 MB');
   });
 
   it('describes a report with the label, as an info line for the deletions and a warn line for the problems', () => {

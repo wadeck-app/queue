@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getErrorMessage } from '../errors.js';
+import { renameReplacing } from '../storage/AtomicRename.js';
 import { isRecord } from '../isRecord.js';
 
 // The event catalog: what each program that pushes events declares about them (name, description, JSON Schema of the payload...).
@@ -191,7 +192,7 @@ export function writeSourceDeclaration(configDir: string, declaration: SourceDec
   const target = join(dir, `${declaration.source}.json`);
   const temporary = join(dir, `.${declaration.source}.${process.pid}.${Date.now()}.tmp`);
   writeFileSync(temporary, JSON.stringify(stored, null, 2) + '\n', 'utf8');
-  renameSync(temporary, target);
+  renameReplacing(temporary, target);
 }
 
 /** Every declared source, sorted by name. A file that cannot be read goes to `problems`. */

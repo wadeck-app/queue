@@ -1,15 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
+import { registeredRoutes } from './registeredRoutes.testUtil.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const backendDir = dirname(fileURLToPath(import.meta.url));
 const viewsDir = join(backendDir, '../dsl-views');
 
-// "GET /status", "POST /dlq/:id/replay" ... as registered by index.ts
-const registered = new Set(
-  [...readFileSync(join(backendDir, 'index.ts'), 'utf8').matchAll(/registerRoute\('(GET|POST)', '([^']+)'/g)].map((match) => `${match[1]} ${match[2]}`),
-);
+// "GET /status", "POST /dlq/:id/replay" ... as registered by the backend when it is activated
+const registered = new Set(registeredRoutes());
 
 // "GET /api/modules/queue/dlq/{id}/replay?x=1" in a view -> "GET /dlq/:id/replay"
 function routeOf(method: string, path: string): string {

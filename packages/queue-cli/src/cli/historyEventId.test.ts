@@ -78,7 +78,7 @@ describe('queue history --event-id', () => {
     const { stderr, exitCode } = await run(['history', '--event-id', 'nope']);
     expect(exitCode).toBe(1);
     expect(stderr).toContain('[fail] No history entry for eventId nope');
-    expect(stderr).toMatch(/at most 90 days and 200 MB/);
+    expect(stderr).toContain("the history keeps the last 91 calendar days (today and the 90 days before) and 200 MB");
     expect(stderr).toContain("check the id with 'queue history'");
   });
 

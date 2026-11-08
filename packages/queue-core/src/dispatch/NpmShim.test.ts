@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CliTransport } from './CliTransport.js';
 import { CommandTemplateError } from './commandTemplate.js';
-import { parseNpmShim, resolveNpmShim } from './NpmShim.js';
+import { parseNpmShim, resolveNpmShim, scriptInside } from './NpmShim.js';
 import type { EventEnvelope } from '../types.js';
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -100,7 +101,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  rmSync(workDir, { recursive: true, force: true });
+  rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe('resolveNpmShim - files (pure fs, every platform)', () => {
@@ -124,9 +125,42 @@ describe('resolveNpmShim - files (pure fs, every platform)', () => {
     expect(resolveNpmShim(join(dir, 'x.cmd'), { PATH: '' })?.nodeExe).toBe(join(dir, 'node.exe'));
   });
 
-  it('is undefined when the script does not exist, or escapes through the file system', () => {
+  it('is undefined when the script does not exist', () => {
     expect(resolveNpmShim(join(shimDir, 'missing.cmd'), { PATH: '' })).toBeUndefined();
+  });
+
+  // The parser already refuses a '..' segment, so this is the first line of defence; scriptInside below covers the second one directly
+  it('is undefined when the shim names a script outside its directory (refused before any file is touched)', () => {
+    expect(existsSync(argvScript)).toBe(true);
     expect(resolveNpmShim(join(shimDir, 'escape.cmd'), { PATH: '' })).toBeUndefined();
+  });
+
+  it('is undefined when the shim file is over the size limit, even if it starts like a shim', () => {
+    const big = join(shimDir, 'big.cmd');
+    writeFileSync(big, MODERN('node_modules\\pkg\\bin\\argv.js') + 'REM ' + 'x'.repeat(9000));
+    expect(resolveNpmShim(big, { PATH: '' })).toBeUndefined();
+  });
+
+  it('is undefined when the script path is a directory, not a file', () => {
+    mkdirSync(join(shimDir, 'dirscript.js'), { recursive: true });
+    writeFileSync(join(shimDir, 'dirscript.cmd'), MODERN('dirscript.js'));
+    expect(resolveNpmShim(join(shimDir, 'dirscript.cmd'), { PATH: '' })).toBeUndefined();
+  });
+
+  it('refuses a node on PATH that is not an .exe, and says which one it found', () => {
+    const nodeDir = join(workDir, 'nodecmd');
+    mkdirSync(nodeDir, { recursive: true });
+    writeFileSync(join(nodeDir, 'node.cmd'), '');
+    expect(() => resolveNpmShim(join(shimDir, 'argv.cmd'), { PATH: nodeDir, PATHEXT: '.CMD;.EXE' })).toThrow(/is not an .exe/);
+  });
+
+  it('resolves a script inside a folder whose name merely starts with two dots', () => {
+    const dir = join(workDir, 'dots');
+    mkdirSync(join(dir, '..lib'), { recursive: true });
+    writeFileSync(join(dir, '..lib', 'x.js'), '');
+    writeFileSync(join(dir, 'node.exe'), '');
+    writeFileSync(join(dir, 'dots.cmd'), MODERN('..lib\\x.js'));
+    expect(resolveNpmShim(join(dir, 'dots.cmd'), { PATH: '' })?.script).toBe(join(dir, '..lib', 'x.js'));
   });
 
   it('is undefined for a non-shim batch file and for a missing file', () => {
@@ -145,6 +179,22 @@ describe('resolveNpmShim - files (pure fs, every platform)', () => {
     } finally {
       process.chdir(previous);
     }
+  });
+});
+
+describe('scriptInside - the second guard, whatever the parser lets through (pure, every platform)', () => {
+  const dir = resolve(tmpdir(), 'queue-npmshim-guard');
+  it('keeps a script under the directory', () => {
+    expect(scriptInside(dir, 'bin\\x.js')).toBe(resolve(dir, 'bin', 'x.js'));
+  });
+  it('keeps a folder whose name starts with two dots', () => {
+    expect(scriptInside(dir, '..lib\\x.js')).toBe(resolve(dir, '..lib', 'x.js'));
+  });
+  it.each([['a parent segment', '..\\x.js'], ['a nested parent segment', 'a\\..\\..\\x.js'], ['the directory itself', '.']])('refuses %s', (_label, rel) => {
+    expect(scriptInside(dir, rel)).toBeUndefined();
+  });
+  it.skipIf(!IS_WINDOWS)('refuses another drive (relative() answers an absolute path)', () => {
+    expect(scriptInside('C:\\shims', 'D:\\x.js')).toBeUndefined();
   });
 });
 

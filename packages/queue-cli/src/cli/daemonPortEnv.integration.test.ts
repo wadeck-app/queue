@@ -1,10 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { testBundleFile } from '../testing/testBundle.js';
+import { runQueueCli, type CliResult } from '../testing/runCli.js';
 import { startDaemon } from '../daemon/QueueDaemon.js';
 import { waitForPortFree } from '../testWaitFor.js';
 
@@ -12,7 +11,6 @@ import { waitForPortFree } from '../testWaitFor.js';
 // an invalid value is refused loudly (naming the variable and the value) instead of starting on another port, and a command finds its daemon
 // through the config.port of ITS config dir whatever the environment says.
 
-const bundlePath = testBundleFile('queue.cjs');
 
 let iso: IsolatedCliEnv | undefined;
 
@@ -31,14 +29,8 @@ function env(): IsolatedCliEnv {
   return iso;
 }
 
-function runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync(process.execPath, [bundlePath, ...args], {
-    encoding: 'utf-8',
-    // Hang guard only, never a performance limit
-    timeout: 300_000,
-    env: { ...env().env, ...extraEnv },
-  });
-  return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.status ?? -1 };
+function runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): CliResult {
+  return runQueueCli(env().env, args, { extraEnv });
 }
 
 function boundPort(configDir: string): number {

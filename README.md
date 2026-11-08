@@ -16,9 +16,10 @@ queue <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `push <event> <json> [--timeout <dur>]` | Publish an event |
+| `push <event> <json> [--project <p>] [--direction to-parents\|to-children] [--timeout <dur>]` | Publish an event |
 | `retry --event <id>` | Re-enqueue a failed event |
-| `history [--event <name>] [--subscriber <id>] [--status <s>] [--since <-Nd>] [--follow] [--json]` | List past events and how each subscriber ended |
+| `replay <eventId> [--cwd <dir>]` | Resubmit a past event's payload as a new event tagged `replayOf` (manual testing) |
+| `history [--event <name>] [--subscriber <id>] [--project <p>] [--status success\|failed\|dlq\|filtered] [--since <-Nd\|-Nh\|-Nm>] [--limit\|-n <N>] [--offset <N>] [--follow\|-f] [--json]` | List past events and how each subscriber ended |
 | `history --event-id <id> [--json]` | Show one entry (payload and outcomes) by its eventId; exit 1 when the history no longer holds it |
 | `status [--json]` | Show daemon and queue status |
 | `list-subscribers [event] [--json]` | List registered subscribers |
@@ -30,8 +31,10 @@ queue <command> [options]
 | `events list [--source S] [--prefix P] [--match PAT] [--declared-only] [--terminal] [--json]` | List the declared events and what was seen |
 | `events show <name> [--json]` | Schema, example, `--when` paths and a ready `wait` command |
 | `events register --source S --file <events.json>` | Declare the events of a non-Node program |
+| `sub list\|add\|remove\|edit ...` | Manage `subscribers.yml` entries (`cli`, `http`, `action`); `queue sub --help` |
+| `relay start\|stop\|status [--json]` | Webhook relay client (`relay.yml`); `relay webhook list\|history` query the remote relay |
 | `start` / `stop` | Start or stop the daemon manually |
-| `logs [--follow]` | Tail daemon logs |
+| `logs [--follow]` | Tail daemon logs (`cli logs` is the same) |
 | `cli self-check` | Validate installation |
 | `cli update` | Apply a pending update immediately |
 

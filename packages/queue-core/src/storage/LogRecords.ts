@@ -23,7 +23,7 @@ export interface LogRecord {
   entry: Record<string, unknown>;
 }
 
-/** `on.github.push[0]` -> `on.github.push`: a subscriber id is the event name and the index of the subscriber. */
+/** `on.github.push[0]` -> `on.github.push`: only the ids written before subscribers were named have this form; any other id is returned as it is. */
 export function eventOfSubscriber(subscriberId: string): string {
   return subscriberId.replace(/\[\d+\]$/, '');
 }
@@ -51,7 +51,8 @@ export function parseLogRecord(raw: string): LogRecord | undefined {
   const time = timeOf(entry['ts']);
   const subscriberId = typeof entry['subscriberId'] === 'string' ? entry['subscriberId'] : undefined;
   const base = { ts, time, entry, ...(subscriberId !== undefined && { subscriberId }) };
-  const event = subscriberId !== undefined ? eventOfSubscriber(subscriberId) : undefined;
+  // The record names its event; the id of a subscriber is a name now ('notify', 'notify@onA'), and only an old record has the event in it as 'event[index]'
+  const event = typeof entry['event'] === 'string' && entry['event'] !== '' ? entry['event'] : subscriberId !== undefined ? eventOfSubscriber(subscriberId) : undefined;
 
   if (typeof entry['msg'] === 'string') {
     return { ...base, outcome: 'info', event: 'cli' };

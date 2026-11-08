@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { appendLine } from './AppendLine.js';
 import { join } from 'node:path';
 import { pruneLogDir, describeRetention, type PruneOptions, type PruneReport } from './LogRetention.js';
 
@@ -93,7 +94,7 @@ export class EventLogger implements QueueLogWriter {
   }
 
   private append(file: string, type: string, entry: object): void {
-    appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), type, ...entry }) + '\n', 'utf-8');
+    appendLine(file, JSON.stringify({ ts: new Date().toISOString(), type, ...entry }) + '\n');
   }
 
   /** Never throws: a retention problem must not make a log write fail. Returns the lines to log once the day file exists. */

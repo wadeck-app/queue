@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -7,9 +6,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as net from 'node:net';
 import { spawnOwned, waitFor, waitForPortFree, withHangGuard } from '../testWaitFor.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { runQueueCli, type CliResult } from '../testing/runCli.js';
 import { testBundleFile } from '../testing/testBundle.js';
 
-const bundlePath = testBundleFile('queue.cjs');
 
 let tempConfigDir: string;
 let iso: IsolatedCliEnv | undefined;
@@ -56,25 +55,8 @@ function isolatedEnv(): NodeJS.ProcessEnv {
   return iso.env;
 }
 
-function runCli(args: string[], extraEnv: Record<string, string> = {}): {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-} {
-  const result = spawnSync(process.execPath, [bundlePath, ...args], {
-    encoding: 'utf-8',
-    // Hang guard only, never a performance limit
-    timeout: 300_000,
-    env: {
-      ...isolatedEnv(),
-      ...extraEnv,
-    },
-  });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    exitCode: result.status ?? -1,
-  };
+function runCli(args: string[], extraEnv: Record<string, string> = {}): CliResult {
+  return runQueueCli(isolatedEnv(), args, { extraEnv });
 }
 
 interface HistoryPage {

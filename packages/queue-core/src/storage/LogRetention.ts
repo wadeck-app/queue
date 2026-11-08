@@ -580,3 +580,8 @@ export function describeRetention(label: string, report: PruneReport): Retention
   }
   return lines;
 }
+
+/** The history limits as a reader should understand them: a day file is kept while its date is at most HISTORY_MAX_AGE_DAYS days old, so today and the 90 days before. */
+export function describeHistoryLimits(): string {
+  return `the history keeps the last ${HISTORY_MAX_AGE_DAYS + 1} calendar days (today and the ${HISTORY_MAX_AGE_DAYS} days before) and ${HISTORY_MAX_TOTAL_BYTES / (1024 * 1024)} MB`;
+}

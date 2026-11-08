@@ -17,11 +17,6 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
     expect(manifest.id).toBe('queue');
   });
 
-  it('keeps the id queue-cli registers it as (queue-cli/src/daemon/AppCoreRegistration.ts APP_CORE_MODULE_ID)', () => {
-    const registration = readFileSync(join(packageDir, '../queue-cli/src/daemon/AppCoreRegistration.ts'), 'utf8');
-    expect(registration).toContain(`APP_CORE_MODULE_ID = '${String(manifest.id)}'`);
-  });
-
   it('holds neither version nor backendEntryPath: `app-core-cli package` stamps the first and fixes the second', () => {
     expect(manifest).not.toHaveProperty('version');
     expect(manifest).not.toHaveProperty('backendEntryPath');

@@ -1,17 +1,15 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createQueueClient } from './QueueClient.js';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
-import { testBundleFile } from '../testing/testBundle.js';
+import { runQueueCli, type CliResult } from '../testing/runCli.js';
 import { waitFor, waitForPortFree } from '../testWaitFor.js';
 
 // queue.dlq.added / queue.dlq.removed against a REAL daemon: the bundled CLI and daemon, a throwaway config dir, home and registry (createIsolatedCliEnv).
 // A failing cli subscriber gives up -> the daemon emits queue.dlq.added with a reference to the base event; a subscriber template follows the reference
 // byte-exact; replay, clear and the give-up of the dashboard (the give-up RPC) are announced; with no subscriber on queue.dlq.* the history still records the events.
 
-const bundlePath = testBundleFile('queue.cjs');
 
 // A title with a quote, a space and a shell metacharacter: it must reach the script as ONE argument, unchanged
 const TITLE = 'a"b & c';
@@ -36,15 +34,8 @@ function env(): IsolatedCliEnv {
   return iso;
 }
 
-function runCli(args: string[]): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync(process.execPath, [bundlePath, ...args], {
-    encoding: 'utf-8',
-    // Hang guard only, never a performance limit
-    timeout: 300_000,
-    cwd: work === '' ? undefined : work,
-    env: { ...env().env },
-  });
-  return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.status ?? -1 };
+function runCli(args: string[]): CliResult {
+  return runQueueCli(env().env, args, { cwd: work === '' ? undefined : work });
 }
 
 /** Creates the throwaway environment, the helper scripts and the global subscribers.yml; `withDlqSubscribers` adds the two subscribers on queue.dlq.*. */

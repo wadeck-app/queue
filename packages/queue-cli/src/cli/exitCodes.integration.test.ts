@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
+import { runQueueCli, type CliResult } from '../testing/runCli.js';
 import { testBundleFile } from '../testing/testBundle.js';
 import { COMMAND_EXIT_CODES, documentedCodes } from './exitCodes.js';
 
@@ -22,14 +23,8 @@ afterAll(() => {
   iso.cleanup();
 });
 
-function runCli(args: string[], extraEnv: Record<string, string> = {}): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync(process.execPath, [testBundleFile('queue.cjs'), ...args], {
-    encoding: 'utf-8',
-    // Hang guard only, never a performance limit
-    timeout: 300_000,
-    env: { ...iso.env, ...extraEnv },
-  });
-  return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.status ?? -1 };
+function runCli(args: string[], extraEnv: Record<string, string> = {}): CliResult {
+  return runQueueCli(iso.env, args, { extraEnv });
 }
 
 interface Row {

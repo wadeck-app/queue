@@ -7,7 +7,9 @@ const sdk = vi.hoisted(() => ({
 }));
 vi.mock('@wadeck-app/app-core-sdk/register', () => sdk);
 
-import { registerWithAppCore } from './AppCoreRegistration.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { APP_CORE_MODULE_ID, registerWithAppCore } from './AppCoreRegistration.js';
 
 let lines: { source: string; message: string }[];
 const log = (entry: { source: string; message: string }): void => { lines.push(entry); };
@@ -20,6 +22,11 @@ beforeEach(() => {
 });
 
 describe('registerWithAppCore', () => {
+  it('registers the id that the module declares in its source manifest (the two must stay equal)', () => {
+    const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('../../../app-module-queue/manifest.json', import.meta.url)), 'utf8')) as { id?: string };
+    expect(APP_CORE_MODULE_ID).toBe(manifest.id);
+  });
+
   it('registers the module under the id "queue" with the given manifest and logs what app-core answered', async () => {
     const outcome = { status: 'registered', port: 4850 };
     sdk.registerModule.mockResolvedValue(outcome);

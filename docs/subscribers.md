@@ -264,7 +264,7 @@ The events the daemon emits about the dead-letter queue (`queue.dlq.added`, `que
 - Only the payload of the base event is readable, never its metadata. A reference inside that payload is not followed.
 - Templates only (`cli` arguments and action `with` values). `when:` filters, http bodies and the envelope on stdin show the reference, not the base payload.
 - A terminal `{{ payload.original }}` renders the reference JSON as it is, without loading anything.
-- Base event gone (the history keeps at most 90 days and 200 MB) or reference `null` (a dead-letter entry written before events were tracked by id): permanent failure naming the field and the reference, never a payload value. Fix: read what you need before then, or run `queue history --event-id <id> --json` by hand.
+- Base event gone (the history keeps the last 91 calendar days, today and the 90 days before, and 200 MB) or reference `null` (a dead-letter entry written before events were tracked by id): permanent failure naming the field and the reference, never a payload value. Fix: read what you need before then, or run `queue history --event-id <id> --json` by hand.
 - An unreadable history is a plain failure and is retried.
 - `queue.` names are reserved: no push, `emit` action or `register-events` can produce them (see [push-protocol.md](push-protocol.md#reserved-namespace)).
 

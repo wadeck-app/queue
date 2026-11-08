@@ -75,8 +75,39 @@ jobs:
                   npm run build --workspace=packages/queue-sdk
                   npm test --workspace=packages/queue-sdk
 
+    # queue-core and queue-cli carry the Windows-specific code (atomic rename retries, .cmd shims, process spawning, paths): their tests must pass on Windows too
+    core-cli-windows:
+        runs-on: windows-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
+
+            # queue-cli's globalSetup builds the bundle, and the launcher regression test builds the Go launcher
+            - uses: actions/setup-go@v5
+              with:
+                  go-version: '1.26'
+
+            - name: Install dependencies
+              run: npm install --prefer-offline
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build TypeScript
+              run: npm run build
+
+            - name: Test queue-core
+              run: npm test --workspace=packages/queue-core
+
+            - name: Test queue-cli
+              run: npm test --workspace=packages/queue-cli
+
     publish:
-        needs: [build-and-test, sdk-cross-platform]
+        needs: [build-and-test, sdk-cross-platform, core-cli-windows]
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         steps:

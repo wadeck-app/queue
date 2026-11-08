@@ -106,7 +106,7 @@ describe('an invalid subscribers.yml at the moment of the move', () => {
     await svc.commands.push({ event: 'onOther', payload: {}, cwd: projectDir });
     const restarted = service();
     restarted.onStart();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => restarted.isIdle());
     expect(added()).toHaveLength(1);
   });
 
@@ -167,7 +167,7 @@ describe('what is not emitted on purpose', () => {
     await svc.commands.push({ event: 'onOther', payload: {}, cwd: projectDir });
     const restarted = service(boom);
     restarted.onStart();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor('nothing left in flight (no dispatch, no announcement)', () => restarted.isIdle());
     expect(added()).toHaveLength(before);
     expect(listDlqEntries(configDir).find((row) => row.id === capped.id)!.announce).toBe('skipped');
   });

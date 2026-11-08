@@ -1,22 +1,22 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createIsolatedCliEnv, UNREACHABLE_REGISTRY, type IsolatedCliEnv } from './isolatedCliEnv.js';
 
 describe('createIsolatedCliEnv', () => {
   let iso: IsolatedCliEnv | undefined;
-  const saved = { ...process.env };
 
   afterEach(() => {
     iso?.cleanup();
     iso = undefined;
-    process.env = { ...saved };
+    // Puts back each variable this file stubbed; process.env itself is never replaced (on Windows it is a special object: case-insensitive names)
+    vi.unstubAllEnvs();
   });
 
   it('points every steering variable into the throwaway tree and strips leaked ones', () => {
-    process.env['UPDATER_FORCE'] = '1';
-    process.env['LAUNCHER_BUNDLE_OVERRIDE'] = '/real/queue.cjs';
-    process.env['npm_config_registry'] = 'https://real.example';
+    vi.stubEnv('UPDATER_FORCE', '1');
+    vi.stubEnv('LAUNCHER_BUNDLE_OVERRIDE', '/real/queue.cjs');
+    vi.stubEnv('npm_config_registry', 'https://real.example');
     iso = createIsolatedCliEnv();
     const e = iso.env;
     expect(e['UPDATER_FORCE']).toBeUndefined();
@@ -32,8 +32,8 @@ describe('createIsolatedCliEnv', () => {
   });
 
   it('gives each environment its own free daemon and relay ports, never the defaults, overriding what the parent shell exports', async () => {
-    process.env['QUEUE_DAEMON_PORT'] = '47910';
-    process.env['QUEUE_RELAY_PORT'] = '47911';
+    vi.stubEnv('QUEUE_DAEMON_PORT', '47910');
+    vi.stubEnv('QUEUE_RELAY_PORT', '47911');
     iso = createIsolatedCliEnv();
     const other = createIsolatedCliEnv();
     try {
@@ -54,5 +54,26 @@ describe('createIsolatedCliEnv', () => {
     } finally {
       other.cleanup();
     }
+  });
+
+  it('leaves process.env the same object and restores what a test stubbed', () => {
+    const before = process.env;
+    vi.stubEnv('UPDATER_FORCE', '1');
+    iso = createIsolatedCliEnv();
+    vi.unstubAllEnvs();
+    expect(process.env).toBe(before);
+    expect(process.env['UPDATER_FORCE']).toBeUndefined();
+  });
+
+  it('removes its throwaway tree when it cannot finish building the environment (no leaked directory)', () => {
+    let root = '';
+    expect(() => createIsolatedCliEnv({
+      allocatePorts: (createdRoot) => {
+        root = createdRoot;
+        throw new Error('no free port');
+      },
+    })).toThrow('no free port');
+    expect(root).not.toBe('');
+    expect(existsSync(root)).toBe(false);
   });
 });
