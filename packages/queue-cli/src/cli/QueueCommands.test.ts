@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { addProject } from '@wadeck-app/project-sdk';
 import { join } from 'node:path';
 import { runQueueCommand } from './QueueIndex.js';
-import { getErrorMessage } from '@wadeck-app/queue-core';
+import { WaiterRegistry, getErrorMessage } from '@wadeck-app/queue-core';
 
 // --- module mocks (hoisted) ---
 
@@ -418,5 +418,72 @@ describe('unknown command', () => {
 		const { stderr, exitCode } = await run(['totally-unknown-xyz']);
 		expect(exitCode).toBe(1);
 		expect(stderr).toContain('Unknown command');
+	});
+});
+
+// --- waiters ---
+
+describe('queue waiters and the "Waiting now" section', () => {
+	const aWait = (name: string, events = ['onTaskDone']) => new WaiterRegistry(tmpDir).register({ name, events, whens: [], label: '', since: new Date().toISOString(), cwd: '/project' });
+
+	async function listSubscribers(args: string[], tty: boolean): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+		mockSend.mockResolvedValue({ subscribers: [] });
+		const origIsTTY = process.stdout.isTTY;
+		Object.defineProperty(process.stdout, 'isTTY', { value: tty, configurable: true });
+		try {
+			return await run(['list-subscribers', ...args]);
+		} finally {
+			Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+		}
+	}
+
+	it('list-subscribers on a terminal adds the waits that are running, after the subscribers', async () => {
+		aWait('w-agent-wake.ab12cd34');
+		const { stdout, exitCode } = await listSubscribers([], true);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain('[ok] no subscribers');
+		expect(stdout).toContain('Waiting now (1):');
+		expect(stdout).toContain('w-agent-wake.ab12cd34');
+		expect(stdout.indexOf('no subscribers')).toBeLessThan(stdout.indexOf('Waiting now'));
+	});
+
+	it('list-subscribers on a terminal without any wait prints no section', async () => {
+		expect((await listSubscribers([], true)).stdout).toBe('[ok] no subscribers\n');
+	});
+
+	it('list-subscribers <event> keeps only the waits for that event', async () => {
+		aWait('a.one', ['onTaskDone']);
+		aWait('a.two', ['onOther']);
+		const { stdout } = await listSubscribers(['onTaskDone'], true);
+		expect(stdout).toContain('a.one');
+		expect(stdout).not.toContain('a.two');
+	});
+
+	it('list-subscribers --json (and a pipe) is the bare array of subscribers, byte for byte, waits or not', async () => {
+		aWait('a.one');
+		expect((await listSubscribers(['--json'], true)).stdout).toBe('[]\n');
+		expect((await listSubscribers([], false)).stdout).toBe('[]\n');
+	});
+
+	it('queue waiters --json lists the waits through the CLI', async () => {
+		aWait('a.one');
+		const { stdout, exitCode } = await run(['waiters', '--json']);
+		expect(exitCode).toBe(0);
+		expect((JSON.parse(stdout) as Array<{ name: string }>).map((wait) => wait.name)).toEqual(['a.one']);
+		expect(mockSend).not.toHaveBeenCalled();
+	});
+
+	it('queue waiters refuses an option nobody knows, with the closest one and the usage', async () => {
+		const { stderr, exitCode } = await run(['waiters', '--histroy']);
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain("did you mean '--history'?");
+		expect(stderr).toContain('Usage: queue waiters');
+	});
+
+	it('queue waiters --help prints its help and reads nothing', async () => {
+		const { stdout, exitCode } = await run(['waiters', '--help']);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain('queue waiters - Who is waiting');
+		expect(stdout).toContain('--history');
 	});
 });

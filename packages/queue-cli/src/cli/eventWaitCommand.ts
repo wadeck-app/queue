@@ -36,6 +36,8 @@ export interface EventWaitOptions {
   sinceMs: number;
   timeoutMs: number;
   pollMs: number;
+  /** `--name <who>.<what>`: how this wait is listed and counted by `queue push`. Absent: the CLI names it `anon.<pid>`. */
+  name?: string;
   json: boolean;
   /** An undeclared event name is refused at once (exit 4) instead of waited for. */
   strict?: boolean;
@@ -55,6 +57,8 @@ export interface EventWaitDeps {
   io: WaitIO;
   /** Called once, when the first poll finds nothing to end the wait: nothing to wait for is not worth starting anything for. */
   beforeFirstWait?: () => Promise<void>;
+  /** Called once, just before the wait returns MATCHED, with the event that ended it (--all: the one that completed it, the newest). */
+  onMatched?: (entry: HistoryEntry) => void;
 }
 
 function describeTarget(target: EventWaitTarget): string {
@@ -104,6 +108,7 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
       });
       if (first !== -1) {
         const entry = matches[first]!;
+        deps.onMatched?.(entry);
         if (options.json) {
           io.stdout.write(JSON.stringify({ matched: true, entry, ...(several && { target: first }), ...declarationFieldsOf(deps, entry.event) }) + '\n');
         } else {
@@ -115,6 +120,7 @@ export async function eventWaitCommand(options: EventWaitOptions, deps: EventWai
         return WAIT_EXIT.MATCHED;
       }
     } else if (matches.every((match) => match !== null)) {
+      deps.onMatched?.(matches.reduce((newest, match) => (match!.ts > newest!.ts ? match : newest))!);
       if (options.json) {
         io.stdout.write(JSON.stringify({ matched: true, mode: 'all', entries: matches.map((entry, target) => ({ target, entry })) }) + '\n');
       } else {

@@ -25,8 +25,9 @@ export const COMMAND_EXIT_CODES: readonly CommandExitCodes[] = [
   { command: 'logs', codes: { 0: 'printed' } },
   { command: 'history', codes: { 0: 'printed (also when nothing matches)', 1: 'invalid flags, unknown project, unknown --event-id' } },
   { command: 'events', codes: { 0: 'listed, shown or registered', 1: 'declaration rejected, unreadable file, old daemon', 4: 'invalid usage, unknown event name' } },
-  { command: 'wait', codes: { 0: 'matched', 2: 'timeout', 4: 'invalid usage, or --strict on an undeclared event' } },
-  { command: 'wait ci', codes: { 0: 'CI passed', 1: 'CI failed', 2: 'timeout', 3: 'no run seen, or the relay is not running', 4: 'invalid usage' } },
+  { command: 'waiters', codes: { 0: 'listed (also when nobody waits or nothing was recorded)', 1: 'invalid flags, or the waiters folder cannot be read' } },
+  { command: 'wait', codes: { 0: 'matched', 2: 'timeout', 4: 'invalid usage (including an invalid or taken --name), or --strict on an undeclared event' } },
+  { command: 'wait ci', codes: { 0: 'CI passed', 1: 'CI failed', 2: 'timeout', 3: 'no run seen, or the relay is not running', 4: 'invalid usage (including an invalid or taken --name)' } },
   { command: 'unknown', codes: { 1: 'not a queue command (any other word after queue): the usage is printed' } },
   { command: 'cli', codes: { 0: 'done', 1: 'self-check failed, update refused (dev build) or failed, unknown subcommand' } },
 ];

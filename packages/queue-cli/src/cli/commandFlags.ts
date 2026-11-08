@@ -40,6 +40,20 @@ export const COMMAND_FLAGS: Readonly<Record<string, CommandFlags>> = {
   },
   status: { spec: { values: [...PROJECT_FLAGS], switches: ['--json'], needs: PROJECT_NEEDS }, maxPositionals: 0, usage: 'queue status [--project <name|alias|id>] [--json]', equalsForm: ['--project'] },
   'list-subscribers': { spec: { values: [], switches: ['--json'] }, maxPositionals: 1, usage: 'queue list-subscribers [event] [--json]' },
+  waiters: {
+    spec: {
+      values: ['--since', '--name', '--outcome', '--limit'],
+      switches: ['--history', '--json'],
+      needs: {
+        '--since': 'a duration, e.g. --since 2h (30m, 2h, 7d)',
+        '--name': 'a name or a glob, e.g. --name "w-agent-wake.*"',
+        '--outcome': 'one of waiting, matched, timeout, cancelled, refused, lost',
+        '--limit': 'a whole number from 1, e.g. --limit 50',
+      },
+    },
+    maxPositionals: 0,
+    usage: 'queue waiters [--history] [--since <duration>] [--name <glob>] [--outcome <outcome>] [--limit <N>] [--json]',
+  },
   'dlq list': { spec: { values: [...PROJECT_FLAGS], needs: PROJECT_NEEDS }, maxPositionals: 0, usage: 'queue dlq list [--project <name|alias|id>]', equalsForm: ['--project'] },
   'dlq replay': { spec: { values: ['--id'], needs: { '--id': 'a value: the id of a DLQ entry (queue dlq list shows the ids)' } }, maxPositionals: 0, usage: 'queue dlq replay --id <id>', equalsForm: ['--id'] },
   'dlq clear': {

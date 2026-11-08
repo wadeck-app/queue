@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS } from './eventWaitArgs.js';
+import { parseEventWaitArgs, EVENT_WAIT_KNOWN_FLAGS, EVENT_WAIT_FLAGS_WITH_VALUE } from './eventWaitArgs.js';
 
 const NOW = Date.parse('2026-10-18T12:00:00.000Z');
 
@@ -161,5 +161,51 @@ describe('parseEventWaitArgs: an unknown option is a usage error', () => {
   it('every known flag is still accepted', () => {
     expect(parseEventWaitArgs(['onFoo', '--all', '--json', '--strict'], NOW)).toMatchObject({ ok: true });
     expect(parseEventWaitArgs(['onFoo', '--any', '-h'], NOW)).toMatchObject({ ok: true });
+  });
+});
+
+describe('parseEventWaitArgs: --name', () => {
+  it('is a known flag that takes a value', () => {
+    expect(EVENT_WAIT_KNOWN_FLAGS).toContain('--name');
+    expect(EVENT_WAIT_FLAGS_WITH_VALUE.has('--name')).toBe(true);
+  });
+
+  it('is carried to the options when valid, and absent from them otherwise', () => {
+    expect(parseEventWaitArgs(['onFoo', '--name', 'w-agent-wake.ab12cd34'], NOW)).toMatchObject({ ok: true, options: { name: 'w-agent-wake.ab12cd34' } });
+    const without = parseEventWaitArgs(['onFoo'], NOW);
+    expect(without.ok && 'name' in without.options).toBe(false);
+  });
+
+  it('may be written before the event or between two events', () => {
+    expect(parseEventWaitArgs(['--name', 'a.b', 'onFoo', 'onBar'], NOW)).toMatchObject({ ok: true, options: { name: 'a.b', targets: [{ event: 'onFoo' }, { event: 'onBar' }] } });
+  });
+
+  it.each([
+    ['no dot', 'agent', 'no dot'],
+    ['upper case', 'Agent.One', 'must look like <who>.<what>'],
+    ['a path separator', 'a/b.c', 'must look like <who>.<what>'],
+    ['a trailing dot', 'agent.', 'empty part'],
+    ['65 characters', `a.${'b'.repeat(63)}`, 'at most 64'],
+  ])('refuses a name with %s, saying the rule and giving an example', (_label, name, rule) => {
+    const result = parseEventWaitArgs(['onFoo', '--name', name], NOW);
+    expect(result.ok).toBe(false);
+    const text = (result as { message: string }).message;
+    expect(text).toContain(rule);
+    expect(text).toContain('e.g. w-agent-wake.ab12cd34');
+  });
+
+  it('refuses a missing value, the --name=x form and a repeated --name', () => {
+    expect((parseEventWaitArgs(['onFoo', '--name'], NOW) as { message: string }).message).toContain('--name needs a value');
+    expect((parseEventWaitArgs(['onFoo', '--name', '--json'], NOW) as { message: string }).message).toContain('--name needs a value');
+    expect((parseEventWaitArgs(['onFoo', '--name=a.b'], NOW) as { message: string }).message).toContain('--name a.b');
+    expect((parseEventWaitArgs(['onFoo', '--name', 'a.b', '--name', 'c.d'], NOW) as { message: string }).message).toContain('--name is given twice');
+  });
+
+  it('does not take the word after --name for an event', () => {
+    expect(parseEventWaitArgs(['--name', 'a.b'], NOW)).toMatchObject({ ok: false, message: expect.stringContaining('No event name given') });
+  });
+
+  it('is suggested for a near typo', () => {
+    expect((parseEventWaitArgs(['onFoo', '--nam', 'a.b'], NOW) as { message: string }).message).toContain("did you mean '--name'?");
   });
 });

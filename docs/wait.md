@@ -13,6 +13,7 @@ Blocks until a queue event of that name is recorded (any `queue push`, even with
 - `--when <expr>` (repeatable) keeps events whose payload satisfies the expression, same syntax as a subscriber's `when:`.
 - `--since <duration|time>` also counts events recorded earlier, so there is no race with the thing you waited for. Default: events recorded after the command started.
 - `--timeout <duration>` gives up after that long (default 30m; `30s`, `15m`, `2h`).
+- `--name <who>.<what>` names the wait, see [Naming and listing](#naming-and-listing).
 - A name like `on.github.workflow_run` is a relayed event and needs the relay (see below).
 
 ### Patterns
@@ -75,11 +76,44 @@ The relay does not replay events missed while it was down: a wait only sees even
 
 A GitHub webhook only covers the repositories of its owner, and the relay is configured for the organisation only. The repositories of the personal account are deliberately not relayed: `queue wait ci` on one of them ends with exit 3 ("No workflow_run delivery from <owner>/<repo> reached the relay"), whatever the CI does. That is expected, not a fault of the relay or of the webhook. For those repositories do not use `queue wait ci`: poll the run with the GitHub tools (`gh run list --commit <sha>`, or the GitHub MCP tools, see the `poll-event` skill).
 
+## Naming and listing
+
+Every wait (event or CI) is listed while it runs, so `queue push` can say that someone consumes the event and a human can see who waits. The wait writes `<config dir>/waiters/waiter-<name>.json` before its first history read; the daemon reads the folder on each push. `--history` and the lists need no daemon.
+
+`--name <who>.<what>`, for `wait <event>` and `wait ci` alike:
+
+| Rule | Example |
+|---|---|
+| Lower case, `[a-z0-9][a-z0-9._-]*`, at most 64 characters | |
+| At least one dot, no empty part | `w-agent-wake.ab12cd34`, `deploy.ci-9d9c4f7` |
+| Unique among live waits of one config dir | a second live wait with the same name exits 4 and names the holder (pid, since) |
+
+Put the awaited thing in the name: one session often runs several waits (`wait ci` and a task wait), and each needs its own. A bad name exits 4 with the rule and an example.
+
+**Without `--name` (transitional).** The wait is called `anon.<pid>` and prints one `[warn]` on stderr; lists mark it `(no --name)` (`"anonymous": true` in JSON). A name will become mandatory in a later release (exit 4 with an example), once the agent skills pass `--name`: add it now.
+
+**What the record holds.** Name, events, `--when` filters, label (the commit for `wait ci`), the effective `--since`, the working directory, the pid, the start time. A wait with several events registers one filter list: the common one when all events share it, none otherwise (it is then counted for more pushes than needed, never fewer). `wait ci` registers `on.github.workflow_run` for every repository; the commit is the label, and the count is by event name only. The wake contact is `none` ("polling only"): the wait polls the history every 500 ms (1 s for CI). No payload is ever stored; `--when` and the cwd are shown as written.
+
+**Lifecycle.**
+- Registration happens before the history is read, so a push racing the start counts it, and `--since` still finds earlier events.
+- A heartbeat every 15 s touches the file. A wait is live while its process exists and its heartbeat is under 60 s old; a list marks a heartbeat over 30 s late `(stale)`. A wait that finds its record gone or replaced (a sleeping machine) registers again and warns once; it never crashes for a file error.
+- It leaves the list and writes its `end` record on every exit it controls: matched, timeout, SIGINT/SIGTERM/SIGHUP (outcome `cancelled`, exit 130/143/129), process exit. A wait that is killed hard (SIGKILL, power) writes nothing: the next listing, registration or sweep records it `lost` at its last heartbeat. A file is never deleted by a wait that does not own it.
+- A folder that cannot be written exits 1 with its path: a wait nobody can see is not started.
+
+**`queue push`.** `[ok] queued (0 subscribers, 1 waiting: a.b)` while a wait consumes the event; the `[warn]` for "no subscribers and no one waiting" only when nobody does either. A wait counts when one of its events matches the name and its filters hold; waits are not scoped by project, and an `--all` wait counts until it ends.
+
+**Lists.**
+- `queue waiters [--json]`: name, events and filters, label, contact, since, last seen, pid. `--json` is an array (`id`, `name`, `anonymous`, `events`, `whens`, `label`, `contact`, `pid`, `cwd`, `since`, `startedAt`, `lastSeen`, `stale`).
+- `queue list-subscribers [event]` and `queue sub list [event]` (without `--scope`) append a "Waiting now" section on a terminal, only when someone waits. Their `--json` arrays and piped output are unchanged.
+- `queue waiters --history [--since <duration>] [--name <glob>] [--outcome <o>] [--limit N] [--json]`: newest first, with from, to, duration, outcome (`matched` with the event and its id, `timeout`, `cancelled`, `refused` for a taken name, `lost`, or `waiting`). Journal: `waiters/history/<day>.ndjson`, 90 days. For a CI wait, exit 0 and 1 (passed, failed) are recorded `matched`; exit 2 and 3 (timeout, no run, relay down) `timeout`.
+- A listing sweeps first: the waits that are over are recorded `lost` once and named on stderr (`[info]`). A record that cannot be read is named with its path (`[warn]`) and ignored.
+
 ## Exit codes
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---------|---|---|---|---|---|
-| `wait <event>` | matched | - | timeout (`--timeout`, default 30m) | - | invalid usage |
-| `wait ci` | all runs `success`, `skipped` or `neutral` | a run failed, was cancelled or timed out | `--timeout` (default 30m) | no run seen for the commit, or relay not running | invalid usage |
+| `wait <event>` | matched | - | timeout (`--timeout`, default 30m) | - | invalid usage, invalid or taken `--name` |
+| `wait ci` | all runs `success`, `skipped` or `neutral` | a run failed, was cancelled or timed out | `--timeout` (default 30m) | no run seen for the commit, or relay not running | invalid usage, invalid or taken `--name` |
+| `waiters` | listed (also when empty) | invalid flags, unreadable folder | - | - | - |
 
 Exit 2 and 3 print the likely causes and `gh run list --commit <sha>` as a cross-check; GitHub does not redeliver lost webhooks.

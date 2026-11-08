@@ -1,16 +1,16 @@
-import { PayloadFilter, doubleStarProblem, eventPatternProblem, getErrorMessage } from '@wadeck-app/queue-core';
+import { PayloadFilter, doubleStarProblem, eventPatternProblem, getErrorMessage, waiterNameProblem } from '@wadeck-app/queue-core';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { nearestFlag } from './flagScan.js';
 import type { EventWaitOptions, EventWaitTarget } from './eventWaitCommand.js';
 
-export const EVENT_WAIT_FLAGS_WITH_VALUE = new Set(['--when', '--since', '--timeout']);
-export const EVENT_WAIT_KNOWN_FLAGS = ['--when', '--since', '--timeout', '--json', '--strict', '--all', '--any', '--help', '-h'];
+export const EVENT_WAIT_FLAGS_WITH_VALUE = new Set(['--when', '--since', '--timeout', '--name']);
+export const EVENT_WAIT_KNOWN_FLAGS = ['--when', '--since', '--timeout', '--name', '--json', '--strict', '--all', '--any', '--help', '-h'];
 
 /** How long any `queue wait` (an event, the CI of a commit) waits by default. */
 export const WAIT_DEFAULT_TIMEOUT = '30m';
 
-const USAGE = 'queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--json] [--strict]';
+const USAGE = 'queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--name <who>.<what>] [--json] [--strict]';
 
 export type EventWaitArgs = { ok: true; options: EventWaitOptions } | { ok: false; message: string };
 
@@ -106,6 +106,14 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
     return { ok: false, message: `${getErrorMessage(err)} (durations look like 30s, 15m, 1h).` };
   }
 
+  const name = singles['--name'];
+  if (name !== undefined) {
+    const nameProblem = waiterNameProblem(name);
+    if (nameProblem !== undefined) {
+      return { ok: false, message: nameProblem };
+    }
+  }
+
   const rawSince = singles['--since'];
   let sinceMs = nowMs;
   if (rawSince !== undefined) {
@@ -124,6 +132,7 @@ export function parseEventWaitArgs(args: string[], nowMs: number): EventWaitArgs
       sinceMs,
       timeoutMs,
       pollMs: FOLLOW_POLL_INTERVAL_MS,
+      ...(name !== undefined && { name }),
       json: args.includes('--json'),
       ...(args.includes('--strict') && { strict: true }),
     },

@@ -1,7 +1,8 @@
+import { waiterNameProblem } from '@wadeck-app/queue-core';
 import { scanFlags, type FlagSpec } from './flagScan.js';
 
 const CI_FLAG_SPEC: FlagSpec = {
-  values: ['--repo', '--workflow', '--timeout', '--settle'],
+  values: ['--repo', '--workflow', '--timeout', '--settle', '--name'],
   repeatable: ['--workflow'],
   switches: ['--json', '--no-infer', '--help', '-h'],
   needs: {
@@ -9,6 +10,7 @@ const CI_FLAG_SPEC: FlagSpec = {
     '--workflow': 'a workflow name, e.g. --workflow "CI" (repeatable)',
     '--timeout': 'a duration, e.g. --timeout 5m (30s, 5m, 1h)',
     '--settle': 'a duration, e.g. --settle 20s',
+    '--name': 'a name like <who>.<what>, e.g. --name w-agent-wake.ab12cd34',
   },
 };
 
@@ -19,6 +21,8 @@ export interface CiWaitArgs {
   workflows: string[];
   timeout?: string;
   settle?: string;
+  /** `--name <who>.<what>`: how this wait is listed and counted by `queue push`. */
+  name?: string;
   json: boolean;
   noInfer: boolean;
 }
@@ -44,6 +48,13 @@ export function parseCiWaitArgs(args: readonly string[]): CiWaitArgs | { ok: fal
   const repo = single('--repo');
   const timeout = single('--timeout');
   const settle = single('--settle');
+  const name = single('--name');
+  if (name !== undefined) {
+    const nameProblem = waiterNameProblem(name);
+    if (nameProblem !== undefined) {
+      return { ok: false, message: nameProblem };
+    }
+  }
   return {
     ok: true,
     ...(sha !== undefined && { sha }),
@@ -51,6 +62,7 @@ export function parseCiWaitArgs(args: readonly string[]): CiWaitArgs | { ok: fal
     workflows: scan.values.get('--workflow') ?? [],
     ...(timeout !== undefined && { timeout }),
     ...(settle !== undefined && { settle }),
+    ...(name !== undefined && { name }),
     json: scan.switches.has('--json'),
     noInfer: scan.switches.has('--no-infer'),
   };

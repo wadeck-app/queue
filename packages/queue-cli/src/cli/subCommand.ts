@@ -19,6 +19,8 @@ export interface SubDeps {
   actions: () => ActionRegistry;
   /** `queue sub list` without --scope asks the daemon, which knows the project of the cwd and checks the actions. */
   listFromDaemon: (event: string | undefined) => Promise<SubscriberListResponse['subscribers']>;
+  /** The "Waiting now" section appended to the terminal form of `queue sub list` (the `queue wait` processes that are running), empty when nobody waits. */
+  waitingNow: (event: string | undefined) => string;
   help: string;
 }
 
@@ -176,6 +178,8 @@ async function listCommand(args: string[], scope: { scope: Scope; given: boolean
           deps.io.stdout.write(`[ok] ${sub.subscriberId}  ${sub.type}  ${subscriberTarget(sub) ?? '?'}\n`);
         }
       }
+      // The waits that are running (`queue wait`) are not subscribers, so not in the JSON array: the terminal form shows them
+      deps.io.stdout.write(deps.waitingNow(eventArg));
     } else {
       deps.io.stdout.write(JSON.stringify(subscribers, null, 2) + '\n');
     }

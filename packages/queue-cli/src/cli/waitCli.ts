@@ -2,21 +2,22 @@
 
 import { parseCiWaitArgs } from './ciWaitArgs.js';
 import { join as pathJoin } from 'node:path';
-import { EventMatcher, HistoryReader, getErrorMessage, isEventPattern } from '@wadeck-app/queue-core';
+import { EventMatcher, HistoryReader, getErrorMessage, isEventPattern, type HistoryEntry } from '@wadeck-app/queue-core';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
 import { CI_EXIT } from './ciWait.js';
 import { ciWaitCommand, parseGithubRepo, type CiWaitCommandOptions } from './ciWaitCommand.js';
 import { createGitPort, inspectRepository, type GitPort } from './ciGit.js';
-import { eventWaitCommand } from './eventWaitCommand.js';
+import { eventWaitCommand, type EventWaitTarget } from './eventWaitCommand.js';
+import { anonymousNameWarning, anonymousWaitName, ciOutcomeOf, defaultWaitSessionDeps, eventOutcomeOf, runRegisteredWait, type WaitSessionDeps } from './waitSession.js';
 import { RelayOnDemand, isRelayPattern, isRelaySourcedEvent, targetNeedsRelay } from './relayOnDemand.js';
 import { checkDeclaration, lastSeenAtOf, lastSeenEventOf, patternMatchesKnownEvent, patternWarning, refuseUndeclared, undeclaredWarning, type DeclarationCheck } from './eventWaitCatalog.js';
 import { parseEventWaitArgs, WAIT_DEFAULT_TIMEOUT } from './eventWaitArgs.js';
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
 Usage:
-  queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--json] [--strict]
-  queue wait ci [<sha>] [--repo <owner/name>] [--workflow <name>]... [--timeout <duration>] [--settle <duration>] [--no-infer] [--json]
+  queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--name <who>.<what>] [--json] [--strict]
+  queue wait ci [<sha>] [--repo <owner/name>] [--workflow <name>]... [--timeout <duration>] [--settle <duration>] [--name <who>.<what>] [--no-infer] [--json]
 
 queue wait <event>: blocks until a queue event of that name (or matching that pattern) is recorded (any "queue push" is, even with no subscriber).
   --when <expr>      Keep only events whose payload satisfies the expression, same syntax as a subscriber's when:
@@ -24,6 +25,10 @@ queue wait <event>: blocks until a queue event of that name (or matching that pa
   --since <d|time>   Count events recorded since then: a duration back from now (10m, 2h) or a time (2026-10-18T11:00:00Z).
                      Default: only events recorded after the command started
   --timeout <d>      Give up after this long (default 30m)
+  --name <who>.<what>  Who waits, for what: "queue push" says "1 waiting: <name>" instead of warning that nobody listens, and
+                     "queue waiters" lists it. Lower case, at least one dot, [a-z0-9][a-z0-9._-]*, at most 64 characters, e.g.
+                     w-agent-wake.ab12cd34. Each concurrent wait needs its own name (a second live wait with the same name exits 4):
+                     put the awaited thing in it. Without --name the wait is called anon.<pid> and warns once; a name will become mandatory
   --all              With several events: wait until every one has happened. Default (--any): the first one ends the wait
   --json             Machine-readable result on stdout ({"matched":true,"entry":{...}} or {"matched":false,"timedOut":true,...}),
                      plus "declared" (is the name in the event catalog), "suggestions" (nearest declared names) and, on a
@@ -58,6 +63,7 @@ queue wait ci: blocks until the GitHub CI of a commit is done (events relayed as
                      seen for the commit is completed and nothing new happened for --settle
   --timeout <d>      Give up after this long (default 30m)
   --settle <d>       Quiet window before concluding with no --workflow (default 20s)
+  --name <who>.<what>  Same as for an event: how this wait is listed ("queue waiters") and counted by "queue push"
   --no-infer         Do not read git: no push check, no workflow inference
   --json             Machine-readable result on stdout
 
@@ -68,6 +74,9 @@ and the relay stops by itself 30s after the last such wait ended. A relay starte
 
 An agent that just pushed should run it in the background (run_in_background) and will be woken up on exit.
 It also answers at once when the CI finished before the command started.
+
+Every wait is listed while it runs and in the history of waits ("queue waiters --history"): who, for what, from when to when, and how it ended
+(matched, timeout, cancelled, refused, lost). See "queue waiters --help".
 
 Exit codes: 0 CI passed | 1 CI failed | 2 timeout | 3 no run seen / relay not running | 4 invalid usage (including an unknown option)
 `;
@@ -81,8 +90,8 @@ function fail(message: string): number {
 }
 
 /** `queue wait <event> ...`: any target other than "ci" is the name of a queue event (or of several). */
-async function eventWait(configDir: string, args: string[], startRelay: StartRelay): Promise<number> {
-  const parsed = parseEventWaitArgs(args, Date.now());
+async function eventWait(configDir: string, args: string[], startRelay: StartRelay, deps: QueueWaitDeps): Promise<number> {
+  const parsed = parseEventWaitArgs(args, (deps.now ?? Date.now)());
   if (!parsed.ok) {
     return fail(parsed.message);
   }
@@ -127,34 +136,65 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
   const what = options.targets.map((target) => (target.whens.length ? `${target.event} where ${target.whens.join(' and ')}` : target.event));
   const joined = options.targets.length > 1 ? `${options.mode === 'all' ? 'all of' : 'any of'}: ${what.join('; ')}` : what[0]!;
   process.stderr.write(`[info] waiting for ${joined} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
-  const reader = new HistoryReader(pathJoin(configDir, 'history'));
+  const reader = deps.historyReader ?? new HistoryReader(pathJoin(configDir, 'history'));
+  const now = deps.now ?? (() => Date.now());
 
-  // An event named on.<source>.<type> only arrives through the relay: make sure it runs while we wait for it
-  let beforeFirstWait: (() => Promise<void>) | undefined;
-  if (options.targets.some((target) => targetNeedsRelay(target.event))) {
-    const onDemand = relayOnDemandFor(configDir, startRelay);
-    onDemand.begin();
-    beforeFirstWait = async () => {
-      if (!(await onDemand.ensureRunning())) {
-        process.stderr.write('[warn] Waiting without the relay client: no event of that kind can arrive until it runs (see the message above).\n');
-      }
-    };
+  // The wait is listed (and `queue push` counts it) from here on, before the history is read: a push that races its start is not missed
+  const session = deps.session ?? defaultWaitSessionDeps(configDir);
+  const name = anonymousWaitName(options.name, deps.pid ?? process.pid);
+  if (options.name === undefined) {
+    process.stderr.write(anonymousNameWarning(name, 'queue wait <event>'));
   }
+  return runRegisteredWait({
+    deps: session,
+    outcomeOf: eventOutcomeOf,
+    input: {
+      name,
+      events: [...new Set(options.targets.map((target) => target.event))],
+      whens: registeredWhens(options.targets),
+      label: '',
+      since: new Date(options.sinceMs).toISOString(),
+      cwd: process.cwd(),
+    },
+    run: async (report) => {
+      // An event named on.<source>.<type> only arrives through the relay: make sure it runs while we wait for it
+      let beforeFirstWait: (() => Promise<void>) | undefined;
+      if (options.targets.some((target) => targetNeedsRelay(target.event))) {
+        const onDemand = relayOnDemandFor(configDir, startRelay);
+        onDemand.begin();
+        beforeFirstWait = async () => {
+          if (!(await onDemand.ensureRunning())) {
+            process.stderr.write('[warn] Waiting without the relay client: no event of that kind can arrive until it runs (see the message above).\n');
+          }
+        };
+      }
 
-  return eventWaitCommand(options, {
-    // A pattern reads the whole window once and filters by name (the reader only filters on an exact name); orphan records have no name
-    readEntries: (event, sinceMs) =>
-      isEventPattern(event)
-        ? reader.read({ sinceMs }).filter((entry) => entry.event !== ORPHAN_EVENT_NAME && EventMatcher.matches(event, entry.event))
-        : reader.read({ event, sinceMs }),
-    now: () => Date.now(),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    io: { stdout: process.stdout, stderr: process.stderr },
-    beforeFirstWait,
-    declaration: Object.fromEntries(Object.entries(declarations).map(([event, check]) => [event, { declared: check.declared, suggestions: check.suggestions }])),
-    lastSeenAt: (event) => lastSeenAtOf(configDir, event, Date.now()),
-    lastSeenEvent: (pattern) => lastSeenEventOf(configDir, pattern, Date.now()),
+      return eventWaitCommand(options, {
+        // A pattern reads the whole window once and filters by name (the reader only filters on an exact name); orphan records have no name
+        readEntries: (event, sinceMs) =>
+          isEventPattern(event)
+            ? reader.read({ sinceMs }).filter((entry) => entry.event !== ORPHAN_EVENT_NAME && EventMatcher.matches(event, entry.event))
+            : reader.read({ event, sinceMs }),
+        now,
+        sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+        io: { stdout: process.stdout, stderr: process.stderr },
+        beforeFirstWait,
+        onMatched: (entry) => { report.matched({ eventId: entry.eventId, event: entry.event }); },
+        declaration: Object.fromEntries(Object.entries(declarations).map(([event, check]) => [event, { declared: check.declared, suggestions: check.suggestions }])),
+        lastSeenAt: (event) => lastSeenAtOf(configDir, event, Date.now()),
+        lastSeenEvent: (pattern) => lastSeenEventOf(configDir, pattern, Date.now()),
+      });
+    },
   });
+}
+
+/**
+ * The `--when` filters the wait registers (the daemon counts it for a push only when they hold). One filter list for the whole wait: the targets' lists when they are all the same,
+ * none otherwise (a wait with different filters per event is counted for more pushes than needed, never for fewer).
+ */
+export function registeredWhens(targets: readonly EventWaitTarget[]): string[] {
+  const first = targets[0]?.whens ?? [];
+  return targets.every((target) => target.whens.length === first.length && target.whens.every((when, i) => when === first[i])) ? [...first] : [];
 }
 
 /** What a wait that needs the relay uses to start it: `queue relay start`, returning its exit code. */
@@ -173,6 +213,14 @@ function relayOnDemandFor(configDir: string, startRelay: StartRelay): RelayOnDem
 export interface QueueWaitDeps {
   /** The git the CI wait looks at; tests pass a fake, the CLI uses the real one. */
   git?: GitPort;
+  /** How the wait registers itself (registry, heartbeat timer, signals, exit); tests pass fakes. Default: the real ones for `configDir`. */
+  session?: WaitSessionDeps;
+  /** The history the event wait reads; default: the one under `configDir`. */
+  historyReader?: { read: (options: { event?: string; sinceMs: number }) => HistoryEntry[] };
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  /** The pid an unnamed wait is called after (`anon.<pid>`). */
+  pid?: number;
 }
 
 export async function queueWaitCommand(configDir: string, args: string[], startRelay: StartRelay, deps: QueueWaitDeps = {}): Promise<number> {
@@ -183,7 +231,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     return target ? CI_EXIT.PASSED : CI_EXIT.USAGE;
   }
   if (target !== 'ci') {
-    return eventWait(configDir, args, startRelay);
+    return eventWait(configDir, args, startRelay, deps);
   }
 
   const rest = args.slice(1);
@@ -253,33 +301,51 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     json: parsedArgs.json,
   };
 
-  const reader = new HistoryReader(pathJoin(configDir, 'history'));
+  const reader = deps.historyReader ?? new HistoryReader(pathJoin(configDir, 'history'));
   const relay = createRelayClient(configDir);
-  const onDemand = relayOnDemandFor(configDir, startRelay);
-  onDemand.begin();
+  const now = deps.now ?? (() => Date.now());
+  const name = anonymousWaitName(parsedArgs.name, deps.pid ?? process.pid);
+  if (parsedArgs.name === undefined) {
+    process.stderr.write(anonymousNameWarning(name, 'queue wait ci'));
+  }
 
-  return ciWaitCommand(options, {
-    readEntries: (sinceMs) => reader.read({ event: 'on.github.workflow_run', sinceMs }),
-    // Called only when the history holds nothing for this commit yet: a CI that already finished never starts the relay
-    relayStatus: async () => {
-      const wasRunning = await relay.isRunning().catch(() => false);
-      if (!wasRunning && !(await onDemand.ensureRunning())) {
-        return { running: false, connected: false };
-      }
-      const readStatus = async (): Promise<boolean> => {
-        const status = await relay.send('status', undefined).catch(() => null);
-        return Boolean(status && (status as { connected?: boolean }).connected);
-      };
-      let connected = await readStatus();
-      // Just started: give it a moment to connect before saying it is not connected
-      for (let attempt = 0; !wasRunning && !connected && attempt < 20; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        connected = await readStatus();
-      }
-      return { running: true, connected };
+  // Listed before anything is read or started, like an event wait. The relay delivers the workflow runs of every repository under one name:
+  // the sha in the label says which commit this wait is for
+  return runRegisteredWait({
+    deps: deps.session ?? defaultWaitSessionDeps(configDir),
+    outcomeOf: ciOutcomeOf,
+    input: { name, events: [CI_EVENT], whens: [], label: sha, since: new Date(now() - options.lookbackMs).toISOString(), cwd: process.cwd() },
+    run: async () => {
+      const onDemand = relayOnDemandFor(configDir, startRelay);
+      onDemand.begin();
+
+      return ciWaitCommand(options, {
+        readEntries: (sinceMs) => reader.read({ event: CI_EVENT, sinceMs }),
+        // Called only when the history holds nothing for this commit yet: a CI that already finished never starts the relay
+        relayStatus: async () => {
+          const wasRunning = await relay.isRunning().catch(() => false);
+          if (!wasRunning && !(await onDemand.ensureRunning())) {
+            return { running: false, connected: false };
+          }
+          const readStatus = async (): Promise<boolean> => {
+            const status = await relay.send('status', undefined).catch(() => null);
+            return Boolean(status && (status as { connected?: boolean }).connected);
+          };
+          let connected = await readStatus();
+          // Just started: give it a moment to connect before saying it is not connected
+          for (let attempt = 0; !wasRunning && !connected && attempt < 20; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            connected = await readStatus();
+          }
+          return { running: true, connected };
+        },
+        now,
+        sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+        io: { stdout: process.stdout, stderr: process.stderr },
+      });
     },
-    now: () => Date.now(),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    io: { stdout: process.stdout, stderr: process.stderr },
   });
 }
+
+/** The event the relay turns a GitHub workflow run into. */
+const CI_EVENT = 'on.github.workflow_run';

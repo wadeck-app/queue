@@ -19,6 +19,7 @@ import { daemonStop } from './daemonStop.js';
 import { exitCodesHelp } from './exitCodes.js';
 import { pinRelay } from '@wadeck-app/queue-relay-client/dist/onDemand.js';
 import { queueWaitCommand, WAIT_HELP } from './waitCli.js';
+import { waitersCommand, waitingNowSection, WAITERS_HELP } from './waitersCli.js';
 import { eventsCommand, EVENTS_HELP } from './eventsCli.js';
 import { DaemonCommandNotFoundError } from '@wadeck-app/singleton-daemon-kit';
 import { relayStart } from './relayStart.js';
@@ -160,11 +161,12 @@ Usage:
   queue retry --event <id>
   queue replay <eventId> [--cwd <directory>]   Resubmit a past event's payload (from 'queue history') as a new event,
                              tagged replayOf <eventId>, run in the directory recorded with it (--cwd names another). For manual testing, not delivery guarantees.
-  queue wait <event|"pattern"> [--when <expr>] [--since <d>] [--timeout <d>] [--json] [--strict]   Block until a matching queue event is recorded; quote a pattern like "dep.>" (see 'queue wait --help')
+  queue wait <event|"pattern"> [--when <expr>] [--since <d>] [--timeout <d>] [--name <who>.<what>] [--json] [--strict]   Block until a matching queue event is recorded; quote a pattern like "dep.>" (see 'queue wait --help')
   queue events list [--source <s>] [--prefix <p>] [--match <pattern>] [--declared-only] [--terminal] [--json]   Event catalog: names, payloads, last seen
   queue events show <name> [--json]   Schema, example, payload paths for 'queue wait --when' and a ready command
   queue events register --source <s> --file <events.json> [--json]   Declare the events of a program that does not use the Node SDK
-  queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--json]   Block until the GitHub CI of a commit is done
+  queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--name <who>.<what>] [--json]   Block until the GitHub CI of a commit is done
+  queue waiters [--history] [--since <duration>] [--name <glob>] [--outcome <outcome>] [--limit <N>] [--json]   Who is waiting right now (every queue wait is listed, and counted by queue push); --history: who waited, for what, from when to when, how it ended (see 'queue waiters --help')
   queue status [--project <name|alias|id>] [--json]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
   queue list-subscribers [event] [--json]
   queue dlq list [--project <name|alias|id>]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
@@ -250,6 +252,8 @@ export function commandHelp(command: string, rest: readonly string[]): string | 
       return SUB_GROUP_HELP;
     case 'wait':
       return WAIT_HELP;
+    case 'waiters':
+      return WAITERS_HELP;
     case 'events':
       return EVENTS_HELP;
     default:
@@ -1224,6 +1228,8 @@ async function main(): Promise<void> {
           process.stdout.write(`[ok] ${sub.subscriberId}  ${sub.type}  ${subscriberTarget(sub) ?? '?'}\n`);
         }
       }
+      // The waits that are running (`queue wait`) are not subscribers, so not in the JSON array: the terminal form shows them
+      process.stdout.write(waitingNowSection(configDir, event, process.stderr));
     } else {
       process.stdout.write(JSON.stringify(response.subscribers, null, 2) + '\n');
     }
@@ -1390,6 +1396,10 @@ async function main(): Promise<void> {
     process.exit(await queueWaitCommand(configDir, rest, () => startRelayFromCli(configDir)));
   }
 
+  if (command === 'waiters') {
+    process.exit(await waitersCommand(rest, { configDir, io: { stdout: process.stdout, stderr: process.stderr } }));
+  }
+
   // Domain concept (audit trail), not CLI tooling -- top-level only, no `queue cli history`.
   if (command === 'history') {
     await queueHistoryCommand(configDir, rest);
@@ -1513,6 +1523,7 @@ async function main(): Promise<void> {
         const response = await createQueueClient(configDir).send('list-subscribers', { event, cwd: process.cwd() });
         return response.subscribers;
       },
+      waitingNow: (event) => waitingNowSection(configDir, event, process.stderr),
       help: SUB_GROUP_HELP,
     });
     if (code !== 0) {

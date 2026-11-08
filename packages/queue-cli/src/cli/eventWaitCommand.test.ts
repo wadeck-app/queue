@@ -262,3 +262,27 @@ describe('eventWaitCommand: several events at once', () => {
     expect(text).toContain('"onTaskFailed" was never seen');
   });
 });
+
+describe('eventWaitCommand: onMatched (what the waiters history records)', () => {
+  it('any: reports the oldest entry that ended the wait, once', async () => {
+    const h = harness(() => [entry({ event: 'onB' }, T0 + 3000), entry({ event: 'onA' }, T0 + 2000)]);
+    const matched: HistoryEntry[] = [];
+    const code = await eventWaitCommand({ ...base, targets: [{ event: 'onA', whens: [] }, { event: 'onB', whens: [] }] }, { ...h.deps, onMatched: (e) => { matched.push(e); } });
+    expect(code).toBe(WAIT_EXIT.MATCHED);
+    expect(matched.map((e) => e.event)).toEqual(['onA']);
+  });
+
+  it('all: reports the entry that completed the wait (the newest of the matches)', async () => {
+    const h = harness(() => [entry({ event: 'onA' }, T0 + 2000), entry({ event: 'onB' }, T0 + 5000)]);
+    const matched: HistoryEntry[] = [];
+    await eventWaitCommand({ ...base, mode: 'all', targets: [{ event: 'onA', whens: [] }, { event: 'onB', whens: [] }] }, { ...h.deps, onMatched: (e) => { matched.push(e); } });
+    expect(matched.map((e) => e.event)).toEqual(['onB']);
+  });
+
+  it('is not called on a timeout', async () => {
+    const h = harness(() => []);
+    const onMatched = vi.fn();
+    expect(await eventWaitCommand({ ...base, timeoutMs: 1000 }, { ...h.deps, onMatched })).toBe(WAIT_EXIT.TIMEOUT);
+    expect(onMatched).not.toHaveBeenCalled();
+  });
+});

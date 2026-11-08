@@ -9,7 +9,7 @@ import { RELAY_WEBHOOK_HELP, commandHelp, usageText } from './QueueIndex.js';
 
 const EXPECTED_KEYS = [
   'push', 'retry', 'replay', 'status', 'list-subscribers', 'dlq list', 'dlq replay', 'dlq clear', 'start', 'stop', 'relay start', 'relay stop', 'relay status',
-  'relay webhook list', 'relay webhook history', 'logs', 'cli logs', 'cli version', 'cli self-check', 'history',
+  'relay webhook list', 'relay webhook history', 'logs', 'cli logs', 'cli version', 'cli self-check', 'history', 'waiters',
 ];
 
 /** The words of a key as typed after `queue` (`relay webhook history` -> command `relay`, rest `webhook history`). */

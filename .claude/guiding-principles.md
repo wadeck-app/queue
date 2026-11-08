@@ -53,6 +53,10 @@ Nothing starts the relay at logon. `queue relay start` runs it until `queue rela
 - A relay started by hand has no marker and is never stopped by this logic. `queue relay start` on an on-demand relay removes the marker (pins it); `queue relay stop` removes it too.
 - The remote relay does not replay missed events to a client that connects (by design; observed: no event pushed on connect). A wait only sees events that arrive while the relay is connected; the remote keeps its own history (`queue relay webhook history`, a dedicated endpoint).
 
+## A wait is listed before it reads, and only its owner removes its record
+
+`queue wait` registers (`waiters/waiter-<name>.json`, a random `id`, under `FileLock`) before the first history read, heartbeats every 15 s (live = process alive AND heartbeat under 60 s) and ends with an `end` record on every exit the process controls (`WaiterRegistry`, `waitSession.ts`). A file is deleted only when its `id` is ours; a wait that cannot write the folder is not started unlisted; a heartbeat or deregister error is said once, never fatal. A killed wait is `lost`, written once by the next sweep. `--name` is optional in this release (`anon.<pid>` + one warning); making it mandatory is a separate release. The count for `queue push` is by event name and filters only (not by project or commit).
+
 ## Package barrels are the public API, and are kept
 
 `queue-core`, `queue-relay-client` and `plugin-github` each expose one `src/index.ts` (package.json `main`/`types`). It is the list of what may cross a package boundary; removing it would open `dist/...` internals to every consumer. The `ts/no-barrel-index` rule is suppressed on those three files with a stated reason. Add an export there only for a symbol another package really consumes.

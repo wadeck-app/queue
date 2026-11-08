@@ -41,6 +41,7 @@ async function run(args: string[], overrides: Partial<SubDeps> = {}): Promise<Ru
     isTTY: false,
     actions: () => createActionRegistry(),
     listFromDaemon: () => Promise.reject(new Error('the daemon must not be asked in this test')),
+    waitingNow: () => '',
     help: 'HELP\n',
     ...overrides,
   };
@@ -431,5 +432,32 @@ describe('queue sub add with an event name that cannot be a key', () => {
     expect(result.err).not.toContain('"code"');
     expect(result.err).not.toContain('ZodError');
     expect(existsSync(file)).toBe(false);
+  });
+});
+
+describe('queue sub list: the waits that are running', () => {
+  const daemonList = (): Promise<never> => Promise.resolve([{ subscriberId: 'fine', name: 'fine', event: 'ev', type: 'cli', command: 'echo' }] as never);
+  const waitingNow = (event: string | undefined): string => `\nWaiting now (1):\n  a.b ${event ?? '*'}\n`;
+
+  it('on a terminal, after the subscribers, from the section the CLI gives', async () => {
+    const asked: Array<string | undefined> = [];
+    const text = await run(['list', 'ev'], { isTTY: true, listFromDaemon: daemonList, waitingNow: (event) => { asked.push(event); return waitingNow(event); } });
+    expect(text.out).toBe('[ok] fine  cli  echo\n\nWaiting now (1):\n  a.b ev\n');
+    expect(asked).toEqual(['ev']);
+  });
+
+  it('--json stays the bare array, and a pipe too', async () => {
+    const waitingNowShouldNotRun = (): string => { throw new Error('the section is for the terminal form only'); };
+    const json = await run(['list', '--json'], { isTTY: true, listFromDaemon: daemonList, waitingNow: waitingNowShouldNotRun });
+    expect(JSON.parse(json.out)).toEqual([{ subscriberId: 'fine', name: 'fine', event: 'ev', type: 'cli', command: 'echo' }]);
+    const piped = await run(['list'], { isTTY: false, listFromDaemon: daemonList, waitingNow: waitingNowShouldNotRun });
+    expect(JSON.parse(piped.out)).toHaveLength(1);
+  });
+
+  it('--scope lists a file, not the running queue: no section', async () => {
+    writeFileSync(file, lines('subscribers:', '  ev:', '    - type: cli', '      name: fine', '      command: echo'));
+    const text = await run(['list', '--scope', 'global'], { isTTY: true, waitingNow: () => { throw new Error('no section for --scope'); } });
+    expect(text.code).toBe(0);
+    expect(text.out).not.toContain('Waiting now');
   });
 });

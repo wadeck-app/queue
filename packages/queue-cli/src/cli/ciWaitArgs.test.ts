@@ -73,3 +73,23 @@ describe('parseCiWaitArgs: an unknown option is a usage error', () => {
     expect(message(['abc1234', '--jsno'])).toContain("did you mean '--json'?");
   });
 });
+
+describe('parseCiWaitArgs: --name', () => {
+  it('is carried when valid and absent otherwise', () => {
+    expect(parseCiWaitArgs(['abc1234', '--name', 'w-agent-wake.ci-abc1234'])).toMatchObject({ ok: true, name: 'w-agent-wake.ci-abc1234' });
+    const without = parseCiWaitArgs(['abc1234']);
+    expect(without.ok && 'name' in without).toBe(false);
+  });
+
+  it('refuses an invalid name with the rule and an example', () => {
+    const text = message(['--name', 'nodot']);
+    expect(text).toContain('must look like <who>.<what>');
+    expect(text).toContain('e.g. w-agent-wake.ab12cd34');
+  });
+
+  it('refuses a missing value, a repeat and the --name=x form', () => {
+    expect(message(['--name'])).toContain('--name');
+    expect(message(['--name', 'a.b', '--name', 'c.d'])).toContain('--name');
+    expect(message(['--name=a.b'])).toContain('--name a.b');
+  });
+});
