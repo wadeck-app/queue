@@ -51,6 +51,28 @@ describe('parsePushAnswer', () => {
     const parsed = parsePushAnswer({ ok: true, result: { status: 'queued', eventId: 5, reason: {}, subscriberCount: 'x' } });
     expect(parsed).toEqual({ ok: true, response: { status: 'queued' } });
   });
+
+  // Push protocol 1.7.0: who was waiting for the event when it was pushed
+  it('keeps waiterCount and the names of the waiters', () => {
+    const parsed = parsePushAnswer({ ok: true, result: { status: 'queued', subscriberCount: 0, waiterCount: 2, waiters: ['a.b', 'c.d'] } });
+    expect(parsed).toEqual({ ok: true, response: { status: 'queued', subscriberCount: 0, waiterCount: 2, waiters: ['a.b', 'c.d'] } });
+  });
+
+  it('keeps waiterCount 0 and an empty waiters list: "nobody waits" is an answer, not an absence', () => {
+    const parsed = parsePushAnswer({ ok: true, result: { status: 'dispatched', waiterCount: 0, waiters: [] } });
+    expect(parsed).toEqual({ ok: true, response: { status: 'dispatched', waiterCount: 0, waiters: [] } });
+  });
+
+  it('drops waiterCount and waiters of the wrong type, and the non-string names of the list', () => {
+    expect(parsePushAnswer({ ok: true, result: { status: 'queued', waiterCount: '2', waiters: 'a.b' } })).toEqual({ ok: true, response: { status: 'queued' } });
+    expect(parsePushAnswer({ ok: true, result: { status: 'queued', waiters: ['a.b', 3, null] } })).toEqual({ ok: true, response: { status: 'queued', waiters: ['a.b'] } });
+  });
+
+  it('an answer of a daemon older than 1.7.0 has neither field', () => {
+    const parsed = parsePushAnswer({ ok: true, result: { status: 'queued', subscriberCount: 0, eventId: 'e1' } });
+    expect(parsed).toEqual({ ok: true, response: { status: 'queued', subscriberCount: 0, eventId: 'e1' } });
+    expect(parsed.ok && 'waiterCount' in parsed.response).toBe(false);
+  });
 });
 
 describe('toPublishResult', () => {

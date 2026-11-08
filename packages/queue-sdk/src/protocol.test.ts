@@ -16,12 +16,14 @@ import {
   RESERVED_EVENT_PREFIX,
   RESERVED_NAMESPACE_MIN_VERSION,
   isReservedEventName,
+  WAITERS_MIN_VERSION,
+  daemonReportsWaiters,
 } from './protocol.js';
 import { satisfies } from './semver.js';
 
 describe('protocol constants', () => {
   it('start at 1.1.0 and are consistent with each other', () => {
-    expect(PROTOCOL_VERSION).toBe('1.6.0');
+    expect(PROTOCOL_VERSION).toBe('1.7.0');
     expect(satisfies(PROTOCOL_VERSION, DAEMON_ACCEPTS)).toBe(true);
     expect(satisfies(PROTOCOL_VERSION, SDK_UNDERSTANDS)).toBe(true);
   });
@@ -151,6 +153,21 @@ describe('daemonSupportsPushDirection (a direction needs protocol 1.4.0)', () =>
     ['1.10.0', true],
   ])('a daemon speaking %s -> %s', (version, expected) => {
     expect(daemonSupportsPushDirection(version)).toBe(expected);
+  });
+});
+
+describe('daemonReportsWaiters (waiterCount and waiters in the push answer need protocol 1.7.0)', () => {
+  it('the constant is 1.7.0', () => {
+    expect(WAITERS_MIN_VERSION).toBe('1.7.0');
+  });
+
+  it.each([
+    ['1.6.0', false],
+    ['1.6.9', false],
+    ['1.7.0', true],
+    ['1.10.0', true],
+  ])('a daemon speaking %s -> %s', (version, expected) => {
+    expect(daemonReportsWaiters(version)).toBe(expected);
   });
 });
 

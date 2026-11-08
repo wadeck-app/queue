@@ -68,3 +68,19 @@ export { canResolveRef, RefResolver, EventRefError } from './dispatch/refResolve
 export type { RefLookup, ResolvedEvent } from './dispatch/refResolver.js';
 export { DLQ_ADDED_EVENT, DLQ_REMOVED_EVENT, MAX_DLQ_EVENT_ERROR_CHARS, DLQ_EVENT_DECLARATIONS, buildDlqAddedEvent, buildDlqRemovedEvent, isDlqEventExcluded } from './dlqEvents.js';
 export type { DlqAddedReason, DlqRemovedReason, DlqAddedInfo, BuiltDlqEvent } from './dlqEvents.js';
+// Waiters: the `queue wait` processes that are waiting right now (files under waiters/), the waits history (waiters/history/) and the match rule they share with the daemon
+export { toEnvelope, findMatch, whensHold, waiterCountsFor } from './waiters/WaiterMatch.js';
+export type { EnvelopeSource } from './waiters/WaiterMatch.js';
+export { waiterNameProblem, isValidWaiterName, waiterFileName, waiterNameOfFile, WAITER_NAME_FORMAT } from './waiters/waiterName.js';
+export { WAITER_RECORD_VERSION, WAITER_LIMITS, parseWaiterRecord, validateWaiterInput } from './waiters/WaiterRecord.js';
+export type { WaiterRecord, WaiterContact, WaiterInput, ParsedWaiterRecord } from './waiters/WaiterRecord.js';
+export { WaiterRegistry, WaiterInputError, WaiterNameTakenError } from './waiters/WaiterRegistry.js';
+export type { WaiterRegistration, WaiterRegistryDeps, WaiterTakeover, WaiterEnd, HeartbeatResult, SweepReport } from './waiters/WaiterRegistry.js';
+export { listLiveWaiters, WaiterScanCache, MAX_WAITER_FILES, WAITER_SCAN_TIME_BOX_MS } from './waiters/WaiterScan.js';
+export type { LiveWaiter, WaiterScan, WaiterScanOptions } from './waiters/WaiterScan.js';
+export { WAITER_TTL_MS, WAITER_HEARTBEAT_MS, isWaiterLive } from './waiters/WaiterLiveness.js';
+export { WaiterHistoryLog, waitersDir, waiterHistoryDir, WAITER_OUTCOMES } from './waiters/WaiterHistory.js';
+export type { WaiterOutcome, WaiterEndRecord, WaiterStartRecord } from './waiters/WaiterHistory.js';
+export { readWaiterHistory, DEFAULT_WAITER_HISTORY_LIMIT } from './waiters/WaiterHistoryReader.js';
+export type { WaitRow, WaitRowOutcome, ReadWaiterHistoryOptions, WaiterHistoryRead } from './waiters/WaiterHistoryReader.js';
+export { describeWaiting } from './waiters/waitingText.js';

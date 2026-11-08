@@ -13,7 +13,7 @@ import { createQueueService } from './QueueService.js';
 interface ContractCase {
   name: string;
   request: Record<string, unknown>;
-  response: { status: string; supported?: string; eventId: 'present' | 'absent' };
+  response: { status: string; supported?: string; eventId: 'present' | 'absent'; waiterCount?: number; waiters?: string[] };
 }
 
 const fixture = join(dirname(fileURLToPath(import.meta.url)), '../../../queue-sdk/contract/protocol-1.json');
@@ -55,5 +55,8 @@ describe('push protocol 1.x contract (recorded)', () => {
     expect(answer.status).toBe(contractCase.response.status);
     expect(answer.supported).toBe(contractCase.response.supported);
     expect(answer.eventId !== undefined ? 'present' : 'absent').toBe(contractCase.response.eventId);
+    // 1.7.0: the fields are asserted where the case records them (the fixture never claims them for a refusal)
+    expect(answer.waiterCount).toBe(contractCase.response.waiterCount);
+    expect(answer.waiters).toEqual(contractCase.response.waiters);
   });
 });

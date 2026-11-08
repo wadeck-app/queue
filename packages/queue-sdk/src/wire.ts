@@ -26,6 +26,10 @@ export interface PushResponse {
   result?: unknown;
   reason?: string;
   subscriberCount?: number;
+  /** Since 1.7.0, on `queued` and `dispatched`: the `queue wait` processes waiting for the event when it was pushed. Absent from an older daemon (and when the daemon could not look). */
+  waiterCount?: number;
+  /** Since 1.7.0: the names of those waiters (at most 20; `waiterCount` is the real number). */
+  waiters?: string[];
   eventId?: string;
   /** For `rejected`: the range of client protocol versions the daemon accepts. */
   supported?: string;
@@ -78,6 +82,12 @@ export function parsePushAnswer(body: unknown): ParsedAnswer {
   }
   if (typeof result['subscriberCount'] === 'number') {
     response.subscriberCount = result['subscriberCount'];
+  }
+  if (typeof result['waiterCount'] === 'number') {
+    response.waiterCount = result['waiterCount'];
+  }
+  if (Array.isArray(result['waiters'])) {
+    response.waiters = result['waiters'].filter((name): name is string => typeof name === 'string');
   }
   if (typeof result['eventId'] === 'string') {
     response.eventId = result['eventId'];

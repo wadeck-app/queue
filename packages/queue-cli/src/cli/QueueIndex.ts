@@ -30,7 +30,7 @@ import { FOLLOW_POLL_INTERVAL_MS } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { HistoryFormatter } from './HistoryFormatter.js';
 import { getErrorMessage, getQueueConfigDir, PROTOCOL_VERSION, HistoryReader, readQueueCounts, DEFAULT_HISTORY_LIMIT, spawnDetachedProcess, LogFormatter, readLogTail, describeHistoryLimits, replayReservedProblem, InvalidPortEnvError, QUEUE_DAEMON_PORT_ENV, QUEUE_RELAY_PORT_ENV, assertPortEnvValid, readPortEnv } from '@wadeck-app/queue-core';
 import { spawnDaemon, getDaemonScriptPath } from './spawnDaemon.js';
-import { pushFailure } from './pushOutcome.js';
+import { pushFailure, pushMessage } from './pushOutcome.js';
 import { isReleaseVersion, devBuildRefusalMessage } from '@wadeck-app/shared-cli/ReleaseVersion';
 import { runSubCommand } from './subCommand.js';
 import { readFlagValue } from './flagScan.js';
@@ -1037,12 +1037,8 @@ async function main(): Promise<void> {
     if (event.startsWith('before')) {
       process.stdout.write(JSON.stringify(response.result ?? null) + '\n');
     } else {
-      const count = response.subscriberCount ?? 0;
-      if (count === 0) {
-        process.stderr.write(`[warn] queued - no subscribers for '${event}'\n`);
-      } else {
-        process.stdout.write(`[ok] queued (${count} subscriber${count !== 1 ? 's' : ''})\n`);
-      }
+      const message = pushMessage(event, response);
+      (message.stream === 'stderr' ? process.stderr : process.stdout).write(message.text);
     }
 
     return;

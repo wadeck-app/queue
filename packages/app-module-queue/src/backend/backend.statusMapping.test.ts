@@ -93,6 +93,39 @@ describe.each(PUSH_ROUTES)('%s: a refused push is not a success', (route, req, m
     expect(body).toMatchObject({ status: 'queued', eventId: 'e1', subscriberCount: 0 });
   });
 
+  // Protocol 1.7.0: the daemon says who was waiting (`queue wait`). A push nobody subscribes to but someone waits for is not "nothing will run".
+  it('queued with no subscriber and nobody waiting: the message says so too', async () => {
+    mock.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 0, waiterCount: 0, waiters: [] });
+    const { status, body } = await call(route, req);
+    expect(status).toBe(200);
+    expect(body['message']).toContain('queued, but no subscriber matches this event and no one is waiting for it');
+    expect(body['message']).toContain('nothing will run');
+    expect(body).toMatchObject({ waiterCount: 0, waiters: [] });
+  });
+
+  it('queued with no subscriber and waiters: 200, the message names them and does not claim that nothing will run', async () => {
+    mock.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 0, waiterCount: 2, waiters: ['a.b', 'c.d'] });
+    const { status, body } = await call(route, req);
+    expect(status).toBe(200);
+    const message = String(body['message']);
+    expect(message).toContain('no subscriber matches this event, but 2 waiting: a.b, c.d');
+    expect(message).not.toContain('nothing will run');
+    expect(body).toMatchObject({ status: 'queued', eventId: 'e1', subscriberCount: 0, waiterCount: 2, waiters: ['a.b', 'c.d'] });
+  });
+
+  it('more than three waiters: three names and how many more', async () => {
+    mock.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 0, waiterCount: 25, waiters: Array.from({ length: 20 }, (_, i) => `w.n${i}`) });
+    const { body } = await call(route, req);
+    expect(String(body['message'])).toContain('25 waiting: w.n0, w.n1, w.n2 ... +22 more');
+  });
+
+  it('queued with subscribers and waiters: no warning (the existing message, if any, is the working directory)', async () => {
+    mock.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 1, waiterCount: 1, waiters: ['a.b'] });
+    const { status, body } = await call(route, req);
+    expect(status).toBe(200);
+    expect(String(body['message'] ?? '')).not.toMatch(/no subscriber/);
+  });
+
   it('queued with subscribers: 200, the daemon answer unchanged; a push (not a replay) adds a message that only says the working directory it used', async () => {
     mock.mockResolvedValue({ status: 'queued', eventId: 'e1', subscriberCount: 2 });
     const { status, body } = await call(route, req);

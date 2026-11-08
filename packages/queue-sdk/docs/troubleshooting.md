@@ -27,7 +27,7 @@ The publisher was created with `off: true`, or the environment variable `QUEUE_S
 
 ## Events reach the queue but nothing runs
 
-The push succeeded (`queued`) with `subscriberCount` 0: no subscriber matches the event name for this `cwd`. Names match by pattern (`*` one segment, `>` the rest; a `**` key in `subscribers.yml` is refused, use `>`). Check `queue sub list <event>` run from the same directory, and `queue history` for the "no subscribers configured" line.
+The push succeeded (`queued`) with `subscriberCount` 0: no subscriber matches the event name for this `cwd`. Since protocol 1.7.0 the answer also carries `waiterCount` (and `waiters`, their names): a `queue wait` that is waiting for the event sees it in the history, so with `waiterCount` above 0 the event is not lost; with 0 (or the fields absent, an older daemon) nobody consumes it. Names match by pattern (`*` one segment, `>` the rest; a `**` key in `subscribers.yml` is refused, use `>`). Check `queue sub list <event>` run from the same directory, and `queue history` for the "no subscribers configured" line.
 
 ## Seeing what the SDK does
 

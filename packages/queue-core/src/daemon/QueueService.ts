@@ -32,6 +32,10 @@ import {
   type BuiltDlqEvent, type DlqAddedInfo, type DlqRemovedReason,
 } from '../dlqEvents.js';
 import { validateSourceDeclaration, writeSourceDeclaration } from '../catalog/EventCatalog.js';
+import { listLiveWaiters, WaiterScanCache, type WaiterScan, type WaiterScanOptions } from '../waiters/WaiterScan.js';
+import { WaiterRegistry } from '../waiters/WaiterRegistry.js';
+import { waitersDir } from '../waiters/WaiterHistory.js';
+import { toEnvelope } from '../waiters/WaiterMatch.js';
 import type {
   QueueCommands, RegisterEventsRequest, RegisterEventsResponse, PushRequest, PushResponse, RetryRequest, RetryResponse, StatusResponse,
   ListSubscribersRequest, SubscriberListResponse, DlqListResponse, DlqReplayRequest, DlqReplayResponse,
@@ -51,7 +55,17 @@ export interface QueueServiceOptions {
    * The subscribers.yml is checked strictly against it: an unknown action fails that subscriber alone, for good.
    */
   actions?: ActionRegistry;
+  /** How the waiters of a push are looked up (the `queue wait` files). The defaults are the real clock, process table and file system; tests replace them. */
+  waiters?: QueueServiceWaiterOptions;
 }
+
+export interface QueueServiceWaiterOptions extends Pick<WaiterScanOptions, 'now' | 'isAlive' | 'fs' | 'clock' | 'maxFiles' | 'timeBoxMs' | 'ttlMs'> {
+  /** Replaces the scan of the waiter files. */
+  scan?: (configDir: string, options: WaiterScanOptions) => WaiterScan;
+}
+
+/** The answer of a push names this many waiters at most (`waiterCount` is the real number). */
+export const MAX_REPORTED_WAITERS = 20;
 
 /** Largest payload an action may emit, serialized as JSON, in bytes. */
 export const MAX_EMITTED_PAYLOAD_BYTES = 64 * 1024;
@@ -91,6 +105,8 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
   // True when a DLQ row may be waiting for its queue.dlq.added event (a mark `pending`): the daemon looks at its start and after the next successful push. A flag, no timer.
   let announceBacklog = true;
   let announceRetryRunning = false;
+  // What was parsed from the waiter files, kept between pushes (a heartbeat does not change it)
+  const waiterCache = new WaiterScanCache();
   const projectResolver = options.registryDir === undefined ? undefined : new ProjectResolver(options.registryDir);
 
   /**
@@ -112,6 +128,60 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       }
     }
     return subscribers;
+  }
+  /** Says something in the daemon log once per daemon run: a push happens many times and the same sentence each time would hide the others. */
+  function sayOnce(source: string, message: string): void {
+    const key = `${source}\0${message}`;
+    if (!saidOnce.has(key)) {
+      saidOnce.add(key);
+      eventLogger.logDiagnostic({ source, level: 'warn', message });
+    }
+  }
+  /**
+   * Who is waiting for this event (`queue wait`), read from the waiter files right after the history record of the push, counted with the rules and the envelope of the wait itself.
+   * Never throws: undefined (no field in the answer) when the files cannot be looked at, said once per cause. A partial count (a bound was hit) is returned, and the bound is said.
+   */
+  function countWaiters(envelope: EventEnvelope, cwd: string | undefined): { waiterCount: number; waiters: string[] } | undefined {
+    try {
+      const { scan: customScan, ...scanOptions } = options.waiters ?? {};
+      const scan = (customScan ?? listLiveWaiters)(configDir, {
+        ...scanOptions,
+        cache: waiterCache,
+        matching: toEnvelope({ eventId: envelope.id, ts: envelope.timestamp, event: envelope.event, payload: envelope.payload, cwd, project: envelope.meta.projectName }),
+      });
+      for (const problem of scan.problems) {
+        sayOnce('QueueDaemon.waiters', problem);
+      }
+      return { waiterCount: scan.waiters.length, waiters: scan.waiters.slice(0, MAX_REPORTED_WAITERS).map((waiter) => waiter.name) };
+    } catch (err) {
+      sayOnce('QueueDaemon.waiters', `could not look for the waiters in ${waitersDir(configDir)}: ${getErrorMessage(err)}. The push is not affected; its answer carries no waiterCount, so "queue push" cannot say who waits. Fix: check that the folder is readable.`);
+      return undefined;
+    }
+  }
+  /** At the start: the files of waits that are over (process gone, no heartbeat) are removed and recorded as lost. Never throws. */
+  function sweepWaiters(): void {
+    const source = 'QueueDaemon.onStart';
+    try {
+      const registryOptions = options.waiters ?? {};
+      const registry = new WaiterRegistry(configDir, {
+        ...(registryOptions.now !== undefined && { now: registryOptions.now }),
+        ...(registryOptions.isAlive !== undefined && { isAlive: registryOptions.isAlive }),
+        ...(registryOptions.ttlMs !== undefined && { ttlMs: registryOptions.ttlMs }),
+        onDiagnostic: (message) => eventLogger.logDiagnostic({ source, level: 'warn', message }),
+        onRetention: (lines) => {
+          for (const line of lines) eventLogger.logDiagnostic({ source: 'WaitsHistoryRetention', message: line.message, level: line.level });
+        },
+      });
+      const report = registry.sweepStale();
+      if (report.removed.length > 0) {
+        eventLogger.logDiagnostic({ source, message: `removed the files of ${report.removed.length} wait(s) that were over (${report.removed.join(', ')}); each is recorded as lost in the waits history` });
+      }
+      for (const problem of report.problems) {
+        sayOnce(source, `${problem}; it is left where it is. Fix: delete it if no "queue wait" uses it.`);
+      }
+    } catch (err) {
+      eventLogger.logDiagnostic({ source, level: 'warn', message: `could not sweep the waits that are over in ${waitersDir(configDir)}: ${getErrorMessage(err)}. They are swept at the next start; a wait that is over is never counted meanwhile.` });
+    }
   }
   /** Says what stops a subscriber from running, once per daemon run: without it the subscriber looks healthy until an event fires and lands in the DLQ. */
   function reportConfigProblems(subscribers: readonly ResolvedSubscriber[]): void {
@@ -621,19 +691,25 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
 
       // Recorded even with zero subscribers so `queue history` surfaces events nobody listens to
       // A history that cannot be written must not fail the push before anything is recorded: it is said once per cause and the push goes on
-      pushLogs.safely('history', () => historyLog.logTrigger({
-        eventId: envelope.id,
-        event: req.event,
-        project: envelope.meta.projectName,
-        ...(envelope.meta.projectId !== undefined && { projectId: envelope.meta.projectId }),
-        matchedCount: filtered.length,
-        totalCount: subscribers.length,
-        payload: req.payload,
-        replayOf: req.replayOf,
-        cwd: req.cwd,
-        ...(!(direction.directions.length === 1 && direction.directions[0] === 'to-parents') && { direction: direction.directions }),
-        ...(internal.causedBy !== undefined && { causedBy: internal.causedBy }),
-      }));
+      let recorded = false;
+      pushLogs.safely('history', () => {
+        historyLog.logTrigger({
+          eventId: envelope.id,
+          event: req.event,
+          project: envelope.meta.projectName,
+          ...(envelope.meta.projectId !== undefined && { projectId: envelope.meta.projectId }),
+          matchedCount: filtered.length,
+          totalCount: subscribers.length,
+          payload: req.payload,
+          replayOf: req.replayOf,
+          cwd: req.cwd,
+          ...(!(direction.directions.length === 1 && direction.directions[0] === 'to-parents') && { direction: direction.directions }),
+          ...(internal.causedBy !== undefined && { causedBy: internal.causedBy }),
+        });
+        recorded = true;
+      });
+      // A waiter reads the history: it can only be waiting for an event whose record exists. Counted now, at the moment of the push, not after a long before* dispatch
+      const waiting = recorded ? countWaiters(envelope, req.cwd) : undefined;
 
       if (req.event.startsWith('before')) {
         const timeoutMs = req.timeout ?? 30_000;
@@ -641,7 +717,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         if (syncResult.action === 'aborted') {
           return { status: 'aborted', reason: syncResult.reason, eventId: envelope.id };
         }
-        return { status: 'dispatched', result: syncResult.payload, eventId: envelope.id };
+        return { status: 'dispatched', result: syncResult.payload, ...waiting, eventId: envelope.id };
       }
 
       // Async (onXxx)
@@ -680,7 +756,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
         });
       }
 
-      return { status: 'queued', subscriberCount: filtered.length, eventId: envelope.id };
+      return { status: 'queued', subscriberCount: filtered.length, ...waiting, eventId: envelope.id };
     } finally {
       activeDispatches--;
     }
@@ -1072,6 +1148,7 @@ export function createQueueService(configDir: string, options: QueueServiceOptio
       // The queue.dlq.added that could not go out before the last stop (mark pending) is emitted now, or after the next successful push if the configuration does not load yet
       void retryPendingAnnouncements();
       dropReplayedRows();
+      sweepWaiters();
       // Startup scan: reschedule pending WAL entries
       reschedulePending(false);
     },

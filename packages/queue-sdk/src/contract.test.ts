@@ -10,7 +10,7 @@ import { parsePushAnswer, parseRegisterAnswer, serializePushRequest, serializeRe
 interface ContractCase {
   name: string;
   request: { event: string; payload: unknown; protocol?: string; project?: string; cwd?: string; direction?: string[] };
-  response: { status: string; supported?: string; eventId: 'present' | 'absent' };
+  response: { status: string; supported?: string; eventId: 'present' | 'absent'; waiterCount?: number; waiters?: string[] };
 }
 
 const cases = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../contract/protocol-1.json'), 'utf8')) as ContractCase[];
@@ -42,6 +42,8 @@ describe('push protocol 1.x contract (recorded)', () => {
         status: contractCase.response.status,
         ...(contractCase.response.supported !== undefined && { supported: contractCase.response.supported }),
         ...(contractCase.response.eventId === 'present' && { eventId: 'e-1' }),
+        ...(contractCase.response.waiterCount !== undefined && { waiterCount: contractCase.response.waiterCount }),
+        ...(contractCase.response.waiters !== undefined && { waiters: contractCase.response.waiters }),
       },
     });
     expect(answer.ok).toBe(true);
@@ -49,6 +51,8 @@ describe('push protocol 1.x contract (recorded)', () => {
       expect(answer.response.status).toBe(contractCase.response.status);
       expect(answer.response.supported).toBe(contractCase.response.supported);
       expect(answer.response.eventId).toBe(contractCase.response.eventId === 'present' ? 'e-1' : undefined);
+      expect(answer.response.waiterCount).toBe(contractCase.response.waiterCount);
+      expect(answer.response.waiters).toEqual(contractCase.response.waiters);
     }
   });
 });

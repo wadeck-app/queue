@@ -1,4 +1,4 @@
-import type { PushResponse, DlqReplayResponse, DlqClearResponse, RetryResponse } from '@wadeck-app/queue-core';
+import { describeWaiting, type PushResponse, type DlqReplayResponse, type DlqClearResponse, type RetryResponse } from '@wadeck-app/queue-core';
 
 /**
  * What the module answers to the dashboard for what the daemon answered. The daemon reports a refusal as a normal answer ("rejected", "aborted",
@@ -35,7 +35,7 @@ export function pushAnswer(response: PushResponse): HttpAnswer {
   }
   // An explicit 0 only: an answer without a count (an older daemon) is not claimed to have no subscriber
   if (response.status === 'queued' && response.subscriberCount === 0) {
-    return { code: 200, body: { ...response, message: 'queued, but no subscriber matches this event: nothing will run. Check the event name and the project (the Subscribers page lists who listens).' } };
+    return { code: 200, body: { ...response, message: noSubscriberMessage(response) } };
   }
   // Anything else than dispatched / queued is an answer this module does not know: not claimed as a success
   if (response.status !== 'queued' && response.status !== 'dispatched') {
@@ -104,4 +104,20 @@ export function retryAnswer(response: RetryResponse, eventId: string): HttpAnswe
     return { code: 500, body: { error: `The daemon refused to retry ${eventId} and gave no reason. Fix: 'queue logs' has the reason in the daemon log.` } };
   }
   return { code: 200, body: response };
+}
+
+const CHECK_NAME = 'Check the event name and the project (the Subscribers page lists who listens).';
+
+/**
+ * Nobody subscribes to a queued event. Protocol 1.7.0 daemons also say who was waiting for it (`queue wait`): a wait sees the event in the history, so then it is not
+ * "nothing will run". An answer without `waiterCount` (an older daemon, or one that could not look) keeps the original text.
+ */
+function noSubscriberMessage(response: PushResponse): string {
+  if (response.waiterCount === undefined) {
+    return `queued, but no subscriber matches this event: nothing will run. ${CHECK_NAME}`;
+  }
+  if (response.waiterCount === 0) {
+    return `queued, but no subscriber matches this event and no one is waiting for it: nothing will run. ${CHECK_NAME}`;
+  }
+  return `queued: no subscriber matches this event, but ${describeWaiting(response.waiterCount, response.waiters)} (a wait sees it in the history). No subscriber will run. ${CHECK_NAME}`;
 }

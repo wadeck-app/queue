@@ -1,6 +1,6 @@
 # Push protocol
 
-The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.6.0**.
+The wire contract between a client that pushes events (`@wadeck-app/queue-sdk`, `queue push`, any HTTP client) and the queue daemon. Current version: **1.7.0**.
 
 Use `@wadeck-app/queue-sdk` from Node. This page is the reference for the SDK's authors and for clients in other languages.
 
@@ -44,7 +44,7 @@ No authentication.
   "config_dir": "C:\\Users\\me\\.config\\queue",
   "sdkVersion": 1,
   "port": 47910,
-  "queueProtocol": { "version": "1.6.0", "accepts": "^1.0.0" }
+  "queueProtocol": { "version": "1.7.0", "accepts": "^1.0.0" }
 }
 ```
 
@@ -55,7 +55,7 @@ No authentication.
 Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`.
 
 ```json
-{ "protocol": "1.6.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
+{ "protocol": "1.7.0", "event": "job.started", "payload": { "jobId": "nightly" }, "cwd": "C:/repo", "timeout": 30000 }
 ```
 
 | Field | Required | Meaning |
@@ -73,10 +73,12 @@ Answer, HTTP 200: `{ "ok": true, "result": <PushResponse> }`.
 
 | `result.status` | Meaning | Other fields |
 |---|---|---|
-| `queued` | Recorded; `on*` subscribers run in the background | `eventId`, `subscriberCount` |
-| `dispatched` | A `before*` event ran synchronously | `eventId`, `result` (the subscribers' answer) |
+| `queued` | Recorded; `on*` subscribers run in the background | `eventId`, `subscriberCount`, `waiterCount`, `waiters` |
+| `dispatched` | A `before*` event ran synchronously | `eventId`, `result` (the subscribers' answer), `waiterCount`, `waiters` |
 | `aborted` | A subscriber refused, or `subscribers.yml` is invalid | `reason`, `eventId` |
 | `rejected` | The client protocol is not accepted, the `project` is not in the registry (or the registry cannot be read), the `event` is in the reserved `queue.` namespace, or (since 1.6.0) the `payload` is absent or over 1 MiB; nothing was recorded | `reason`, `supported` (the accepted range, for a protocol refusal) |
+
+`waiterCount` and `waiters` (since 1.7.0, `queued` and `dispatched` only): the `queue wait` processes waiting for the event at the moment of the push. `waiterCount` is the real number, `waiters` their names (`<who>.<what>`), at most 20. A waiter counts when one of its event patterns matches the event name and all its `--when` filters hold on the event as the history records it; it is not scoped by project, and an `--all` wait counts until it ends. `subscriberCount` is unchanged: waiters are not subscribers. `0` and `[]` mean the daemon looked and nobody waits; both fields are absent when the daemon is older than 1.7.0, when the history record of the push could not be written (a wait reads the history, so it could not have seen the event) and when the daemon could not read the waiter files. A client prints the old wording when they are absent. The push never fails because of them.
 
 A client must treat an unknown `status` as a failure and ignore unknown fields.
 
@@ -161,6 +163,7 @@ The daemon does not use these paths for its own events, and a client cannot set 
 
 | Version | Change |
 |---|---|
+| 1.7.0 | Additive (MINOR): `waiterCount` and `waiters` in the `queued` and `dispatched` answers of `push` (who was waiting for the event). No request change, no new command, `accepts` unchanged. A daemon older than 1.7.0 sends neither: check `queueProtocol.version` before relying on them (`daemonReportsWaiters`). Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.6.0 | Additive (MINOR): two new `rejected` reasons on `push`, a missing `payload` (it was documented as required but never checked) and a payload over 1 MiB (`MAX_PUSH_PAYLOAD_BYTES`); the `timeout` of a `before*` event is one budget for the whole event, not per subscriber. No field is added or removed; a client that sends a payload under 1 MiB is unaffected. A daemon older than 1.6.0 accepts both: check `queueProtocol.version` before relying on it. Recorded in `packages/queue-sdk/contract/protocol-1.json` (a case with a `null` payload; the SDK cannot send the refused ones, they are tested in queue-core) |
 | 1.5.0 | Additive (MINOR): the `queue.` event namespace is reserved for events the daemon builds itself. A new `rejected` reason on `push` (an event name starting with `queue.`) and on `register-events` (source `queue`, or a `queue.` event name). No field is added or removed; a client that never used such a name is unaffected. Recorded in `packages/queue-sdk/contract/protocol-1.json` |
 | 1.4.0 | Additive (MINOR): the optional `direction` of a push (`to-parents` by default, `to-children`, or both); the descendants' own subscribers fire under their own project id, with `emitterProjectId`. Recorded in `packages/queue-sdk/contract/protocol-1.json` |

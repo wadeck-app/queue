@@ -171,3 +171,35 @@ Step 5 is a deliberate partial state (no contact, no list): do not tag it as the
 - A wait is not scoped by project: a name shows for every project's pushes that match its pattern.
 - Phase A default `anon.<pid>` names are noise in the lists until release B.
 - Wake gain today is <= 500 ms; if the user judges that not worth a listener per wait, decisions 4 and 5 can be dropped without touching the rest (the contact field then stays `none`).
+
+## Review addendum (2026-11-08): decisions that override the sections above
+
+Independent review verified the code claims and found the changes below. Where this section and the text above differ, this section wins.
+
+| # | Decision | Why |
+|---|---|---|
+| A1 | The wake contact is a named pipe (Windows, `\.\pipe\queue-wait-<hash(configDir)>-<name>`) or a unix socket under the config dir (POSIX, hash-shortened for the 104-character limit), derived from the validated waiter name. No port, no secret, no HTTP. The record carries `contact: { kind: 'pipe' \| 'none' }`. Shipped LAST (step 7); until then `contact.kind = 'none'` ("polling only") | A daemon that connects to an address read from a file can be made to POST to any loopback port by whoever writes that file. A derived path cannot be redirected. The wake is a hint: a forged or lost one changes nothing |
+| A2 | Register and take over under `FileLock` (`queue-core/src/storage/FileLock.ts`): its pid/stale takeover, Windows EPERM/EBUSY classification and injectable `isAlive`/`now` are reused. No bare unlink-then-`wx` | Two waiters reading the same stale holder both unlink, the second removes the first's fresh file |
+| A3 | The record has a random `id` (nonce). Each heartbeat re-reads the file and compares `id`; on mismatch or absence it re-registers (or warns once on stderr) and never crashes the wait. Exit deletes the file only when `id` matches. A failed `utimes` is retried and logged once | A stall longer than the 60 s TTL (laptop sleep) lets another wait take the name while the first keeps running invisible |
+| A4 | The daemon builds the envelope it matches `whens` against with the same function the waiter uses (`toEnvelope`/`findMatch`, shared in queue-core), plus a parity test | The history copy has `meta = { cwd, projectName }` only; the daemon holds more |
+| A5 | "Waiting" means waiting at the moment of the push; the count is added only when the history write of that push succeeded | A waiter cannot see an event whose `logTrigger` failed |
+| A6 | Push-path scan: `readdir` + `stat`, expired mtimes skipped without a read, fresh files parsed through a cache keyed on `(name, birthtimeMs/ino, size)`, 200-file cap, 100 ms time box (partial count plus a diagnostic, never a failed push) | N file reads per push, antivirus delays |
+| A7 | Names: `<who>.<what>` (at least one dot), unique among live waits; a collision exits 4 with "each concurrent wait needs its own name"; the skills put the awaited thing in the name | One session runs several waits (`wait ci` and a task wait) |
+| A8 | The record has a free-text `label` (the sha for `wait ci`), shown in lists. The count is by event name (and `whens`) only, documented | `wait ci` registers `on.github.workflow_run` for every repo |
+| A9 | Missing `--name`: release A defaults to `anon.<pid>` with one `[warn]`; release B (exit 4 with an example) ships in a separate commit once poll-event and w-agent-wake pass `--name`. Lists label `anon.*` entries | Peers can only pass `--name` once the CLI supports it |
+| A10 | Constants to update with `--name`: `EVENT_WAIT_KNOWN_FLAGS`, `EVENT_WAIT_FLAGS_WITH_VALUE` (`eventWaitArgs.ts:7-8`), `WAIT_HELP`, `docs/wait.md`; ci wait polls every 1000 ms (not 500) | Closest-option suggestion and help are driven by them |
+| A11 | Protocol 1.7.0 MINOR: `waiterCount`, `waiters` on the push answer; `wire.ts` copies fields one by one so it is extended; add a `protocol-1.json` case (path `packages/queue-sdk/contract/protocol-1.json`) and extend the `contract.test.ts` replay in SDK and queue-core; `WAITERS_MIN_VERSION` next to the existing helper; `docs/push-protocol.md` History row | The contract is a JSON array of `{name, request, response}` cases |
+| A12 | Dashboard (user request): a dedicated **Waiters page** in the app module, in the menu (`manifest.json`, slot `nav`, path `/waiters`, label "Queue Waiters"), with a figure next to the entry (`count` = number of live waiters, read from the route), a route `waiters` that reads the files with the daemon stopped, and `dsl-views/waiters-page.yaml` (table: name, events, filters, label, contact, since, last seen, stale flag). The Subscribers page gets no second table. CLAUDE.md route and page lists, `registeredRoutes`/views-binding tests and the route-failure table are updated | The user asked for a page |
+
+Open points decided (autonomy): keep the wake as a pipe/socket, last; two-release name schedule gated on the peers; `--all` waits are counted until they end and waits are not scoped by project (documented).
+
+### A13 (user request): history of waits, who waited, from when to when
+
+| Decision | Detail |
+|---|---|
+| Storage | One journal under `<configDir>/waiters/history/<UTC day>.ndjson`, written with the shared `appendLine` (torn tail healed). Day files, kept 90 days and counted in the same total size budget as the other journals through `LogRetention` (checked when a new day file is created). Reads tolerate a day pruned under them |
+| Records | `start`: `{ kind:'start', id, name, events, whens, label, contact, pid, cwd, since, startedAt }`. `end`: `{ kind:'end', id, name, endedAt, durationMs, outcome, eventId? }` with `outcome` one of `matched` (the event id and name that satisfied it), `timeout`, `cancelled` (SIGINT/SIGTERM/exit), `refused` (name taken, exit 4), `lost` (no `end` was written: the process was killed or the machine slept) |
+| Who writes | The waiter writes `start` at registration and `end` on every exit path it controls. `lost` is written by whoever sweeps a stale waiter file (registering waiter, daemon start, `queue waiters`, the dashboard route): the record gets `endedAt` = the last heartbeat (file mtime) and is written once, under `FileLock`, only when no `end` with that `id` exists |
+| Reads | `queue waiters --history [--since <duration>] [--name <glob>] [--json]` (newest first, with duration and outcome); the dashboard route `waiters/history`. A `start` without an `end` whose file is live is shown as "waiting"; without file and without `end` it is shown as `lost` even if the sweep has not written it yet |
+| Dashboard | The Waiters page has two sections: "Waiting now" and "History" (name, events, filters, label, from, to, duration, outcome, link to the event when `matched`), with a filter on name and outcome and the same paging as the History page. The menu figure counts live waiters only |
+| Privacy | `whens` and `cwd` are shown as written (same as subscriber `when:`), no payload is ever stored. Documented |

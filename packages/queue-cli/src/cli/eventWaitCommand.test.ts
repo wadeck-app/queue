@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { HistoryEntry } from '@wadeck-app/queue-core';
-import { eventWaitCommand, findMatch, WAIT_EXIT, type EventWaitOptions, type EventWaitDeps } from './eventWaitCommand.js';
+import { findMatch, type HistoryEntry } from '@wadeck-app/queue-core';
+import { eventWaitCommand, WAIT_EXIT, type EventWaitOptions, type EventWaitDeps } from './eventWaitCommand.js';
 
 const T0 = Date.parse('2026-10-18T12:00:00.000Z');
 

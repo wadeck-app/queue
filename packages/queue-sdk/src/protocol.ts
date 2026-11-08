@@ -6,7 +6,7 @@ import { parseRange, parseVersion, satisfies, compareVersions } from './semver.j
 // included, so there is exactly one place that says what version is spoken.
 
 /** The protocol version this SDK speaks and the daemon of the same release implements. */
-export const PROTOCOL_VERSION = '1.6.0';
+export const PROTOCOL_VERSION = '1.7.0';
 /** Daemon protocol versions whose answers this SDK can read. */
 export const SDK_UNDERSTANDS = '^1.0.0';
 /** Client protocol versions the daemon accepts. While a MAJOR is deprecated, both stay listed (e.g. `^1.0.0 || ^2.0.0`). */
@@ -106,6 +106,14 @@ export const RESERVED_EVENT_PREFIX = 'queue.';
 /** Whether an event name is in the namespace reserved for the events the queue daemon builds itself. */
 export function isReservedEventName(event: string): boolean {
   return event.startsWith(RESERVED_EVENT_PREFIX);
+}
+
+/** The protocol version from which the `queued` and `dispatched` answers of a push carry `waiterCount` and `waiters` (who was waiting for the event); an older daemon sends neither. */
+export const WAITERS_MIN_VERSION = '1.7.0';
+
+/** Whether a daemon that implements protocol `daemonProtocolVersion` says, in its push answers, who was waiting for the event. */
+export function daemonReportsWaiters(daemonProtocolVersion: string): boolean {
+  return satisfies(daemonProtocolVersion, `>=${WAITERS_MIN_VERSION}`);
 }
 
 /** A daemon whose GET /version has no `queueProtocol` predates versioning and speaks the original contract. */

@@ -9,7 +9,7 @@ import type { ResolvedSubscriber } from '../types.js';
 // `project` (protocol 1.2.0): the id of a project of the project-sdk registry, resolved by the client; the daemon only checks it is registered
 export interface PushRequest { event: string; payload: unknown; timeout?: number; cwd?: string; replayOf?: string; protocol?: string; project?: string; direction?: unknown; }
 // `rejected`: the push was not recorded because the client protocol is not accepted; `supported` is the range of accepted client versions
-export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted' | 'rejected'; result?: unknown; reason?: string; subscriberCount?: number; eventId?: string; supported?: string; }
+export interface PushResponse { status: 'dispatched' | 'queued' | 'aborted' | 'rejected'; result?: unknown; reason?: string; subscriberCount?: number; /** Protocol 1.7.0, on queued and dispatched: the `queue wait` processes waiting for the event when it was pushed. Absent: the daemon could not look. */ waiterCount?: number; /** Their names, at most 20. */ waiters?: string[]; eventId?: string; supported?: string; }
 // Protocol 1.1.0: a program declares the events it pushes (see catalog/EventCatalog.ts). `events` is validated by the daemon.
 export interface RegisterEventsRequest { protocol?: string; source: string; events: unknown[]; }
 export interface RegisterEventsResponse { status: 'registered' | 'rejected'; source?: string; count?: number; reason?: string; problems?: CatalogProblem[]; supported?: string; }

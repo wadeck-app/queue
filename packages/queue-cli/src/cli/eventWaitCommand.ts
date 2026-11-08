@@ -6,7 +6,8 @@
  * once for an event that happened since `--since` before the command started -- no subscribe-before-push race.
  */
 
-import { PayloadFilter, isEventPattern, type EventEnvelope, type HistoryEntry } from '@wadeck-app/queue-core';
+// findMatch is shared with the daemon, which counts the waiters of a push with the same rule (queue-core, waiters/WaiterMatch.ts)
+import { findMatch, isEventPattern, type HistoryEntry } from '@wadeck-app/queue-core';
 
 export const WAIT_EXIT = {
   MATCHED: 0,
@@ -54,28 +55,6 @@ export interface EventWaitDeps {
   io: WaitIO;
   /** Called once, when the first poll finds nothing to end the wait: nothing to wait for is not worth starting anything for. */
   beforeFirstWait?: () => Promise<void>;
-}
-
-function toEnvelope(entry: HistoryEntry): EventEnvelope {
-  return {
-    id: entry.eventId,
-    timestamp: entry.ts,
-    event: entry.event,
-    payload: entry.payload,
-    meta: { cwd: entry.cwd ?? '', projectName: entry.project ?? '' },
-  };
-}
-
-/** The oldest entry that satisfies every `when`, or null. */
-export function findMatch(entries: HistoryEntry[], whens: string[]): HistoryEntry | null {
-  const oldestFirst = [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
-  for (const entry of oldestFirst) {
-    const envelope = toEnvelope(entry);
-    if (whens.every((when) => PayloadFilter.matches(when, envelope))) {
-      return entry;
-    }
-  }
-  return null;
 }
 
 function describeTarget(target: EventWaitTarget): string {
