@@ -52,8 +52,7 @@ generate_dist() {
   ],
   "optionalDependencies": {
     "@wadeck-app/${CLI}-cli-win32-x64": ">=0.0.0-0",
-    "@wadeck-app/${CLI}-cli-darwin-arm64": ">=0.0.0-0",
-    "@wadeck-app/${CLI}-cli-darwin-x64": ">=0.0.0-0"
+    "@wadeck-app/${CLI}-cli-darwin-arm64": ">=0.0.0-0"
   },
   "publishConfig": {
     "@wadeck-app:registry": "${REGISTRY}"
@@ -68,5 +67,4 @@ EOF
 
 generate_platform "queue-cli-win32-x64"    "win32"  "x64"   "queue.exe"
 generate_platform "queue-cli-darwin-arm64" "darwin" "arm64" "queue"
-generate_platform "queue-cli-darwin-x64"   "darwin" "x64"   "queue"
 generate_dist

@@ -212,7 +212,7 @@ jobs:
 
             - name: Set version in all packages
               run: |
-                  for pkg in queue-cli-dist queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64; do
+                  for pkg in queue-cli-dist queue-cli-win32-x64 queue-cli-darwin-arm64; do
                     (cd "packages/$pkg" && npm pkg set version="${{ steps.version.outputs.version }}")
                   done
 
@@ -223,7 +223,7 @@ jobs:
 
             - name: Publish platform packages
               run: |
-                  for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-darwin-x64; do
+                  for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64; do
                     (cd "packages/$pkg" && npm publish --tag ${{ steps.version.outputs.dist_tag }})
                   done
               env:

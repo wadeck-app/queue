@@ -27,8 +27,9 @@ function resolveStdio(rawArgs, stdinIsTTY) {
   if (!hasBackground && !hasForeground) {
     // Auto-detect: pipe context (non-TTY) → NUL handles to prevent AllocConsole()
     // from libuv when a GUI-parent (flow.exe SUBSYSTEM:WINDOWS) passes PIPE handles.
-    // "queue events list|show" only read the event catalog: an agent in a background shell (non-TTY) needs their output
-    var readOnlyCatalog = cliName === 'queue' && args[0] === 'events' && (args[1] === 'list' || args[1] === 'show');
+    // "queue events list|show" only read the event catalog, and the version and help flags only print: an agent in a background shell (non-TTY) needs their output
+    var readOnlyCatalog = ['--version', '-v', '-V', '--help', '-h'].includes(args[0]) ||
+      (cliName === 'queue' && args[0] === 'events' && (args[1] === 'list' || args[1] === 'show'));
     stdio = stdinIsTTY || readOnlyCatalog ? 'inherit' : 'ignore';
     // auto=true only when auto-detection chose 'ignore' (non-TTY)
     auto = !stdinIsTTY && !readOnlyCatalog;
@@ -63,8 +64,25 @@ function buildInstallCommand(pkgName, version) {
   return 'npm install -g ' + pkgName + '@' + version;
 }
 
+// Explain why a child could not even be started (missing exec bit, missing file...). Without it the shim would exit
+// with no output at all, which is what hid a platform package whose binary had lost its exec bit.
+// @param {string} cliName - CLI name for the message prefix
+// @param {string} bin - the file that could not be started
+// @param {unknown} err - the error thrown by execFileSync
+// @returns {string|null} the message, or null when the child did run (it exited with a status or was killed by a signal)
+function describeSpawnFailure(cliName, bin, err) {
+  if (err == null || typeof err !== 'object') return null;
+  if (typeof err.status === 'number' || err.signal) return null;
+  if (typeof err.code !== 'string') return null;
+  var fix = err.code === 'EACCES'
+    ? 'chmod +x ' + bin + ' (or reinstall: npm install -g @wadeck-app/{{PKG_PREFIX}})'
+    : 'npm install -g @wadeck-app/{{PKG_PREFIX}}';
+  return cliName + ': cannot start ' + bin + ': ' + err.code + ': ' + err.message + '. Fix: ' + fix;
+}
+
 // Export for testing
 if (typeof module !== 'undefined' && module.exports) {
+  module.exports.describeSpawnFailure = describeSpawnFailure;
   module.exports.resolveStdio = resolveStdio;
   module.exports.buildInstallCommand = buildInstallCommand;
 }
@@ -74,7 +92,6 @@ if (require.main === module) {
   const PLATFORM_PKG = {
     'win32-x64':    '@wadeck-app/{{PKG_PREFIX}}-win32-x64',
     'darwin-arm64': '@wadeck-app/{{PKG_PREFIX}}-darwin-arm64',
-    'darwin-x64':   '@wadeck-app/{{PKG_PREFIX}}-darwin-x64',
   };
 
   const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
@@ -149,18 +166,21 @@ if (require.main === module) {
         env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath },
       });
     } catch (err) {
+      var failure = describeSpawnFailure('{{CLI_NAME}}', bin, err);
+      if (failure) process.stderr.write(failure + '\n');
       process.exit(err != null && typeof err === 'object' && 'status' in err && typeof err.status === 'number' ? err.status : 1);
     }
   }
 
-  // On Windows bypass the Go launcher for ALL commands except 'start'.
+  // Bypass the Go launcher for ALL commands except 'start', on every platform.
   // Only 'start' needs the launcher (it spawns the daemon background process).
   // Every other command is short-lived and its stdout/stderr must reach the terminal.
-  // The GUI launcher (hasConsole=false) swallows stdout/stderr of child node processes,
-  // so we run node directly to guarantee output visibility.
+  // On Windows the GUI launcher (hasConsole=false) swallows stdout/stderr of child node processes.
+  // Elsewhere the launcher adds nothing for these commands (queue sets no update/restart sentinel) and costs a process
+  // plus a rewrite of config.launcher-pid, and running node directly keeps a non-executable launcher from breaking them.
   var _bypassLauncher = _args[0] !== 'start';
 
-  if (process.platform === 'win32' && _bypassLauncher) {
+  if (_bypassLauncher) {
     _runWithExit(process.execPath, [bundlePath].concat(_args));
   } else {
     _runWithExit(launcherPath, _args);

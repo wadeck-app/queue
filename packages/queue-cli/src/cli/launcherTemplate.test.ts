@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 
 describe('launcherTemplate resolveStdio', () => {
   let tempDir: string;
@@ -177,12 +178,18 @@ describe('launcherTemplate resolveStdio', () => {
       expect(result.args).toEqual(['history']);
     });
 
-    it('non-TTY + --help: should return ignore with notice', () => {
-      const result = resolveStdio(['--help'], false);
+    it.each([['--help'], ['-h'], ['--version'], ['-v'], ['-V']])('non-TTY + %s: a print-only flag keeps its output (inherit, no notice)', (flag) => {
+      const result = resolveStdio([flag], false);
+      expect(result.stdio).toBe('inherit');
+      expect(result.notice).toBeNull();
+      expect(result.auto).toBe(false);
+      expect(result.args).toEqual([flag]);
+    });
+
+    it('non-TTY + --version + --cli-background: the explicit flag still wins', () => {
+      const result = resolveStdio(['--version', '--cli-background'], false);
       expect(result.stdio).toBe('ignore');
-      expect(result.notice).toContain('stdin is not a TTY');
-      expect(result.notice).toContain('command output is discarded');
-      expect(result.args).toEqual(['--help']);
+      expect(result.notice).toBeNull();
     });
 
     it('TTY + --help: should return inherit with no notice', () => {
@@ -192,32 +199,11 @@ describe('launcherTemplate resolveStdio', () => {
       expect(result.args).toEqual(['--help']);
     });
 
-    it('non-TTY + -h: should return ignore with notice', () => {
-      const result = resolveStdio(['-h'], false);
-      expect(result.stdio).toBe('ignore');
-      expect(result.notice).toContain('stdin is not a TTY');
-      expect(result.args).toEqual(['-h']);
-    });
-
-    it('non-TTY + --version: should return ignore with notice', () => {
-      const result = resolveStdio(['--version'], false);
-      expect(result.stdio).toBe('ignore');
-      expect(result.notice).toContain('stdin is not a TTY');
-      expect(result.args).toEqual(['--version']);
-    });
-
     it('TTY + --version: should return inherit with no notice', () => {
       const result = resolveStdio(['--version'], true);
       expect(result.stdio).toBe('inherit');
       expect(result.notice).toBeNull();
       expect(result.args).toEqual(['--version']);
-    });
-
-    it('non-TTY + -v: should return ignore with notice', () => {
-      const result = resolveStdio(['-v'], false);
-      expect(result.stdio).toBe('ignore');
-      expect(result.notice).toContain('stdin is not a TTY');
-      expect(result.args).toEqual(['-v']);
     });
 
     it('non-TTY + --pid: should return ignore with notice', () => {
@@ -273,7 +259,7 @@ describe('launcherTemplate resolveStdio', () => {
         [true, ['history'], 'inherit', null, 'TTY with no flags -> inherit'],
         [false, ['history'], 'ignore', 'should exist', 'non-TTY with no flags -> ignore + notice'],
         [false, ['start'], 'ignore', null, 'non-TTY start command -> ignore, no notice'],
-        [false, ['--help'], 'ignore', 'should exist', 'non-TTY help -> ignore + notice'],
+        [false, ['--help'], 'inherit', null, 'non-TTY help -> inherit, no notice (print-only)'],
         [true, ['--help'], 'inherit', null, 'TTY help -> inherit, no notice'],
         [false, ['--cli-foreground', 'history'], 'inherit', null, 'explicit foreground -> inherit, no notice'],
         [false, ['--cli-background', 'history'], 'ignore', null, 'explicit background -> ignore, no notice'],
@@ -377,5 +363,94 @@ describe('launcherTemplate buildInstallCommand', () => {
     const execCalls = tpl.split(/\r?\n/).filter((l) => l.includes('execSync(')).map((l) => l.slice(l.indexOf('execSync(')));
     expect(execCalls.filter((c) => !c.startsWith('execSync(installCmd,'))).toEqual([]);
     expect(execCalls.filter((c) => c.startsWith('execSync(installCmd,'))).toHaveLength(1);
+  });
+});
+
+describe('launcherTemplate spawn failures and launcher bypass', () => {
+  const tpl = fs.readFileSync(path.join(__dirname, '../../ci/templates/bin-launcher.js.tmpl'), 'utf8')
+    .replace(/{{CLI_NAME}}/g, 'queue')
+    .replace(/{{PKG_PREFIX}}/g, 'queue-cli');
+  const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
+  const platformKey = `${process.platform}-${arch}`;
+  const supportedPlatforms = ['win32-x64', 'darwin-arm64'];
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  // Renders the shim as <root>/bin/queue.js with a fake platform package whose "launcher" is a plain, non-executable file
+  // and a fake bundle <root>/queue.cjs that prints its arguments
+  function installFakePackage(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-run-'));
+    dirs.push(root);
+    fs.mkdirSync(path.join(root, 'bin'));
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fake', version: '2026.1.1-1-abcdef12' }));
+    const shim = path.join(root, 'bin', 'queue.js');
+    fs.writeFileSync(shim, tpl, 'utf8');
+    fs.writeFileSync(path.join(root, 'queue.cjs'), 'console.log("BUNDLE:" + process.argv.slice(2).join(" "));', 'utf8');
+    const pkgDir = path.join(root, 'node_modules', '@wadeck-app', `queue-cli-${platformKey}`);
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, `queue${process.platform === 'win32' ? '.exe' : ''}`), 'not an executable', { mode: 0o644 });
+    return shim;
+  }
+
+  function loadShim(): { describeSpawnFailure: (cli: string, bin: string, err: unknown) => string | null } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-spawn-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'launcher.js');
+    fs.writeFileSync(file, tpl, 'utf8');
+    return createRequire(file)(file);
+  }
+
+  describe('describeSpawnFailure', () => {
+    it('EACCES: names the file, the code and the exec-bit fix', () => {
+      const err = Object.assign(new Error('spawnSync /x/queue EACCES'), { code: 'EACCES', status: null });
+      const msg = loadShim().describeSpawnFailure('queue', '/x/queue', err)!;
+      expect(msg).toContain('queue: cannot start /x/queue');
+      expect(msg).toContain('EACCES');
+      expect(msg).toContain('spawnSync /x/queue EACCES');
+      expect(msg).toContain('chmod +x /x/queue');
+    });
+
+    it('ENOENT: names the file and the reinstall command, no exec-bit hint', () => {
+      const err = Object.assign(new Error('spawnSync /x/queue ENOENT'), { code: 'ENOENT' });
+      const msg = loadShim().describeSpawnFailure('queue', '/x/queue', err)!;
+      expect(msg).toContain('ENOENT');
+      expect(msg).toContain('npm install -g @wadeck-app/queue-cli');
+      expect(msg).not.toContain('chmod');
+    });
+
+    it('a child that ran and exited with a status is not a spawn failure (its own output is already out)', () => {
+      expect(loadShim().describeSpawnFailure('queue', '/x/queue', Object.assign(new Error('Command failed'), { status: 3 }))).toBeNull();
+    });
+
+    it('a child killed by a signal is not a spawn failure', () => {
+      expect(loadShim().describeSpawnFailure('queue', '/x/queue', Object.assign(new Error('killed'), { status: null, signal: 'SIGTERM' }))).toBeNull();
+    });
+  });
+
+  describe('running the rendered shim', () => {
+    const run = (shim: string, args: string[]) => spawnSync(process.execPath, [shim, '--cli-foreground', ...args], { encoding: 'utf8', env: { ...process.env } });
+
+    it.runIf(supportedPlatforms.includes(platformKey))('a command other than start runs the bundle with node, whatever the launcher is (every platform)', () => {
+      const r = run(installFakePackage(), ['history', '--limit', '3']);
+      expect(r.stderr).toBe('');
+      expect(r.stdout.trim()).toBe('BUNDLE:history --limit 3');
+      expect(r.status).toBe(0);
+    });
+
+    it.runIf(supportedPlatforms.includes(platformKey))('start goes through the launcher: a launcher that cannot be executed fails loudly with the file', () => {
+      const r = run(installFakePackage(), ['start']);
+      expect(r.status).toBe(1);
+      expect(r.stdout).not.toContain('BUNDLE:');
+      expect(r.stderr).toContain('queue: cannot start');
+    });
+
+    it.runIf(!supportedPlatforms.includes(platformKey))(`${platformKey} has no platform package: the shim says so and exits 1 (the run tests above need one of ${supportedPlatforms.join(', ')})`, () => {
+      const r = run(installFakePackage(), ['history']);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('unsupported platform');
+    });
   });
 });

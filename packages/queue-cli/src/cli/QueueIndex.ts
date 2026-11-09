@@ -945,7 +945,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (args[0] === '--version' || args[0] === '-v') {
+  if (args[0] === '--version' || args[0] === '-v' || args[0] === '-V') {
     process.stdout.write(`${VERSION}\n`);
     return;
   }

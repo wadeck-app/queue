@@ -201,6 +201,12 @@ describe('relayRead integration', () => {
     expect(result.stdout + result.stderr).toContain('0.0.0-test-integration');
   });
 
+  it.each(['-v', '-V'])('the test bundle runs: %s answers with the version too, exit 0', async (flag) => {
+    const result = await runCli([flag]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout + result.stderr).toContain('0.0.0-test-integration');
+  });
+
   it('`queue relay webhook list` returns table with correct Authorization header', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'queue-test-'));
     writeFileSync(
