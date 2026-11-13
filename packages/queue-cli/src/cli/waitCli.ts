@@ -89,6 +89,25 @@ Exit codes: 0 CI passed | 1 CI failed | 2 timeout | 3 no run seen / relay not ru
 /** What HistoryReader calls an entry whose record carries no event name. */
 const ORPHAN_EVENT_NAME = '(unknown)';
 
+/** What a wait reads of the history: the entries of one name, or (`pattern`) of every name matching it, recorded at or after `sinceMs`. */
+export interface HistoryRead {
+  read: (options: { event?: string; pattern?: string; sinceMs: number }) => HistoryEntry[];
+}
+
+/**
+ * The history a wait reads under `configDir`. It goes through `readRecent`: only the day files since the wait's `--since` are opened, in chunks, and only
+ * the records of the wanted name are kept, so the memory of a wait does not grow with the history on disk (it was about twice its size).
+ */
+function recentHistoryOf(configDir: string): HistoryRead {
+  const reader = new HistoryReader(pathJoin(configDir, 'history'));
+  return {
+    read: ({ event, pattern, sinceMs }) =>
+      event !== undefined || pattern === undefined
+        ? reader.readRecent({ ...(event !== undefined && { event }), sinceMs })
+        : reader.readRecent({ match: { key: pattern, test: (name) => name !== ORPHAN_EVENT_NAME && EventMatcher.matches(pattern, name) }, sinceMs }),
+  };
+}
+
 function fail(message: string): number {
   process.stderr.write(`[fail] ${message}\n`);
   return CI_EXIT.USAGE;
@@ -141,7 +160,7 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
   const what = options.targets.map((target) => (target.whens.length ? `${target.event} where ${target.whens.join(' and ')}` : target.event));
   const joined = options.targets.length > 1 ? `${options.mode === 'all' ? 'all of' : 'any of'}: ${what.join('; ')}` : what[0]!;
   process.stderr.write(`[info] waiting for ${joined} (timeout ${Math.round(options.timeoutMs / 1000)}s)\n`);
-  const reader = deps.historyReader ?? new HistoryReader(pathJoin(configDir, 'history'));
+  const reader = deps.historyReader ?? recentHistoryOf(configDir);
   const now = deps.now ?? (() => Date.now());
 
   // The wait is listed (and `queue push` counts it) from here on, before the history is read: a push that races its start is not missed
@@ -175,10 +194,10 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
       }
 
       return eventWaitCommand(options, {
-        // A pattern reads the whole window once and filters by name (the reader only filters on an exact name); orphan records have no name
+        // A pattern reads the window once and keeps the names matching it (the reader only filters on an exact name); orphan records have no name
         readEntries: (event, sinceMs) =>
           isEventPattern(event)
-            ? reader.read({ sinceMs }).filter((entry) => entry.event !== ORPHAN_EVENT_NAME && EventMatcher.matches(event, entry.event))
+            ? reader.read({ pattern: event, sinceMs }).filter((entry) => entry.event !== ORPHAN_EVENT_NAME && EventMatcher.matches(event, entry.event))
             : reader.read({ event, sinceMs }),
         now,
         // A wake from the daemon ends this sleep early; the history is read again and decides (deps.sleep replaces the timer in tests)
@@ -222,7 +241,7 @@ export interface QueueWaitDeps {
   /** How the wait registers itself (registry, heartbeat timer, signals, exit); tests pass fakes. Default: the real ones for `configDir`. */
   session?: WaitSessionDeps;
   /** The history the event wait reads; default: the one under `configDir`. */
-  historyReader?: { read: (options: { event?: string; sinceMs: number }) => HistoryEntry[] };
+  historyReader?: HistoryRead;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   /** The pid an unnamed wait is called after (`anon.<pid>`). */
@@ -321,7 +340,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     json: parsedArgs.json,
   };
 
-  const reader = deps.historyReader ?? new HistoryReader(pathJoin(configDir, 'history'));
+  const reader = deps.historyReader ?? recentHistoryOf(configDir);
   const relay = createRelayClient(configDir);
   const now = deps.now ?? (() => Date.now());
   const name = anonymousWaitName(parsedArgs.name, deps.pid ?? process.pid);

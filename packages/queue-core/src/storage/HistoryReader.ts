@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CausedBy } from './HistoryLog.js';
 
@@ -74,6 +74,15 @@ export interface MalformedHistoryFile {
   sample: string;
 }
 
+/** What {@link HistoryReader.readRecent} reads: the entries of one event name (or of the names a predicate accepts) recorded at or after `sinceMs`. */
+export interface RecentHistoryFilter {
+  /** An exact event name. */
+  event?: string;
+  /** Instead of `event`: every name `test` accepts (a subscribers.yml pattern); `key` identifies the predicate for the reader's cache (use the pattern text). */
+  match?: { key: string; test: (eventName: string) => boolean };
+  sinceMs: number;
+}
+
 export interface HistoryPage {
   entries: HistoryEntry[];
   /** One sentence per file with malformed lines (they were skipped); absent when every line was readable. */
@@ -103,6 +112,9 @@ const EVENT_ID_KEY = /"eventId":"((?:[^"\\]|\\.)*)"/;
 // What precedes the type of a record in its line: the opening brace and the `ts` key HistoryLog writes first
 const TRIGGER_LINE_HEAD = /^\{"ts":"[^"\\]*",$/;
 const SUBSCRIBER_KEY = /"subscriberId":"((?:[^"\\]|\\.)*)"/;
+// A day file is read in chunks of this size, never whole: a day of webhook payloads is tens of MB
+const READ_CHUNK_BYTES = 1024 * 1024;
+const DAY_MS = 86_400_000;
 // A malformed line is reported with its first characters only
 const SAMPLE_CHARS = 120;
 // What a record line starts with (HistoryLog writes `ts` first): a second one inside a line means two records were glued together
@@ -188,6 +200,55 @@ interface Accumulator {
   subscribers: HistorySubscriberOutcome[];
 }
 
+/**
+ * Calls `visit` with every complete line (newline-terminated) of a file from byte `from`, reading it in chunks so that no more than one chunk and one line
+ * are in memory. Returns the offset just after the last newline and the text after it (an unterminated last line; undefined when none).
+ * Throws what the file system throws (ENOENT included).
+ */
+function forEachLine(path: string, from: number, visit: (line: string) => void): { consumed: number; tail: string | undefined } {
+  const fd = openSync(path, 'r');
+  try {
+    const chunk = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+    // The parts of the line being read, when it spans chunks
+    let pieces: Buffer[] = [];
+    let position = from;
+    let consumed = from;
+    for (;;) {
+      const read = readSync(fd, chunk, 0, READ_CHUNK_BYTES, position);
+      if (read === 0) {
+        break;
+      }
+      // What this read filled (the rest of the buffer holds the previous chunk)
+      const data = chunk.subarray(0, read);
+      let start = 0;
+      for (let end = data.indexOf(10, start); end !== -1; end = data.indexOf(10, start)) {
+        const last = data.subarray(start, end);
+        visit((pieces.length === 0 ? last : Buffer.concat([...pieces, last])).toString('utf-8'));
+        pieces = [];
+        consumed = position + end + 1;
+        start = end + 1;
+      }
+      if (start < read) {
+        // The chunk buffer is reused by the next read: keep a copy
+        pieces.push(Buffer.from(data.subarray(start)));
+      }
+      position += read;
+    }
+    return { consumed, tail: pieces.length === 0 ? undefined : Buffer.concat(pieces).toString('utf-8') };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** What a reader keeps of one day file for one wanted name: the records of that name up to `consumed`, which is where the next read continues. */
+interface RecentFileCache {
+  mtimeMs: number;
+  size: number;
+  consumed: number;
+  records: Record<string, unknown>[];
+  malformed?: MalformedHistoryFile;
+}
+
 export class HistoryReader {
   // Keyed by filename, so `queue history --follow` -- which holds one reader across many
   // polls -- only re-reads/re-parses a day file once its mtime actually changes, instead of
@@ -195,6 +256,9 @@ export class HistoryReader {
   private readonly fileCache = new Map<string, { mtimeMs: number; size: number; records: Record<string, unknown>[]; malformed?: MalformedHistoryFile }>();
   // What the operations met so far, per file: a line that is not valid JSON is skipped (it used to make every read throw, for as long as the file lived) and listed here
   private readonly malformedByFile = new Map<string, MalformedHistoryFile>();
+  // Of readRecent: by day file and wanted name; and the ids already looked up in the days it left out (true: their trigger is there)
+  private readonly recentCache = new Map<string, RecentFileCache>();
+  private readonly olderTriggerKnown = new Map<string, boolean>();
 
   constructor(private readonly historyDir: string) {}
 
@@ -246,6 +310,129 @@ export class HistoryReader {
     return this.toEntries(acc)
       .filter(e => this.matches(e, filter))
       .sort((a, b) => b.ts.localeCompare(a.ts));
+  }
+
+  /**
+   * The entries of one event name (or of the names a predicate accepts) at or after `sinceMs`, newest first: the same entries as
+   * `read({ event, sinceMs })`, for a reader whose memory must not depend on the size of the history (`queue wait`, which holds one reader
+   * for as long as it waits). What it does differently, on purpose:
+   * - It opens only the day files from the UTC day before `sinceMs` on (a record is filed under the day of its time and an outcome follows its
+   *   trigger, so nothing of an entry recorded since `sinceMs` is in an earlier file). The day before covers a push just before midnight.
+   * - It reads them in chunks and parses only the lines whose name is wanted (the `event` key sits in the head of every record), so a line of
+   *   another name is neither parsed nor kept, and a malformed one among them is not noticed (`read()` and `malformedLines()` report those).
+   * - It keeps the parsed records of the wanted name by file, and a later read only reads what was appended since (the files are append-only).
+   * An entry with outcomes only in the files it opened (a retry, or a late outcome of an older push) is checked once against the files it left
+   * out, so that an old push whose outcome landed after `sinceMs` is left out, as `read()` does.
+   */
+  readRecent(filter: RecentHistoryFilter): HistoryEntry[] {
+    const key = filter.event !== undefined ? `event:${filter.event}` : `match:${filter.match?.key ?? ''}`;
+    const wanted = (name: string): boolean => (filter.event !== undefined ? name === filter.event : (filter.match?.test(name) ?? true));
+    const files = this.listFiles();
+    const firstDay = new Date(filter.sinceMs - DAY_MS).toISOString().slice(0, 10);
+    const opened = files.filter((file) => file.slice(0, 10) >= firstDay);
+    const left = files.filter((file) => file.slice(0, 10) < firstDay);
+    for (const cached of [...this.recentCache.keys()]) {
+      if (!opened.includes(cached.slice(0, cached.indexOf('\0')))) {
+        this.recentCache.delete(cached);
+      }
+    }
+    const acc = new Map<string, Accumulator>();
+    const withTrigger = new Set<string>();
+    for (const file of opened) {
+      for (const record of this.recentRecords(file, key, wanted)) {
+        this.applyRecord(acc, record);
+        if (record['type'] === 'trigger' && typeof record['eventId'] === 'string') {
+          withTrigger.add(record['eventId']);
+        }
+      }
+    }
+    if (left.length > 0) {
+      for (const eventId of [...acc.keys()]) {
+        if (!withTrigger.has(eventId) && this.hasTriggerIn(eventId, left)) {
+          acc.delete(eventId);
+        }
+      }
+    }
+    return this.toEntries(acc)
+      .filter((e) => this.matches(e, { sinceMs: filter.sinceMs }))
+      .sort((a, b) => b.ts.localeCompare(a.ts));
+  }
+
+  /** Whether the push of this id is in one of these day files (answered once per id: a trigger cannot appear later in a day that is over). */
+  private hasTriggerIn(eventId: string, files: string[]): boolean {
+    const known = this.olderTriggerKnown.get(eventId);
+    if (known !== undefined) {
+      return known;
+    }
+    const needle = Buffer.from(`"type":"trigger","eventId":${JSON.stringify(eventId)}`, 'utf-8');
+    const found = this.scanForTrigger(eventId, needle, files, newTally(true)) !== undefined;
+    this.olderTriggerKnown.set(eventId, found);
+    return found;
+  }
+
+  /** The records of the wanted names in a day file: those kept from the earlier reads, plus what the file gained since. */
+  private recentRecords(file: string, key: string, wanted: (name: string) => boolean): Record<string, unknown>[] {
+    const path = join(this.historyDir, file);
+    const cacheKey = `${file}\0${key}`;
+    let mtimeMs: number;
+    let size: number;
+    try {
+      const stat = statSync(path);
+      mtimeMs = Math.round(stat.mtimeMs);
+      size = stat.size;
+    } catch (err) {
+      // Deleted by the history retention since the directory was listed: see readDayFile
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.recentCache.delete(cacheKey);
+        return [];
+      }
+      throw err;
+    }
+    let cache = this.recentCache.get(cacheKey);
+    if (cache !== undefined && cache.mtimeMs === mtimeMs && cache.size === size) {
+      return cache.records;
+    }
+    // A file smaller than what was read of it was replaced, not appended to
+    if (cache === undefined || size < cache.consumed) {
+      cache = { mtimeMs, size, consumed: 0, records: [] };
+    }
+    const tally = newTally(false);
+    const gained: Record<string, unknown>[] = [];
+    const take = (line: string): void => {
+      const body = EVENT_KEY.exec(line.slice(0, KEY_SEARCH_CHARS))?.[1];
+      if (body !== undefined && !wanted(unescapeJson(body))) {
+        return;
+      }
+      const record = parseRecordLine(tally, file, line);
+      if (record !== undefined) {
+        gained.push(record);
+      }
+    };
+    let result: { consumed: number; tail: string | undefined };
+    try {
+      result = forEachLine(path, cache.consumed, take);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.recentCache.delete(cacheKey);
+        return [];
+      }
+      throw err;
+    }
+    const earlier = cache.malformed;
+    const malformed = tally.files.get(file);
+    const merged = malformed === undefined ? earlier : { ...malformed, count: malformed.count + (earlier?.count ?? 0), sample: earlier?.sample ?? malformed.sample };
+    const kept: RecentFileCache = { mtimeMs, size, consumed: result.consumed, records: [...cache.records, ...gained], ...(merged !== undefined && { malformed: merged }) };
+    this.recentCache.set(cacheKey, kept);
+    if (merged !== undefined) {
+      this.malformedByFile.set(file, merged);
+    }
+    // An unterminated last line is read now but not kept: it may be a write in progress, and is read again once it ends
+    if (result.tail === undefined) {
+      return kept.records;
+    }
+    const before = gained.length;
+    take(result.tail);
+    return gained.length > before ? [...kept.records, gained[gained.length - 1]!] : kept.records;
   }
 
   /**
@@ -523,27 +710,35 @@ export class HistoryReader {
       if (file.slice(0, 10) < oldestDay) {
         continue;
       }
-      const content = this.readDayFile(file)?.toString('utf-8');
-      if (content === undefined) {
-        continue;
-      }
-      for (const line of content.split('\n')) {
+      const onLine = (line: string): void => {
         const head = line.slice(0, LINE_HEAD_CHARS);
         const tsMatch = TS_KEY.exec(head);
         const typeMatch = RECORD_TYPE.exec(head);
         if (!tsMatch || typeMatch?.[1] !== type) {
-          continue;
+          return;
         }
         const ts = Date.parse(tsMatch[1]!);
         if (Number.isNaN(ts) || ts > nowMs) {
-          continue;
+          return;
         }
         // The head looks right, but a torn line (cut short, or glued to the next record) must not be counted: read() skips it, and both must agree
         if (!isIntactRecordLine(line)) {
           noteMalformed(tally, file, line);
-          continue;
+          return;
         }
         visit(ts, line);
+      };
+      // In chunks, line by line: a week of history is hundreds of MB and the lines are not kept
+      try {
+        const { tail } = forEachLine(join(this.historyDir, file), 0, onLine);
+        if (tail !== undefined) {
+          onLine(tail);
+        }
+      } catch (err) {
+        // Deleted by the history retention since the directory was listed: see readDayFile
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw err;
+        }
       }
     }
     this.commit(tally);
