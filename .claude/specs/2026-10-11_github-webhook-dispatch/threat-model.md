@@ -15,7 +15,7 @@ What we are protecting:
 | Asset | Sensitivity | Owner |
 |---|---|---|
 | GitHub webhook payload content (PR data, repo metadata) | Medium -- not secret, but reveals private repo activity if repos are private | User |
-| WebSocket endpoint on the relay | High -- currently has zero auth (poc-node baseline); anyone who finds the URL can connect | User |
+| WebSocket endpoint on the relay | High -- anyone who finds the URL can try to connect; the per-Consumer token (T-02, Mitigated) keeps strangers out. Written when it had zero auth (poc-node baseline) | User |
 | GitHub webhook secret (for HMAC verification) | High -- compromise allows forged events | User |
 
 ## Threat actors
@@ -23,12 +23,12 @@ What we are protecting:
 | Actor | Motivation | Capability |
 |---|---|---|
 | Opportunistic scanner | Finds the public endpoint by chance/scanning, probes for open WebSocket/HTTP endpoints | Low -- no targeted knowledge, automated tools |
-| Malicious actor with endpoint URL | Sends forged "GitHub" events to trigger unwanted local agent actions | Medium -- needs the URL, no auth today to stop them |
+| Malicious actor with endpoint URL | Sends forged "GitHub" events to trigger unwanted local agent actions | Medium -- needs the URL; the Consumer token (T-02) stops the WebSocket side |
 
 ## STRIDE analysis
 
 ### Spoofing
-Open: nothing today stops a third party from POSTing a forged "GitHub" webhook to the relay, or connecting to the WebSocket pretending to be Queue. Mitigation plan depends on Open Questions #2 (Queue auth) and #3 (webhook HMAC verification) in `_index.md`.
+A third party connecting to the WebSocket pretending to be Queue: Mitigated by the Consumer token (T-02, Decision #2). A forged "GitHub" webhook POSTed to the relay: T-01 is still marked Open here, but `.claude/threat-model.md` ("Relay-sourced events") states the relay verifies `X-Hub-Signature-256`; the relay is not in this repo, so that status is not verified here. Open Question #3 in `_index.md` has the HMAC decision.
 
 ### Tampering
 *(pending -- add decisions that affect data writes and transit)*
