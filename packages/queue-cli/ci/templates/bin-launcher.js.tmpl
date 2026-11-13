@@ -180,7 +180,34 @@ if (require.main === module) {
   // plus a rewrite of config.launcher-pid, and running node directly keeps a non-executable launcher from breaking them.
   var _bypassLauncher = _args[0] !== 'start';
 
-  if (_bypassLauncher) {
+  // A wait lives as long as the event it waits for, and every agent that waits pays for it: run it inside this very process
+  // (one node instead of two) when its output is kept. With the output discarded a child keeps doing the muting, so that case stays a child.
+  function _runInProcess() {
+    var bundle;
+    try {
+      bundle = require(bundlePath);
+    } catch (loadErr) {
+      process.stderr.write('{{CLI_NAME}}: cannot run ' + bundlePath + ': ' + (loadErr && loadErr.message ? loadErr.message : loadErr) +
+        '. Fix: npm install -g @wadeck-app/{{PKG_PREFIX}}\n');
+      process.exit(1);
+    }
+    if (typeof bundle.runQueueCommand !== 'function') {
+      process.stderr.write('{{CLI_NAME}}: cannot run ' + bundlePath + ': it does not export runQueueCommand (bundle and shim come from different versions). ' +
+        'Fix: npm install -g @wadeck-app/{{PKG_PREFIX}}\n');
+      process.exit(1);
+    }
+    // The bundle starts itself when argv[1] names it, so argv is rewritten only after the require
+    process.env.LAUNCHER_BUNDLE_OVERRIDE = bundlePath;
+    process.argv = [process.execPath, bundlePath].concat(_args);
+    bundle.runQueueCommand().catch(function (err) {
+      process.stderr.write('[{{CLI_NAME}}] Fatal error: ' + (err && err.message ? err.message : err) + '\n');
+      process.exit(1);
+    });
+  }
+
+  if ('{{CLI_NAME}}' === 'queue' && _args[0] === 'wait' && _stdio === 'inherit') {
+    _runInProcess();
+  } else if (_bypassLauncher) {
     _runWithExit(process.execPath, [bundlePath].concat(_args));
   } else {
     _runWithExit(launcherPath, _args);

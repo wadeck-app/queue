@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 describe('launcherTemplate resolveStdio', () => {
   let tempDir: string;
@@ -381,14 +381,14 @@ describe('launcherTemplate spawn failures and launcher bypass', () => {
 
   // Renders the shim as <root>/bin/queue.js with a fake platform package whose "launcher" is a plain, non-executable file
   // and a fake bundle <root>/queue.cjs that prints its arguments
-  function installFakePackage(): string {
+  function installFakePackage(bundleSource = 'console.log("BUNDLE:" + process.argv.slice(2).join(" "));'): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-run-'));
     dirs.push(root);
     fs.mkdirSync(path.join(root, 'bin'));
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fake', version: '2026.1.1-1-abcdef12' }));
     const shim = path.join(root, 'bin', 'queue.js');
     fs.writeFileSync(shim, tpl, 'utf8');
-    fs.writeFileSync(path.join(root, 'queue.cjs'), 'console.log("BUNDLE:" + process.argv.slice(2).join(" "));', 'utf8');
+    fs.writeFileSync(path.join(root, 'queue.cjs'), bundleSource, 'utf8');
     const pkgDir = path.join(root, 'node_modules', '@wadeck-app', `queue-cli-${platformKey}`);
     fs.mkdirSync(pkgDir, { recursive: true });
     fs.writeFileSync(path.join(pkgDir, `queue${process.platform === 'win32' ? '.exe' : ''}`), 'not an executable', { mode: 0o644 });
@@ -445,6 +445,50 @@ describe('launcherTemplate spawn failures and launcher bypass', () => {
       expect(r.status).toBe(1);
       expect(r.stdout).not.toContain('BUNDLE:');
       expect(r.stderr).toContain('queue: cannot start');
+    });
+
+    // A bundle that reports who runs it: its pid, its argv and the bundle path the shim announces
+    const reportingBundle = 'module.exports = { runQueueCommand: async () => { console.log("INPROC:" + process.pid + "|" + process.argv.slice(2).join(" ") + "|" + (process.env.LAUNCHER_BUNDLE_OVERRIDE || "").endsWith("queue.cjs")); process.exit(7); } };\n' +
+      'if (process.argv[1] && process.argv[1].endsWith("queue.cjs")) { console.log("CHILD:" + process.pid + "|" + process.argv.slice(2).join(" ")); }';
+
+    const runAsync = (shim: string, args: string[]) => new Promise<{ pid: number; stdout: string; stderr: string; status: number | null }>((resolve) => {
+      const child = spawn(process.execPath, [shim, ...args], { env: { ...process.env } });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => { stdout += d; });
+      child.stderr.on('data', (d) => { stderr += d; });
+      child.on('close', (status) => resolve({ pid: child.pid!, stdout, stderr, status }));
+    });
+
+    it.runIf(supportedPlatforms.includes(platformKey))('wait with its output kept runs inside the shim process (no second node), with the flags stripped, and its exit code', async () => {
+      const shim = installFakePackage(reportingBundle);
+      const r = await runAsync(shim, ['--cli-foreground', 'wait', 'ci', 'abc', '--name', 'x.y']);
+      expect(r.stderr).toBe('');
+      expect(r.stdout.trim()).toBe(`INPROC:${r.pid}|wait ci abc --name x.y|true`);
+      expect(r.status).toBe(7);
+    });
+
+    it.runIf(supportedPlatforms.includes(platformKey))('wait with its output discarded (non-TTY, no flag) still runs in a child node: nothing is muted inside the shim', async () => {
+      const shim = installFakePackage(reportingBundle);
+      const r = await runAsync(shim, ['wait', 'ci', 'abc']);
+      // stdio 'ignore' for the child: no INPROC/CHILD output reaches us, only the notice
+      expect(r.stdout).not.toContain('INPROC:');
+      expect(r.stderr).toContain('stdin is not a TTY');
+    });
+
+    it.runIf(supportedPlatforms.includes(platformKey))('a bundle without runQueueCommand makes an in-process wait fail loudly with the fix', async () => {
+      const shim = installFakePackage('module.exports = {};');
+      const r = await runAsync(shim, ['--cli-foreground', 'wait', 'x']);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('queue: cannot run');
+      expect(r.stderr).toContain('npm install -g @wadeck-app/queue-cli');
+    });
+
+    it.runIf(supportedPlatforms.includes(platformKey))('other commands keep running in a child node', async () => {
+      const shim = installFakePackage(reportingBundle);
+      const r = await runAsync(shim, ['--cli-foreground', 'history']);
+      expect(r.stdout.trim()).toMatch(/^CHILD:\d+\|history$/);
+      expect(r.stdout).not.toContain(`CHILD:${r.pid}|`);
     });
 
     it.runIf(!supportedPlatforms.includes(platformKey))(`${platformKey} has no platform package: the shim says so and exits 1 (the run tests above need one of ${supportedPlatforms.join(', ')})`, () => {
