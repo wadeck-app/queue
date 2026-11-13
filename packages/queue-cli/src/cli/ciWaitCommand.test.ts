@@ -180,6 +180,34 @@ describe('ciWaitCommand: no run seen, was anything delivered for this repository
     expect(text).not.toContain('reached the relay in the last 24 h');
   });
 
+  it('always says which window of the history was read and how to widen it, so an old commit is not mistaken for a delivery problem', async () => {
+    const h = harness(() => [elsewhere()]);
+    await ciWaitCommand({ ...base, repo: 'o/r' }, h.deps);
+    expect(h.err.join('')).toContain('Only relayed events of the last 24 h were read (--since); if the commit is older, re-run with --since <duration> back past its push.');
+  });
+
+  it('names the window actually read: days for whole days, hours otherwise', async () => {
+    const days = harness(() => []);
+    await ciWaitCommand({ ...base, repo: 'o/r', lookbackMs: 3 * 86_400_000 }, days.deps);
+    expect(days.err.join('')).toContain('delivered no workflow_run event at all in the last 3 d');
+    expect(days.err.join('')).toContain('Only relayed events of the last 3 d were read (--since)');
+    const hours = harness(() => []);
+    await ciWaitCommand({ ...base, repo: 'o/r', lookbackMs: 36 * 3600_000 }, hours.deps);
+    expect(hours.err.join('')).toContain('Only relayed events of the last 36 h were read (--since)');
+  });
+
+  it('the window sentence is also in the --json reason', async () => {
+    const h = harness(() => []);
+    await ciWaitCommand({ ...base, json: true }, h.deps);
+    expect((JSON.parse(h.out.join('')) as { reason: string }).reason).toContain('were read (--since)');
+  });
+
+  it('a relay that is not running does not carry the window sentence', async () => {
+    const down = harness(() => [], { running: false, connected: false });
+    await ciWaitCommand(base, down.deps);
+    expect(down.err.join('')).not.toContain('--since');
+  });
+
   describe('--json on exit 3: the same JSON object as the other results, never an empty stdout', () => {
     it('relay not running: result "relay-not-running" with the reason and the fix', async () => {
       const h = harness(() => [], { running: false, connected: false });

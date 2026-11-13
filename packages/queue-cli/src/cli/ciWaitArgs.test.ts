@@ -74,6 +74,21 @@ describe('parseCiWaitArgs: an unknown option is a usage error', () => {
   });
 });
 
+describe('parseCiWaitArgs: --since', () => {
+  it('is carried as written (the value is parsed where the clock is known) and absent otherwise', () => {
+    expect(parseCiWaitArgs(['abc1234', '--since', '3d'])).toMatchObject({ ok: true, since: '3d' });
+    const without = parseCiWaitArgs(['abc1234']);
+    expect(without.ok && 'since' in without).toBe(false);
+  });
+
+  it('refuses a missing value, a repeat and the --since=x form', () => {
+    expect(message(['--since'])).toContain('--since needs');
+    expect(message(['--since', '--json'])).toContain('--since needs');
+    expect(message(['--since', '3d', '--since', '4d'])).toContain('--since is given twice');
+    expect(message(['--since=3d'])).toContain('--since 3d');
+  });
+});
+
 describe('parseCiWaitArgs: --name', () => {
   it('is carried when valid and absent otherwise', () => {
     expect(parseCiWaitArgs(['abc1234', '--name', 'w-agent-wake.ci-abc1234'])).toMatchObject({ ok: true, name: 'w-agent-wake.ci-abc1234' });

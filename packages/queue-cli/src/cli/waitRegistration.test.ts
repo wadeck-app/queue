@@ -305,6 +305,34 @@ describe('queue wait ci --name', () => {
     expect(await code).toBe(4);
     expect(order).toEqual([]);
   });
+
+  it('--since reads the history that far back (default 24 h) and registers that start', async () => {
+    const sinces: number[] = [];
+    let record: { since?: string } | undefined;
+    const historyReader = {
+      read: ({ sinceMs }: { sinceMs: number }): HistoryEntry[] => {
+        sinces.push(sinceMs);
+        record = live()[0] as { since?: string } | undefined;
+        return [];
+      },
+    };
+    const run = runWait(['ci', SHA, '--no-infer', '--repo', 'o/r', '--name', 'a.cisince', '--since', '3d'], () => [], { git, historyReader });
+    await run.code;
+    expect(sinces[0]).toBe(clock.ms - 3 * 86_400_000);
+    expect(Date.parse(record?.since ?? '')).toBe(clock.ms - 3 * 86_400_000);
+  });
+
+  it.each([
+    [['--since'], '--since needs'],
+    [['--since', '3d', '--since', '4d'], '--since is given twice'],
+    [['--since', 'yesterdayish'], 'neither a duration'],
+    [['--since', '2999-01-01T00:00:00Z'], 'in the future'],
+  ])('%j exits 4 and registers nothing', async (extra, expected) => {
+    const { code, order, session } = runWait(['ci', SHA, '--no-infer', '--repo', 'o/r', '--name', 'a.cibad', ...extra], () => [], { git });
+    expect(await code).toBe(4);
+    expect(order).toEqual([]);
+    expect(stderr + session.stderr.join('')).toContain(expected);
+  });
 });
 
 describe('registeredWhens', () => {

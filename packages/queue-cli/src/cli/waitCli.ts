@@ -12,12 +12,15 @@ import { eventWaitCommand, type EventWaitTarget } from './eventWaitCommand.js';
 import { anonymousNameWarning, anonymousWaitName, ciOutcomeOf, defaultWaitSessionDeps, eventOutcomeOf, runRegisteredWait, type WaitSessionDeps } from './waitSession.js';
 import { RelayOnDemand, isRelayPattern, isRelaySourcedEvent, targetNeedsRelay } from './relayOnDemand.js';
 import { checkDeclaration, lastSeenAtOf, lastSeenEventOf, patternMatchesKnownEvent, patternWarning, refuseUndeclared, undeclaredWarning, type DeclarationCheck } from './eventWaitCatalog.js';
-import { parseEventWaitArgs, WAIT_DEFAULT_TIMEOUT } from './eventWaitArgs.js';
+import { parseEventWaitArgs, parseSince, WAIT_DEFAULT_TIMEOUT } from './eventWaitArgs.js';
+
+/** How far back `queue wait ci` reads the relayed history when --since is not given. */
+const CI_DEFAULT_LOOKBACK_MS = 24 * 3600_000;
 
 export const WAIT_HELP = `queue wait - Block until something happens, so an agent does not have to poll
 Usage:
   queue wait <event> [--when <expr>]... [<event> [--when <expr>]...]... [--all] [--since <duration|time>] [--timeout <duration>] [--name <who>.<what>] [--json] [--strict]
-  queue wait ci [<sha>] [--repo <owner/name>] [--workflow <name>]... [--timeout <duration>] [--settle <duration>] [--name <who>.<what>] [--no-infer] [--json]
+  queue wait ci [<sha>] [--repo <owner/name>] [--workflow <name>]... [--since <duration|time>] [--timeout <duration>] [--settle <duration>] [--name <who>.<what>] [--no-infer] [--json]
 
 queue wait <event>: blocks until a queue event of that name (or matching that pattern) is recorded (any "queue push" is, even with no subscriber).
   --when <expr>      Keep only events whose payload satisfies the expression, same syntax as a subscriber's when:
@@ -61,6 +64,8 @@ queue wait ci: blocks until the GitHub CI of a commit is done (events relayed as
   --workflow <name>  Exact workflow name that must complete (repeatable). Without it, the workflows are inferred from
                      .github/workflows (push trigger, branch and path filters); when that is undecidable, "done" means every run
                      seen for the commit is completed and nothing new happened for --settle
+  --since <d|time>   How far back the relayed history is read for a run of the commit: a duration back from now (3d) or a time.
+                     Default 24h: for an older commit pass a value that reaches back past its push, or "no run seen" (exit 3) is reported
   --timeout <d>      Give up after this long (default 30m)
   --settle <d>       Quiet window before concluding with no --workflow (default 20s)
   --name <who>.<what>  Same as for an event: how this wait is listed ("queue waiters") and counted by "queue push"
@@ -268,6 +273,20 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     return fail(`${getErrorMessage(err)} (durations look like 30s, 15m, 1h).`);
   }
 
+  // --since: same syntax as the event wait (a duration back from now or a time); default 24 h
+  let lookbackMs = CI_DEFAULT_LOOKBACK_MS;
+  if (parsedArgs.since !== undefined) {
+    const nowMs = (deps.now ?? Date.now)();
+    const sinceMs = parseSince(parsedArgs.since, nowMs);
+    if (sinceMs === null) {
+      return fail(`--since "${parsedArgs.since}" is neither a duration (10m, 2h, 3d) nor a time (2026-10-18T11:00:00Z).`);
+    }
+    if (sinceMs >= nowMs) {
+      return fail(`--since "${parsedArgs.since}" is in the future: give a duration back from now (3d) or a past time.`);
+    }
+    lookbackMs = nowMs - sinceMs;
+  }
+
   const explicitWorkflows = parsedArgs.workflows;
   let workflows = explicitWorkflows;
   if (!parsedArgs.noInfer) {
@@ -298,7 +317,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     timeoutMs,
     startGraceMs: 90_000,
     pollMs: 1000,
-    lookbackMs: 24 * 3600_000,
+    lookbackMs,
     json: parsedArgs.json,
   };
 

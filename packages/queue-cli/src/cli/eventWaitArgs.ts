@@ -15,7 +15,7 @@ const USAGE = 'queue wait <event> [--when <expr>]... [<event> [--when <expr>]...
 export type EventWaitArgs = { ok: true; options: EventWaitOptions } | { ok: false; message: string };
 
 /** `--since`: a duration counted back from now ("10m"), or an absolute time ("2026-10-18T11:00:00Z"). */
-function parseSince(raw: string, nowMs: number): number | null {
+export function parseSince(raw: string, nowMs: number): number | null {
   try {
     return nowMs - parseDuration(raw);
   } catch {

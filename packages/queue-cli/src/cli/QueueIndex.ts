@@ -165,7 +165,7 @@ Usage:
   queue events list [--source <s>] [--prefix <p>] [--match <pattern>] [--declared-only] [--terminal] [--json]   Event catalog: names, payloads, last seen
   queue events show <name> [--json]   Schema, example, payload paths for 'queue wait --when' and a ready command
   queue events register --source <s> --file <events.json> [--json]   Declare the events of a program that does not use the Node SDK
-  queue wait ci [<sha>] [--workflow <name>] [--timeout <d>] [--name <who>.<what>] [--json]   Block until the GitHub CI of a commit is done
+  queue wait ci [<sha>] [--workflow <name>] [--since <d>] [--timeout <d>] [--name <who>.<what>] [--json]   Block until the GitHub CI of a commit is done
   queue waiters [--history] [--since <duration>] [--name <glob>] [--outcome <outcome>] [--limit <N>] [--json]   Who is waiting right now (every queue wait is listed, and counted by queue push); --history: who waited, for what, from when to when, how it ended (see 'queue waiters --help')
   queue status [--project <name|alias|id>] [--json]   --project filters on the flag only: QUEUE_PROJECT does not narrow a view
   queue list-subscribers [event] [--json]

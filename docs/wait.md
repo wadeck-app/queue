@@ -66,6 +66,8 @@ Inside a git repository it also reads git:
 
 Without an inferred list, "done" means every workflow run seen for the commit is completed and nothing new happened for `--settle` (default 20s). With `--workflow <name>` (repeatable), only those workflows count and git is not used to guess.
 
+Only the relayed history of the last 24 h is read. A commit pushed earlier looks like "no run seen" (exit 3); pass `--since <duration|time>` (same syntax as the event wait: `3d`, `2026-10-18T11:00:00Z`) reaching back past its push. The exit 3 message names the window read.
+
 ## The relay
 
 `queue wait ci` and a wait for an `on.<source>.<type>` event need the relay client. If it is down and the history holds nothing yet, the wait starts it (`relay.yml` must exist, see `queue relay --help`), and the relay stops itself 30 s after the last such wait ended. A relay started with `queue relay start` is never stopped automatically.

@@ -39,18 +39,30 @@ export interface CiWaitCommandOptions extends CiWaitOptions {
  * What the history says about the repository when no run of the commit showed up: whether GitHub ever delivered anything for it.
  * Empty when it did (then the cause is not the delivery).
  */
-function deliveryHint(repo: string | undefined, entries: HistoryEntry[]): string {
+function deliveryHint(repo: string | undefined, entries: HistoryEntry[], window: string): string {
   const seen = repositoriesSeen(entries);
   if (seen.length === 0) {
-    return 'The relay delivered no workflow_run event at all in the last 24 h: the webhook may be missing or failing (see "queue relay webhook history"). ';
+    return `The relay delivered no workflow_run event at all in the last ${window}: the webhook may be missing or failing (see "queue relay webhook history"). `;
   }
   if (repo === undefined || seen.some((name) => name.toLowerCase() === repo.toLowerCase())) {
     return '';
   }
   return (
-    `No workflow_run delivery from ${repo} reached the relay in the last 24 h (it delivered: ${seen.join(', ')}). ` +
+    `No workflow_run delivery from ${repo} reached the relay in the last ${window} (it delivered: ${seen.join(', ')}). ` +
     'A webhook only covers the repositories of its owner (an organisation webhook does not cover a personal account\'s repositories): if that owner is meant to be relayed, "queue relay webhook list" shows the configured webhooks; if it is deliberately not relayed (docs/wait.md), poll the run with "gh run list" instead. '
   );
+}
+
+/** The history window as the messages name it: whole days from 2 d ("3 d"), hours otherwise ("24 h"), minutes under an hour. */
+export function formatWindow(ms: number): string {
+  const hour = 3600_000;
+  if (ms >= 48 * hour && ms % (24 * hour) === 0) {
+    return `${ms / (24 * hour)} d`;
+  }
+  if (ms >= hour) {
+    return `${Math.round(ms / hour)} h`;
+  }
+  return `${Math.max(1, Math.round(ms / 60_000))} min`;
 }
 
 const RELAY_HINT = 'Start it with "queue relay start" (check "queue relay status" and "queue relay webhook history").';
@@ -88,10 +100,13 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
         ? options.workflows.some((w) => !verdict.runs.some((r) => r.name === w))
         : verdict.runs.length === 0;
       if (nothingSeen && elapsedMs >= options.startGraceMs) {
+        const window = formatWindow(options.lookbackMs);
         const reason =
-          `${verdict.reason} after ${Math.round(elapsedMs / 1000)}s. ${deliveryHint(options.repo, deps.readEntries(nowMs - options.lookbackMs))}Likely causes: the workflow has a path/branch filter that skips this commit, ` +
+          `${verdict.reason} after ${Math.round(elapsedMs / 1000)}s. ${deliveryHint(options.repo, deps.readEntries(nowMs - options.lookbackMs), window)}Likely causes: the workflow has a path/branch filter that skips this commit, ` +
           `GitHub did not deliver the webhook (see "queue relay webhook history"), or the relay does not forward workflow_run events. ` +
-          `Cross-check with "gh run list --commit ${options.sha}".`;
+          `Cross-check with "gh run list --commit ${options.sha}". ` +
+          // The commit's date is unknown here (no git): a run older than the window is indistinguishable from a run that never came
+          `Only relayed events of the last ${window} were read (--since); if the commit is older, re-run with --since <duration> back past its push.`;
         return noRun('no-run', reason, verdict.runs, options, io);
       }
     }
