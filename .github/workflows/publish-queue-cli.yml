@@ -158,8 +158,37 @@ jobs:
             - name: Test app-module-queue
               run: npm test --workspace=packages/app-module-queue
 
+    # The bin shim is the first thing every command runs, and it is only exercised for real on a platform that has a platform package:
+    # on Linux its run tests are skipped, so macOS (Apple silicon, the only Mac published) runs them: loud failure of a launcher that cannot be
+    # executed, node run directly for every command but start, `queue wait` inside the shim process, -V, against the real bundle.
+    shim-macos:
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci --prefer-offline
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build TypeScript
+              run: npm run build
+
+            # queue-cli's globalSetup builds the bundle; the host must be one of the supported platforms or the run tests would skip
+            - name: Test the bin shim on macOS
+              run: |
+                  test "$(uname -s)-$(uname -m)" = "Darwin-arm64" || { echo "expected an Apple silicon runner, got $(uname -s)-$(uname -m): the shim run tests would be skipped" >&2; exit 1; }
+                  npm test --workspace=packages/queue-cli -- src/cli/launcherTemplate.test.ts src/cli/binShim.wait.integration.test.ts
+
     publish:
-        needs: [build-and-test, sdk-cross-platform, core-cli-windows, packages-cross-platform]
+        needs: [build-and-test, sdk-cross-platform, core-cli-windows, packages-cross-platform, shim-macos]
         # Only main publishes, whether the run comes from a push or a manual dispatch (a dispatch on a branch or a tag must not publish)
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         runs-on: ubuntu-latest
@@ -209,6 +238,21 @@ jobs:
 
             - name: Copy artifacts to platform packages
               run: bash packages/queue-cli/ci/scripts/copy-binaries.sh
+
+            # A launcher packed without its exec bit makes every command fail on macOS (it happened to the task CLI): refuse to publish it
+            - name: Check the exec bit of the packed macOS launcher and shim
+              run: |
+                  out="$(mktemp -d)"
+                  (cd packages/queue-cli-darwin-arm64 && npm pack --silent --pack-destination "$out" >/dev/null)
+                  (cd packages/queue-cli-dist && npm pack --silent --pack-destination "$out" >/dev/null)
+                  fail=0
+                  for t in "$out"/*.tgz; do
+                    for line in $(tar -tvzf "$t" | grep -E 'package/(queue|bin/queue\.js)$' | awk '{print $1 "@" $NF}'); do
+                      mode="${line%%@*}"
+                      case "$mode" in *x*x*x*) echo "ok   $mode ${line#*@} ($(basename "$t"))" ;; *) echo "FAIL $mode ${line#*@} ($(basename "$t")): no exec bit" >&2; fail=1 ;; esac
+                    done
+                  done
+                  test "$fail" = 0
 
             - name: Set version in all packages
               run: |
