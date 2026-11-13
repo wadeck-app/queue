@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { createIsolatedCliEnv, type IsolatedCliEnv } from '../testing/isolatedCliEnv.js';
 import { testBundleFile } from '../testing/testBundle.js';
 
-const SUPPORTED = ['win32-x64', 'darwin-arm64'];
+const SUPPORTED = ['win32-x64', 'darwin-arm64', 'linux-x64'];
 const platformKey = `${process.platform}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
 
 describe.runIf(SUPPORTED.includes(platformKey))('bin shim: queue wait in the shim process, real bundle', () => {

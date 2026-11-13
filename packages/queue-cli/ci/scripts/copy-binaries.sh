@@ -9,7 +9,9 @@ QUEUE_DIST_BUNDLE="packages/queue-cli/dist-bundle"
 cp "$QUEUE_LAUNCHER_DIST/queue_windows_release.exe"  packages/queue-cli-win32-x64/queue.exe
 cp "$QUEUE_LAUNCHER_DIST/queue_darwin_arm64_release"  packages/queue-cli-darwin-arm64/queue
 chmod +x packages/queue-cli-darwin-arm64/queue
-cp "$QUEUE_DIST_BUNDLE/queue.cjs"          packages/queue-cli-dist/queue.cjs
+cp "$QUEUE_LAUNCHER_DIST/queue_linux_amd64_release"   packages/queue-cli-linux-x64/queue
+chmod +x packages/queue-cli-linux-x64/queue
+cp "$QUEUE_DIST_BUNDLE/queue.cjs"         packages/queue-cli-dist/queue.cjs
 cp "$QUEUE_DIST_BUNDLE/queue-updater.cjs"  packages/queue-cli-dist/queue-updater.cjs
 cp "$QUEUE_DIST_BUNDLE/queue-daemon.cjs"   packages/queue-cli-dist/queue-daemon.cjs
 cp "$QUEUE_DIST_BUNDLE/queue-relay-daemon.cjs"  packages/queue-cli-dist/queue-relay-daemon.cjs

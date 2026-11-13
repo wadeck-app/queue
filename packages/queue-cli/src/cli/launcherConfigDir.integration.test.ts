@@ -58,7 +58,7 @@ describe('Go launcher config dir (QUEUE_CONFIG_DIR)', () => {
     iso = createIsolatedCliEnv();
     const outDir = join(iso.root, 'launcher-build');
     try {
-      // Same entry point as CI: ci/scripts/build-launcher.mjs, but host platform only (build.sh has no linux target) into a throwaway dir, via bash + the same build.sh.
+      // Same entry point as CI: ci/scripts/build-launcher.mjs, but host platform only (build.sh builds 5 targets) into a throwaway dir, via bash + the same build.sh.
       execFileSync('node', [join(PACKAGE_DIR, 'ci', 'scripts', 'build-launcher.mjs')], {
         stdio: 'pipe', encoding: 'utf8', timeout: 240_000, windowsHide: true,
         env: { ...goBuildEnv(process.env, process.env['QUEUE_TEST_REAL_TMPDIR']), QUEUE_LAUNCHER_OUT_DIR: outDir, QUEUE_LAUNCHER_HOST_ONLY: '1' },

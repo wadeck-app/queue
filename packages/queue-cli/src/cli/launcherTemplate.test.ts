@@ -372,7 +372,7 @@ describe('launcherTemplate spawn failures and launcher bypass', () => {
     .replace(/{{PKG_PREFIX}}/g, 'queue-cli');
   const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
   const platformKey = `${process.platform}-${arch}`;
-  const supportedPlatforms = ['win32-x64', 'darwin-arm64'];
+  const supportedPlatforms = ['win32-x64', 'darwin-arm64', 'linux-x64'];
   const dirs: string[] = [];
 
   afterEach(() => {
@@ -495,6 +495,13 @@ describe('launcherTemplate spawn failures and launcher bypass', () => {
       const r = run(installFakePackage(), ['history']);
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('unsupported platform');
+      expect(r.stderr).toContain(`supported: ${supportedPlatforms.join(', ')}`);
+    });
+
+    it('the platform table lists exactly the supported platforms (no darwin-x64, no linux-arm64) and the unsupported message is built from it', () => {
+      const table = [...tpl.matchAll(/^\s+'([a-z0-9]+-[a-z0-9]+)':\s+'@wadeck-app\/queue-cli-/gm)].map((m) => m[1]);
+      expect(table).toEqual(supportedPlatforms);
+      expect(tpl).toContain("(supported: ${Object.keys(PLATFORM_PKG).join(', ')})");
     });
   });
 });

@@ -7,6 +7,7 @@ launcher-go/dist/
 packages/queue-cli-dist/
 packages/queue-cli-win32-x64/
 packages/queue-cli-darwin-*/
+packages/queue-cli-linux-*/
 *.tsbuildinfo
 *.log
 # Protected directory for secrets (.env.local, credentials, tokens)

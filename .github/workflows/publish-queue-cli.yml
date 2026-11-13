@@ -159,7 +159,7 @@ jobs:
               run: npm test --workspace=packages/app-module-queue
 
     # The bin shim is the first thing every command runs, and it is only exercised for real on a platform that has a platform package:
-    # on Linux its run tests are skipped, so macOS (Apple silicon, the only Mac published) runs them: loud failure of a launcher that cannot be
+    # Linux x64 (build-and-test) and Windows have a platform package; macOS (Apple silicon, the only Mac published) runs them here: loud failure of a launcher that cannot be
     # executed, node run directly for every command but start, `queue wait` inside the shim process, -V, against the real bundle.
     shim-macos:
         runs-on: macos-latest
@@ -239,11 +239,12 @@ jobs:
             - name: Copy artifacts to platform packages
               run: bash packages/queue-cli/ci/scripts/copy-binaries.sh
 
-            # A launcher packed without its exec bit makes every command fail on macOS (it happened to the task CLI): refuse to publish it
-            - name: Check the exec bit of the packed macOS launcher and shim
+            # A launcher packed without its exec bit makes every command fail on macOS and Linux (it happened to the task CLI on macOS): refuse to publish it
+            - name: Check the exec bit of the packed macOS and Linux launchers and shim
               run: |
                   out="$(mktemp -d)"
                   (cd packages/queue-cli-darwin-arm64 && npm pack --silent --pack-destination "$out" >/dev/null)
+                  (cd packages/queue-cli-linux-x64 && npm pack --silent --pack-destination "$out" >/dev/null)
                   (cd packages/queue-cli-dist && npm pack --silent --pack-destination "$out" >/dev/null)
                   fail=0
                   for t in "$out"/*.tgz; do
@@ -256,7 +257,7 @@ jobs:
 
             - name: Set version in all packages
               run: |
-                  for pkg in queue-cli-dist queue-cli-win32-x64 queue-cli-darwin-arm64; do
+                  for pkg in queue-cli-dist queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-linux-x64; do
                     (cd "packages/$pkg" && npm pkg set version="${{ steps.version.outputs.version }}")
                   done
 
@@ -267,7 +268,7 @@ jobs:
 
             - name: Publish platform packages
               run: |
-                  for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64; do
+                  for pkg in queue-cli-win32-x64 queue-cli-darwin-arm64 queue-cli-linux-x64; do
                     (cd "packages/$pkg" && npm publish --tag ${{ steps.version.outputs.dist_tag }})
                   done
               env:

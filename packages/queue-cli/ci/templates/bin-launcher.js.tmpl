@@ -92,13 +92,14 @@ if (require.main === module) {
   const PLATFORM_PKG = {
     'win32-x64':    '@wadeck-app/{{PKG_PREFIX}}-win32-x64',
     'darwin-arm64': '@wadeck-app/{{PKG_PREFIX}}-darwin-arm64',
+    'linux-x64':    '@wadeck-app/{{PKG_PREFIX}}-linux-x64',
   };
 
   const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
   const key = `${process.platform}-${arch}`;
   const pkgName = PLATFORM_PKG[key];
   if (!pkgName) {
-    process.stderr.write(`{{CLI_NAME}}: unsupported platform ${key}\n`);
+    process.stderr.write(`{{CLI_NAME}}: unsupported platform ${key} (supported: ${Object.keys(PLATFORM_PKG).join(', ')})\n`);
     process.exit(1);
   }
 
