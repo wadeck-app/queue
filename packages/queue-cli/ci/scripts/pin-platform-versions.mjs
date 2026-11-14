@@ -1,5 +1,5 @@
 // Publish-time only: pins every optionalDependencies entry of the main package to the EXACT version being published.
-// Why: the generated range ">=0.0.0-0" does not match a CalVer version (2026.10.31-244-x is a semver prerelease) and an already
+// Why: the generated placeholder ("latest" in the source package.json) does not name the version being published, and the former range ">=0.0.0-0" did not match a CalVer version (2026.10.31-244-x is a semver prerelease): an already
 // installed platform package (which holds the Go launcher) was never replaced by `npm install -g @wadeck-app/queue-cli@<new>`.
 // Usage: node pin-platform-versions.mjs <package.json> <version>
 import { readFileSync, writeFileSync } from 'node:fs';

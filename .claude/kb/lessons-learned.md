@@ -86,7 +86,7 @@
 
 ---
 
-### Platform package range `>=0.0.0-0` never matches a CalVer prerelease, so the launcher is never refreshed
+### Platform package placeholder (`latest`, formerly `>=0.0.0-0`) never refreshes the launcher: pin the exact version at publish
 
 **Problem:** After `queue cli update`, queue-cli was new but the Go launcher in `@wadeck-app/queue-cli-win32-x64` stayed on an old version (a fix lived only in the launcher).
 **Fix:** The publish job pins every `optionalDependencies` entry of queue-cli to its exact version (`ci/scripts/pin-platform-versions.mjs`), which makes npm install the matching platform package nested under queue-cli; `queue cli self-check` warns about a stale top-level copy.

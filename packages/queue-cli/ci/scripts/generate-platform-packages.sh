@@ -51,9 +51,9 @@ generate_dist() {
     "package.json"
   ],
   "optionalDependencies": {
-    "@wadeck-app/${CLI}-cli-win32-x64": ">=0.0.0-0",
-    "@wadeck-app/${CLI}-cli-darwin-arm64": ">=0.0.0-0",
-    "@wadeck-app/${CLI}-cli-linux-x64": ">=0.0.0-0"
+    "@wadeck-app/${CLI}-cli-win32-x64": "latest",
+    "@wadeck-app/${CLI}-cli-darwin-arm64": "latest",
+    "@wadeck-app/${CLI}-cli-linux-x64": "latest"
   },
   "publishConfig": {
     "@wadeck-app:registry": "${REGISTRY}"

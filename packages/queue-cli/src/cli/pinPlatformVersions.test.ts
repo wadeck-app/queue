@@ -23,7 +23,7 @@ function run(pkg: object, version: string | undefined) {
 
 describe('pin-platform-versions.mjs', () => {
   it('pins every optional dependency to the exact version', () => {
-    const { r, out } = run({ name: 'x', optionalDependencies: { a: '>=0.0.0-0', b: '>=0.0.0-0' } }, '2026.10.31-244-cb188647');
+    const { r, out } = run({ name: 'x', optionalDependencies: { a: 'latest', b: 'latest' } }, '2026.10.31-244-cb188647');
     expect(r.status).toBe(0);
     expect(out.optionalDependencies).toEqual({ a: '2026.10.31-244-cb188647', b: '2026.10.31-244-cb188647' });
   });
