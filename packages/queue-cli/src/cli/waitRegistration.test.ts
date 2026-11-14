@@ -166,6 +166,19 @@ describe('queue wait <event> --name', () => {
   });
 });
 
+describe('queue wait with a --when on only some of the events', () => {
+  it('warns that the events without a filter end the wait on any payload', async () => {
+    await runWait(['onDone', 'onFailed', '--when', 'payload.id=a', '--name', 'a.mixed', '--timeout', '1s']).code;
+    expect(stderr).toContain('[warn] Some events have a --when and some do not: onDone has no filter');
+  });
+
+  it('does not warn when every event has its filter, or none has', async () => {
+    await runWait(['onDone', '--when', 'payload.id=a', 'onFailed', '--when', 'payload.id=a', '--name', 'a.all', '--timeout', '1s']).code;
+    await runWait(['onDone', 'onFailed', '--name', 'a.none', '--timeout', '1s']).code;
+    expect(stderr).not.toContain('Some events have a --when');
+  });
+});
+
 describe('queue wait <event> without --name (release A)', () => {
   it('registers as anon.<pid> and warns once, with an example of a name', async () => {
     const { code } = runWait(['onTaskDone', '--timeout', '1s'], () => {

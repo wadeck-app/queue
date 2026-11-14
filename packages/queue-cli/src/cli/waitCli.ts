@@ -24,7 +24,8 @@ Usage:
 
 queue wait <event>: blocks until a queue event of that name (or matching that pattern) is recorded (any "queue push" is, even with no subscriber).
   --when <expr>      Keep only events whose payload satisfies the expression, same syntax as a subscriber's when:
-                     "payload.taskId=abc" or a JSONPath such as "$.payload.newStatus". Repeatable: all must hold
+                     "payload.taskId=abc" or a JSONPath such as "$.payload.newStatus". Repeatable: all must hold.
+                     Applies to the event written just before it only (see "Several events at once")
   --since <d|time>   Count events recorded since then: a duration back from now (10m, 2h) or a time (2026-10-18T11:00:00Z).
                      Default: only events recorded after the command started
   --timeout <d>      Give up after this long (default 30m)
@@ -121,6 +122,12 @@ async function eventWait(configDir: string, args: string[], startRelay: StartRel
   }
 
   const { options } = parsed;
+
+  // A --when binds to the event written before it: `a b --when X` filters b only, and a wakes the wait on any payload
+  const unfiltered = options.targets.filter((target) => target.whens.length === 0).map((target) => target.event);
+  if (unfiltered.length > 0 && unfiltered.length < options.targets.length) {
+    process.stderr.write(`[warn] Some events have a --when and some do not: ${unfiltered.join(', ')} ${unfiltered.length === 1 ? 'has' : 'have'} no filter and will end the wait on any payload. A --when belongs to the event written before it: repeat it after each event that needs it.\n`);
+  }
 
   // The catalog is read-only help: an undeclared name still waits (old and undeclared producers exist) unless --strict.
   // The events of the relay (on.<source>.<type>) are produced by the relay, nobody declares them: they are not checked.
