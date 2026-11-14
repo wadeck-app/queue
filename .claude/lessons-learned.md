@@ -1,8 +1,31 @@
 # Lessons learned
 
-<!-- Last updated: 2026-11-08T12:03:23.295Z -->
+<!-- Last updated: 2026-11-08T20:33:24.862Z -->
 
 ## Recurring feedback
+
+<!-- session 0ab93801 2026-11-08 -->
+- Output format validation was rejected—assistant must use ONLY these prefixes per line: [Recurring feedback], [Agent errors], [Documentation gaps], [Known constraints]. No other format accepted. Respond "NOTHING" if no findings match these categories.
+- Mutation testing scripts (mut.sh, climut.sh, cmut.sh, ma_mut.sh, sdk_mut.sh) created repeatedly with nearly identical templates but ad-hoc modifications for each package — these follow a clear pattern that should be documented or templatized to avoid manual recreation.
+- At 13:22:06, an agent ran `npm install yaml --workspace packages/queue-cli` without prompting the user first. CLAUDE.md explicitly prohibits this: "NEVER install applications, system packages, global npm/pip packages, or any software without explicitly asking the user first." This is a recurring pattern that violates documented constraints.
+- Multiple test updates across parallel packages for similar patterns (summarize.test.ts in both plugin-github and plugin-gitlab; timezone handling in activity/outcomes; text truncation logic) suggest cross-package test patterns could be centralized or documented.
+- <finding>
+
+<!-- session 6e53527f 2026-11-08 -->
+- Agent subprocess attempted to open npm documentation in a browser; user sent a stop message to prevent this (13:22:00). Subprocess environment should suppress interactive browser opens or inherit a flag to disable them.
+- Test suites carrying 500-590 second timeouts (vitest runs, lines 13:59:05+) — indicates heavyweight setup or resource contention; consider investigating whether this is expected or a performance regression.
+- At 14:24:52, M launches 4 parallel fork agents for a "Batch S3" covering relay, plugins, CLI, and module—each with overlapping scope (tests, manifest updates, file rewrites). This batch organization pattern suggests scope discovery happened late (after fixes were mostly done) rather than upfront planning.
+- Waiters feature implementation used systematic TDD (WaiterRecord.test.ts → WaiterRecord.ts → WaiterMatch.test.ts → ...) with multiple sed edits to each file, indicating that test scaffolding was being refined iteratively rather than fully spec'd upfront.
+
+<!-- session e14a5b2e 2026-11-08 -->
+- `dlqEvents.endToEnd.integration.test.ts` run 5 times (lines 12:26:25 batch); tests appear flaky. No explanation logged for retries — either environment issue or legitimate flakiness that needs root cause.
+- YAML package installed for subscribersEdit changes API surface—callers must use proper YAML parsing; string-based subscribers.yml manipulation will break.
+- status.ts endpoint changed to return only `dlqCount` instead of `pendingCount` — breaks the prior API contract; dashboard fixtures and other callers likely expect both counts, not a replacement
+- Mutation testing relies on heavy sed + node patch scripts; each package fork generates custom .mjs editors (edit1.mjs, edit2.mjs, patch3.mjs, patch4.mjs, etc.). Pattern repeats across all forks, suggesting need for reusable mutation harness.
+- Test flakiness hunting via explicit retry loops (pass=0; for i in 1..8; do ... vitest run ...; done) — looping for intermittent failures is a pattern here, but no documentation exists on when to apply this pattern or how many retries are standard.
+- Mutation testing pattern (mutate.cjs, gomut.cjs, node mutate.cjs calls): The pattern repeats identically across several test suites; could be extracted to a shared test utility to reduce duplication.
+- Custom mutation testing framework built inline with multiple phases (mutCore, mutOthers, mutOrder, patchRunner, dropJunctions) and scratch directories. No indication this pattern was requested by user — agent chose complex home-grown approach over standard mutant/stryker tools.
+- Control character regex (`\x00.*`, `replaceAll.*CONTROL`) varies across WaiterRecord, WaiterWake test mocks, WaiterWakeListener—centralize as `CONTROL_CHARS` constant or document the exact pattern and why it must differ per context.
 
 <!-- session b58fd504 2026-11-08 -->
 - Work was organized into planned "remediation batches" (R3, R4a, R4b visible in commits). Suggests the user pre-planned scope and execution strategy, and agents executed within that framework.
@@ -196,6 +219,38 @@
 - Manual E2E test cycle needed after each deployment: daemon lifecycle (start/stop), event push/delivery, DLQ checks, and dispatch log verification.
 
 ## Agent errors
+
+<!-- session 0ab93801 2026-11-08 -->
+- Multiple general-purpose agents spawned in parallel immediately, then later multiple fork agents created with more specific scopes (core tests, CLI tests, module tests, SDK tests) — indicates the initial scope division wasn't fine-grained enough; the agents duplicated exploratory work before specializing.
+- Agents attempted to invoke deferred tools (`write-doc` skill, `SendMessage` tool) without first fetching their schemas via ToolSearch — these are listed in `<system-reminder>` but `*** NOT YET KNOWN ***` until fetched.
+- <finding>
+- Deferred tools (like SendMessage) require explicit ToolSearch fetch before use; agents should proactively load schemas for known-needed tools rather than discovering the need at call time (line 15:18:10).
+- Agents invoked `write-doc` skill twice (16:17:54, 16:25:25) without fetching schema first via ToolSearch, getting `*** NOT YET KNOWN ***` warning. Deferred skills/tools should be fetched before calling, not learned by error.
+- Wait-as-subscriber implementation created multiple new data structures in sequence (WaiterRecord, WaiterMatch, WaiterHistory, WaiterRegistry, WaiterScan, WaiterHistoryReader) without clear evidence they were all specified upfront — appears speculative/design-driven rather than test-driven. Verify scope was fixed before implementation started.
+- Subagents tried to invoke `write-doc` skill (deferred, not pre-loaded) and got "NOT YET KNOWN" warnings (16:52:21, 17:15:21). When delegating to fresh agents, either pre-fetch required deferred tools with ToolSearch before delegating, or include the fetch instruction in the delegation prompt.
+
+<!-- session 6e53527f 2026-11-08 -->
+- MCP GitHub tools (mcp__github-wadeck-app__actions_list, get_job_logs) invoked at 12:29-12:30 without loading schema first via ToolSearch; should call ToolSearch("select:mcp__github-wadeck-app__*") before use.
+- write-doc skill showed as "NOT YET KNOWN" (12:03:47) but agent recovered gracefully by using Edit/Read tools; suggests skills not always loaded or available at runtime despite being listed.
+- write-doc skill invoked without prior ToolSearch fetch (13:20:58); ToolSearch for SendMessage also showed "NOT YET KNOWN" but agent recovered (13:21:55). Agents should load deferred tool schemas before calling them.
+- write-doc skill reported as unavailable (13:31:55) despite being declared in skills list — loading or timing issue.
+- Agents extensively using sed for multi-line edits instead of Edit tool despite CLAUDE.md guidance — sed used for complex pattern matching across test file generation (lines 13:25-13:26+), may indicate Edit tool insufficient for that scope.
+- At 14:13-14:14, M edits manifest.test.ts and backend.test.ts after app-core-cli install: the `fileVersion` field replaced `dispose` in the mock API, forcing test corrections. This was an implicit version-mismatch correction revealed by running tests, not caught at setup.
+- At 14:19:28, M uses Write (full rewrite) instead of Edit for status.ts. This suggests the initial implementation approach was wrong enough to need replacement, not patching—a sign the design wasn't validated before coding.
+- General-purpose agent invoked deferred tools without fetching their schemas first: `write-doc` skill (16:17:54, 16:25:25) and MCP tools `mcp__github-wadeck-app__actions_list`, `mcp__github-wadeck-app__get_job_logs` (16:19:40, 16:19:45) — should call ToolSearch first to load schemas before invoking.
+- Agent did not fetch or invoke the `write-doc` skill when it showed "NOT YET KNOWN" at 18:46:26, then proceeded anyway. CLAUDE.md requires invoking write-doc before writing documentation; the agent should ToolSearch and fetch required skills on first use.
+- Agent worked around unavailable MCP tools (actions_list, get_job_logs showed "NOT YET KNOWN" at 19:25:57+) by using bash commands to grep bundled files instead of fetching schemas. Pragmatic but leaves tools unused.
+
+<!-- session e14a5b2e 2026-11-08 -->
+- Heavy exploratory bash before each Edit (creating .mjs readers, sed chains) suggests codebase patterns for adding relay plugins (github → gitlab) lack a clear checklist or template; agent had to reverse-engineer from existing tests and config.
+- Eight test files created in parallel by concurrent forks without coordination — risk of orphaned tests, duplication, or misalignment with existing test structure
+- Parallel forks create full tar copies into separate scratch dirs (A, B, C) instead of sharing node_modules or using git worktrees; massive duplication and slow setup for identical test suites.
+- Multiple sed rewrites on same file within single fork (relayYmlTemplate.test.ts, ciWaitCommand.ts patched multiple times each); suggests iterative partial fixes rather than complete solution, or incomplete understanding of target scope before mutation.
+- Multiple `write-doc` skill warnings ("NOT YET KNOWN"): Early in the second agent's work, the skill invocation failed, suggesting the skill registration or availability needs verification.
+- Code exploration inefficiency: The general-purpose agent used repeated bash grep/sed commands to understand code structure before writing files, when Read/Glob tools could have been more efficient for initial surveys.
+- Agent invoked `write-doc` skill but it showed as "NOT YET KNOWN" at [2026-11-08 16:52:21], despite the skill appearing in the available-skills list in system-reminder. Skill may not be registered or cached properly on first use.
+- Skills `agent-browser` and `write-doc` marked "NOT YET KNOWN" but then invoked successfully—suggests skill loader has transient state or caching bug; may need explicit fetch before use on first invocation in a session.
+- Agent reverse-engineered updater behavior through grepping minified bundled code (multiple grep passes on `node_modules/@wadeck-app/app-core-cli/dist/cli.bundle.js` for UpdateManager, scheduleBac*, bundlePath) instead of finding or asking for source implementation location or design docs.
 
 <!-- session b58fd504 2026-11-08 -->
 - Agent created temporary .cjs/.mjs files to perform inline text edits on test files, rather than using the Edit tool directly. This made changes harder to verify and left unnecessary artifacts in /tmp.
@@ -608,6 +663,33 @@
 
 ## Documentation gaps
 
+<!-- session 0ab93801 2026-11-08 -->
+- Extensive exploratory grep/wc/file-read patterns suggest the codebase structure isn't well-documented upfront — agents had to discover code organization through search rather than from a architecture reference (e.g., which file contains push protocol limits, WAL retry logic, etc.).
+- Dashboard routes documented as prose in CLAUDE.md, not structured format—agents had to grep code to discover endpoints and their return values (status returns "dlqCount"/"pendingCount", etc.). Test "claudeMdRoutes.test.ts" was added to prevent drift.
+- Menu figure wiring pattern (status endpoint → manifest.json figure field → template reference) not documented—required multi-file investigation across status.ts, manifest.json, and backend templates.
+- <finding>
+- Test utility extraction pattern (.testUtil.ts files like tempDir.testUtil.ts, moduleContext.testUtil.ts, queueEntries.testUtil.ts) and mutation-based TDD workflow with coordinated parallel forks (using tools/ subdirectories with .mjs codemods) lacks documented reference for reuse in future refactors.
+- Orchestration (`orch`) infrastructure — purpose, usage pattern, and where it's used — required extensive probing (15:49-15:50: checking node_modules, running `where orch`, searching for RetryScheduler usage). Should document why orch is needed and how it integrates.
+
+<!-- session 6e53527f 2026-11-08 -->
+- npm configuration options (autocrlf, path options) required dynamic discovery via a custom script (13:22:30) instead of static knowledge. Integration with npm config should use dynamic introspection or expose a helper.
+- Agents performing heavy grep across threat-model.md, docs/subscribers.md, and push-protocol.md with keyword searches ("redirect", "timeout", "working directory", "http", "stdout", "truncate") — suggests these topics either lack clear organization or require cross-referencing multiple docs; potential candidates for anchor links or a dedicated reference.
+- Mutation testing pattern (`mutate.cjs`, `gomut.cjs`) used to verify code coverage is implicit — no visible docs explain why tests are followed by "run mutations" or what happens when a mutation fails. The pattern is: write test, run vitest, generate mutations, run mutations to catch insufficient assertions.
+- Leak guard's interaction with external tool environment variables (Go specifically: go.mod lookup failure when TMPDIR points to private temp root) was not documented. Required iterative investigation and three commits to resolve. Should document: temp guard exposes real tmpdir via `QUEUE_TEST_REAL_TMPDIR`, external tools need TEMP/TMP set (not TMPDIR) to real temp.
+
+<!-- session e14a5b2e 2026-11-08 -->
+- Configuration constants (`HISTORY_MAX_AGE_DAYS`, `LOG_MAX_AGE_DAYS`, retention descriptions) are scattered across multiple files; agent spent multiple search rounds finding and updating them consistently.
+- Relay plugin integration points (adding `plugin-gitlab`) are implicit: vitest.globalSetup needs plugin list, QueueIndex.ts needs help text update, relay webhook tests need mirroring, docs need source name changes. This should be a checklist.
+- Retry/backoff strategy, emission budget limits, and retry timing (16m retries observed in dispatch) are scattered across dispatch and storage modules without centralized documentation of the contract.
+- Mutation testing scripts (`sdk_mut.sh`, `climut.sh`, `cmut.sh`) are ad-hoc utilities without documented entry points or help; workflow is implicit in bash one-liners across agents.
+- CLAUDE.md lists dashboard routes but is not updated when routes change; test file naming conventions may need vitest config awareness but no explicit documentation
+- Port allocation strategy (allocateFreePorts vs allocatePorts) and createIsolatedCliEnv requirements are central to test reliability but not called out in visible docs; tests fail silently with port conflicts when violated.
+- `queue wait --name` requirement: The plan review agent spent significant exploration time understanding that waits need explicit naming, suggesting CLI help/validation messages are not sufficiently clear about this requirement.
+- Waiter-subscriber-daemon relationship: The review agent required extensive exploration (multiple grep/read operations) to understand how waiter records flow through the push protocol and daemon, suggesting the architecture docs are incomplete.
+- Agent manually fixed doc formatting issues (punctuation in docs/wait.md at [2026-11-08 17:07:20]) — no indication these were caught by linting or pre-commit hooks.
+- Test isolation pattern (goBuildEnv, QUEUE_TEST_REAL_TMPDIR) exposes real temp dir separately from private test root—why this is needed (go.mod discovery path issue on Windows) not documented.
+- No clear pointer to where UpdateManager/app-core-cli updater source or design documentation lives — agent had to infer behavior by reverse-engineering the bundle rather than reading docs.
+
 <!-- session b58fd504 2026-11-08 -->
 - Agent spent 30+ exploratory commands grepping across multiple packages to understand inter-module contracts (SubscriberSchema, ActionRegistry, refs, project scope, emission budgets). Better documentation of the module architecture and contracts between packages (queue-core → queue-cli → app-module-queue) would reduce exploration overhead.
 - CLAUDE.md mandates write-doc for all .md changes, but the write-doc skill's availability is not guaranteed at session start; no guidance on fallback if unavailable.
@@ -866,6 +948,39 @@
 - New violations rules require a corresponding test file (`src/rules/[category]/[rule].test.ts`), or self-check fails with no clear error message pointing to the root cause.
 
 ## Known constraints
+
+<!-- session 0ab93801 2026-11-08 -->
+- Session uses explicit `sleep` commands (290s, 280s, 100s) to wait for background agent work instead of ScheduleWakeup or task notifications — less efficient for long-running reviews.
+- Complex code transformations using sed one-liners fall back to .mjs patching scripts when patterns become too complex — relies on exact pattern matching and could fail silently if formatting differs from expected.
+- Fresh agents in parallel forks do substantial redundant grep/sed work to locate route definitions, event handling patterns, and test utilities—codebase entry points for common patterns (where are the routes registered? how do webhooks flow?) are not obvious without code search.
+- <finding>
+- Concurrent mutation-based test runs require isolated scratch directories with subdivisions (queue-s4-scratch/A, queue-s4-scratch/B, queue-s4-scratch/C pattern) to prevent interference; workspace packages resolve CLI tools through root node_modules/.bin, not per-package installs (line 15:33:31+).
+- Windows 8.3 short-filename lookups required platform-specific detection logic in path comparisons (16:20-16:21: probed `cmd.exe` to detect short names, implemented `isInside` logic). Document this as a permanent Windows edge case.
+
+<!-- session 6e53527f 2026-11-08 -->
+- Deferred tools (listed in system-reminder) require explicit ToolSearch call before invocation, even though they appear "available" — calling them directly fails with "NOT YET KNOWN" status.
+- Orchestrator CLI (orch add --once) investigated via multiple help queries (13:42-13:43) before usage attempt — behavior appears underdocumented or not widely used in this workflow.
+- At 14:08:30, CLAUDE.md says "always invoke write-doc before writing documentation" but the agent hits "NOT YET KNOWN" skill warning. The skill exists but isn't auto-loaded; ToolSearch fetch is required first despite the explicit directive.
+- Test setup files need `tsconfig.setup.json` in target directories (queue-cli, plugin-agent-wake, app-module-queue) but reason not explained in code — appears to isolate test tsconfig from the main build.
+- Go launcher build requires TMPDIR unset or set to real system temp, not the leak guard's private root; `goBuildEnv.ts` now handles this, but test that use it must be explicit about the environment mutation requirement.
+
+<!-- session e14a5b2e 2026-11-08 -->
+- Rebuilds must follow dependency order (queue-sdk → queue-core → queue-relay-client → plugin-*); the agent ran sequential tsc --build commands in multiple batches, suggesting parallel builds don't work or aren't tried.
+- Mutation testing is core to code quality verification — agents set up mut.sh/cmut.sh/climut.sh/ma_mut.sh scripts across storage, dispatch, retry, and module packages; modifications to these modules require corresponding mutation tests to verify behavior coverage beyond line coverage.
+- Tests must use createIsolatedCliEnv() and respect QUEUE_TEST_REAL_TMPDIR; hardcoding ports (47910/47911) or /tmp paths breaks test isolation and leaks temp directories in CI.
+- Windows/POSIX path handling requires cygpath conversions and environment-specific logic; test setups must handle both /tmp (POSIX) and C:\path (Windows) representations.
+- Mutation testing infrastructure coordinates multiple parallel agents via explicit sleep timings (90–120s) operating on /tmp/rv temporary copies; /tmp/rv cleanup is manual and could leak resources if a process hangs or cleanup runs incomplete.
+- vitest test suites taking 240+ seconds to run causing long waits between verification cycles in multi-fork workflows
+- Tests use complex temp isolation pattern with QUEUE_TEST_REAL_TMPDIR exposure and leak guards that fail if qrun-* folders remain; cleanup must be explicit or stray files break subsequent runs.
+- Pre-commit hooks block git operations; the session uses a bypass script request (15:26:36) to proceed with commits, suggesting this is a recurring friction point for large refactors.
+- Parallel forks accumulate temp scratch directories in %TEMP%; cleanup script infrastructure (queue-cleanup/cleanup.sh) becomes necessary after multi-agent sessions to avoid leaks.
+- Large-scale code migrations use batch mutation scripts (codemod*.mjs) stored in scratch dirs rather than direct edits — this distributes the work across multiple agents but makes auditing changes harder; no central log of all mutations applied.
+- Windows 8.3 short-name path resolution: The agent created a probe (short-probe.mjs) to detect short-name collisions in fakeOrch, indicating path comparison issues on Windows need special handling.
+- Missing `orch` command in test environment: The agent created fakeOrch.ts as a test double since the real orchestrator command is unavailable/not in PATH during tests. This pattern needs documentation.
+- Waiters feature requires multiple sequential gates: package builds (`tsc --build`), unit tests per package, bundle build, integration tests, then CI wait. Agent correctly sequences these but the workflow is expensive for iteration.
+- Windows named pipes in WaiterWake require null-byte escaping in record serialization; POSIX sockets use forward-slash paths derived from configDir—control character filtering patterns differ between files.
+- Temp leak guard in globalSetup.ts creates private root (qrun-XXXXXX) per vitest run; must fail hard when queue-* entries remain—pattern now repeated across SDK, core, relay-client, plugin packages; integration tests need the guard wired into their vitest configs.
+- write-doc skill was attempted before it appeared in the available-skills list (18:46:26 WARN: NOT YET KNOWN), but agent recovered with Edit. Skill became available later in the session.
 
 <!-- session b58fd504 2026-11-08 -->
 - Tests timeout or hang frequently — agent uses `timeout 100`/`timeout 110` commands and manages stale processes (taskkill, netstat checks). Suggests test infrastructure or long-running tests need investigation.
