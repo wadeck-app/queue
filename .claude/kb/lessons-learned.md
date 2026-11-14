@@ -1,5 +1,29 @@
 # Lessons learned — queue
 
+### A `queue wait` cost 450 MB because of the history size, not the process count
+
+**Problem:** A peer blamed the five processes of one wait (about 65 MB each); measured on a real machine the shim was about 25 MB private, the wait process 453 MB with 201 MB of history on disk and 26 MB with an empty config dir.
+**Fix:** The wait reads through `HistoryReader.readRecent` (only the day files from the day before the window, only the wanted event lines, chunked reads); `forEachRecord` streams in 1 MiB chunks. Measure the tree first: sum private bytes and working set per process, once with the real config dir and once with an empty `QUEUE_CONFIG_DIR`.
+**Context:** `HistoryReader.read()` parses and caches every line of every day file before filtering, so a poll loop keeps the whole history resident. Its other callers (history, `--follow`, replay, dashboard) still use it.
+
+### A bin shim must not swallow a spawn failure
+
+**Problem:** A platform binary packed without its exec bit made the shim exit with no output (`execFileSync` throws EACCES with no numeric `status` and the catch only exited 1).
+**Fix:** `describeSpawnFailure` in `bin-launcher.js.tmpl` prints the file, the code and the fix; the publish job refuses to publish when `npm pack` lists `package/queue` or `package/bin/queue.js` without the exec bit; a macOS job (`shim-macos`) runs the shim tests, whose run tests are skipped on hosts without a platform package.
+**Context:** Windows already bypassed the Go launcher for every command except `start`; every platform does now, so only `start` needs the launcher binary. A shim test that gates on the platform must fail (or be visibly skipped with the reason), never pass silently.
+
+### A test with a fake clock that never advances loops forever and survives its agent
+
+**Problem:** A wait test whose injected clock did not move spun a vitest worker at 100% of a core; three such workers ran for over ten hours after the sub-agents that started them died, and two full-suite runs never finished.
+**Fix:** Injected clocks must advance on every `sleep`/poll call, and a loop under test needs an iteration cap that fails loudly. Check lingering workers with their CPU before blaming the suite (`Get-Process`, two samples a few seconds apart).
+**Context:** The CI runs the whole queue-cli suite in about 90 s, so a local run of many minutes is a hang, not a slow suite. Never start parallel full runs: they share the temp bundle lock and the machine.
+
+### The GitHub MCP `list_workflow_runs` ignores `per_page`
+
+**Problem:** `actions_list` with `per_page: 1` returned about twenty runs with full commit messages (tens of thousands of tokens).
+**Fix:** To read the result of a push, take the exit code of `queue wait ci <sha>` and, only if a job detail is needed, call `list_workflow_jobs` with the run id; filter runs with `workflow_runs_filter` (`branch`, `event`, `status`).
+**Context:** CI runs only on pushes to `main`, pull requests and manual dispatch; publishing is gated on `main`, so a change to the publish path is only proved by pushing to `main`.
+
 ### A repo-built bundle must never run the real `cli update` / updater (incident 2026-10-24/25)
 
 **Problem:** Tests spawned a repo-built `queue.cjs` with the real config dir and the real global npm; the background updater ran `npm install -g`, was killed mid-install, and the global CLI vanished.
