@@ -27,8 +27,10 @@ function resolveStdio(rawArgs, stdinIsTTY) {
   if (!hasBackground && !hasForeground) {
     // Auto-detect: pipe context (non-TTY) → NUL handles to prevent AllocConsole()
     // from libuv when a GUI-parent (flow.exe SUBSYSTEM:WINDOWS) passes PIPE handles.
-    // "queue events list|show" only read the event catalog, and the version and help flags only print: an agent in a background shell (non-TTY) needs their output
+    // "queue events list|show" only read the event catalog, and the version and help flags only print: an agent in a background shell (non-TTY) needs their output.
+    // "cli version" is the health test of the shared updater (it runs the staged bin with piped stdio and reads the version from the output): discarded, every update is abandoned
     var readOnlyCatalog = ['--version', '-v', '-V', '--help', '-h'].includes(args[0]) ||
+      (args[0] === 'cli' && args[1] === 'version') ||
       (cliName === 'queue' && args[0] === 'events' && (args[1] === 'list' || args[1] === 'show'));
     stdio = stdinIsTTY || readOnlyCatalog ? 'inherit' : 'ignore';
     // auto=true only when auto-detection chose 'ignore' (non-TTY)

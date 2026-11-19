@@ -112,6 +112,17 @@ describe('launcherTemplate resolveStdio', () => {
       expect(result.args).toEqual([...command, 'job.completed']);
     });
 
+    it('non-TTY + cli version: the output is kept, the updater health test of a staged install reads the version from it', () => {
+      const result = resolveStdio(['cli', 'version'], false);
+      expect(result.stdio).toBe('inherit');
+      expect(result.notice).toBeNull();
+      expect(result.auto).toBe(false);
+    });
+
+    it('non-TTY + cli update: still discarded like any other command', () => {
+      expect(resolveStdio(['cli', 'update'], false).stdio).toBe('ignore');
+    });
+
     it('non-TTY + events register: it writes through the daemon, so it keeps the discarded output like any other command', () => {
       const result = resolveStdio(['events', 'register', '--source', 'x'], false);
       expect(result.stdio).toBe('ignore');
