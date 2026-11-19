@@ -111,6 +111,7 @@ describe('backend', () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
     expect([...routes.keys()]).toEqual([
+      'GET /health',
       'GET /status',
       'GET /activity',
       'GET /activity/series',

@@ -2,6 +2,7 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 import { getErrorMessage, getQueueConfigDir, isRecord } from '@wadeck-app/queue-core';
 import { getStatus } from './status.js';
+import { getHealth } from './health.js';
 import { getActivity, getActivitySeries } from './activity.js';
 import { getOutcomes } from './outcomes.js';
 import { getBreakdown } from './breakdown.js';
@@ -81,6 +82,15 @@ function originOf(body: unknown, explicitCwd: string | undefined): PushOrigin {
  */
 export default function (ctx: ModuleContext): void {
   const configDir = getQueueConfigDir();
+
+  // The update test of app-core-cli (GET /health of a module, 200 with { ok, checks }): the same reads the pages do, read only, milliseconds, see health.ts
+  ctx.registerRoute('GET', '/health', async (_req, reply) => {
+    try {
+      return reply.code(200).send(await getHealth(configDir, defaultRegistryDir(process.env)));
+    } catch (err) {
+      return reply.code(500).send({ error: getErrorMessage(err) });
+    }
+  });
 
   ctx.registerRoute('GET', '/status', (_req, reply) => {
     try {
