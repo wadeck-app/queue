@@ -91,6 +91,8 @@ export interface RelayDaemonOptions {
   idleWatchdog?: Pick<IdleWatchdogOptions, 'graceMs' | 'intervalMs' | 'onTick'>;
   // Exists for timing-free test assertions (see RelayConnectionOptions): hooks of the connection loop. Production never sets it.
   connection?: Pick<RelayConnectionOptions, 'sleep' | 'onLoopEnd'>;
+  /** The version of queue-cli, sent to the relay so its console shows which machine this listener is (see RelayConnectionOptions.clientVersion). */
+  clientVersion?: string;
   /** Port to ask for (0 = any free one). Default: QUEUE_RELAY_PORT, then 47911. */
   port?: number;
 }
@@ -107,6 +109,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
   const relayLogger = createRelayLogger(join(stateDir, 'relay.log'));
   const connection = new RelayConnection({
     ...options.connection,
+    ...(options.clientVersion !== undefined && { clientVersion: options.clientVersion }),
     configDir,
     onLog: (line) => {
       // Echo to both file and console for foreground runs

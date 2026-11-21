@@ -15,8 +15,12 @@ if (!configDir) {
   process.exit(1);
 }
 
+// Defined by the bundler (ci/scripts/bundle.ts); the relay console shows it next to the host name, so it says so when this runs from the TypeScript build
+declare const __QUEUE_CLI_VERSION__: string;
+const version = typeof __QUEUE_CLI_VERSION__ !== 'undefined' ? __QUEUE_CLI_VERSION__ : 'unbundled-dev';
+
 // Start relay daemon with error handling
-startRelayDaemon(configDir)
+startRelayDaemon(configDir, undefined, { clientVersion: version })
   .catch((err) => {
     const message = getErrorMessage(err);
     const errorMsg = `[relay] Relay daemon failed to start: ${message}`;

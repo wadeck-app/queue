@@ -5,6 +5,7 @@ import { loadPlugin, type RelayPlugin, type RelayEnvelope } from './plugin-api.j
 import { ensureDaemonRunning, pushToQueue } from './push.js';
 import { matchesPayload } from './payloadMatch.js';
 import { pushLogLine } from './pushLogLine.js';
+import { clientIdentity, type ClientIdentity } from './clientId.js';
 
 interface LoadedPlugin {
   plugin: RelayPlugin;
@@ -35,6 +36,8 @@ export interface RelayConnectionOptions {
   // Exists for timing-free test assertions: called once when the connection loop has ended (stop() was honoured), so a test can
   // wait for that fact instead of a duration before asserting that nothing reconnected. Production never sets it.
   onLoopEnd?: () => void;
+  /** The version of the program running this client (queue-cli): sent to the relay as `client` at auth and as the User-Agent, so its console shows which machine a listener is. Not set: nothing is sent, as before. */
+  clientVersion?: string;
 }
 
 // How a delivery ended: pushed to the queue daemon, failed (push error, aborted or rejected), dropped by its plugin, matched no
@@ -142,7 +145,10 @@ export class RelayConnection {
   // Track last activity time (message, ping, or pong)
   private lastActivityAt: number | null = null;
 
+  private readonly identity: ClientIdentity | undefined;
+
   constructor(options: RelayConnectionOptions) {
+    this.identity = options.clientVersion === undefined ? undefined : clientIdentity(options.clientVersion);
     this.configDir = options.configDir;
     this.log = options.onLog ?? (() => {});
     this.retryDelayMs = options.retryDelayMs ?? NO_CONFIG_RETRY_DELAY_MS;
@@ -331,7 +337,7 @@ export class RelayConnection {
   /** Resolves once the connection closes (cleanly or not); rejects only on a connect-time error. */
   private connectOnce(config: RelayConfig): Promise<void> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(config.relayUrl);
+      const ws = this.identity === undefined ? new WebSocket(config.relayUrl) : new WebSocket(config.relayUrl, { headers: { 'User-Agent': this.identity.userAgent } });
       this.ws = ws;
       let settled = false;
       // Reset subscription tracking for this connection
@@ -389,7 +395,7 @@ export class RelayConnection {
       let opened = false;
       ws.on('open', () => {
         opened = true;
-        ws.send(JSON.stringify({ type: 'auth', token: config.token }));
+        ws.send(JSON.stringify({ type: 'auth', token: config.token, ...(this.identity !== undefined && { client: this.identity.client }) }));
       });
 
       ws.on('message', (raw) => {
