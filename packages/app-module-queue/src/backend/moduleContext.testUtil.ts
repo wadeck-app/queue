@@ -5,7 +5,8 @@ import { vi } from 'vitest';
 // When app-core-sdk adds a member to ModuleContext, this is the one place to add it.
 
 /** A context whose members are vi.fn() stubs; `registerRoute` collects the handlers by "METHOD /path". */
-export function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; ctx: ModuleContext } {
+export function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; effects: Map<string, string | undefined>; ctx: ModuleContext } {
+  const effects = new Map<string, string | undefined>();
   const routes = new Map<string, ModuleRouteHandler>();
   const ctx: ModuleContext = {
     dataDir: '/unused/data-dir',
@@ -16,12 +17,15 @@ export function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; ctx:
     on: vi.fn(),
     off: vi.fn(),
     emit: vi.fn(),
-    registerRoute: (method, subPath, handler) => routes.set(`${method} ${subPath}`, handler),
+    registerRoute: (method, subPath, handler, options) => {
+      effects.set(`${method} ${subPath}`, options?.effect);
+      routes.set(`${method} ${subPath}`, handler);
+    },
     fileVersion: vi.fn(),
     unchanged: vi.fn(),
     dispose: vi.fn(),
   };
-  return { routes, ctx };
+  return { routes, effects, ctx };
 }
 
 // The backend narrows req to the shape it reads (params/query/body) with its own cast; a real FastifyRequest has 25+ properties nobody fakes.

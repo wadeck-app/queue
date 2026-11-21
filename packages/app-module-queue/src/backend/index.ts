@@ -190,7 +190,7 @@ export default function (ctx: ModuleContext): void {
       }
       return reply.code(500).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 
   ctx.registerRoute('GET', '/logs', (req, reply) => {
     const query = (req as { query?: QueryParams }).query ?? {};
@@ -224,7 +224,7 @@ export default function (ctx: ModuleContext): void {
     } catch (err) {
       return reply.code(logFilesErrorStatus(err)).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 
   // Deletes ONE log file named by kind, day and variant (never a path). 400 malformed, 404 no such combination,
   // 409 protected (today, future, recently modified), 500 not deletable; a file already gone is a 200 with deleted: false
@@ -235,7 +235,7 @@ export default function (ctx: ModuleContext): void {
     } catch (err) {
       return reply.code(logFilesErrorStatus(err)).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 
   // The event catalog (what the programs declared) joined with the history; filters: q, source, status, prefix, match, declaredOnly, terminal
   ctx.registerRoute('GET', '/events', (req, reply) => {
@@ -302,7 +302,7 @@ export default function (ctx: ModuleContext): void {
       }
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 
   ctx.registerRoute('POST', '/retry/:eventId', async (req, reply) => {
     const { eventId } = req.params;
@@ -312,7 +312,7 @@ export default function (ctx: ModuleContext): void {
     } catch (err) {
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 
   // Moves every event that waited so long that nobody retries it any more to the dead-letter queue (nothing is deleted). The daemon does the move and emits queue.dlq.added itself
   // (this module writes nothing); when it is not reachable the move is done on the files and the response `message` says the event could not be sent
@@ -395,7 +395,7 @@ export default function (ctx: ModuleContext): void {
     } catch (err) {
       return reply.code(err instanceof DaemonUnreachableError ? 503 : 500).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 
   // The daemon clears the rows and emits queue.dlq.removed itself when it is reachable; otherwise the DLQ file is edited here and the response `message` says the event could not be sent
   ctx.registerRoute('POST', '/dlq/:id/clear', async (req, reply) => {
@@ -406,7 +406,7 @@ export default function (ctx: ModuleContext): void {
     } catch (err) {
       return reply.code(err instanceof UnexpectedDaemonAnswerError ? 502 : 500).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 
   // The registered projects, for the project selector of the History and DLQ pages
   ctx.registerRoute('GET', '/projects', (_req, reply) => {
@@ -529,5 +529,5 @@ export default function (ctx: ModuleContext): void {
       }
       return reply.code(500).send({ error: getErrorMessage(err) });
     }
-  });
+  }, { effect: 'sensitive' });
 }

@@ -43,6 +43,8 @@ function noUpdaterEnv(): NodeJS.ProcessEnv {
 }
 let configDir: string;
 let baseUrl: string;
+// The access token of the PIN the beforeAll sets in the throwaway app-core config: the sensitive routes answer 401 without it
+let accessToken: string;
 // The project registry the server reads (XDG_CONFIG_HOME/project), and the ids of the projects written in it
 let registryDir: string;
 let appProjectId: string;
@@ -193,6 +195,13 @@ describe('the packaged module through a real app-core server', () => {
         'or point QUEUE_TEST_APP_CORE_CLI_ENTRY at the dist/cli.bundle.js of a recent app-core-cli (global: app-core-cli update).',
       );
     }
+    // The sensitive routes need the PIN: choose one in the throwaway config (XDG_CONFIG_HOME of the server) and keep the access token it answers with
+    const pin = await fetch(`${baseUrl}/api/auth/pin/set`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: 'test-pin-12' }) });
+    const pinBody = (await pin.json()) as { accessToken?: string };
+    if (pin.status !== 200 || pinBody.accessToken === undefined) {
+      throw new Error(`The test could not choose a PIN on its throwaway app-core (${pin.status} ${JSON.stringify(pinBody)}): the sensitive routes cannot be called. app-core-cli needs POST /api/auth/pin/set (>= 2026.11.20-209).`);
+    }
+    accessToken = pinBody.accessToken;
   });
 
   afterAll(async () => {
@@ -205,14 +214,27 @@ describe('the packaged module through a real app-core server', () => {
     removeTempDir(workDir);
   });
 
-  async function call(method: string, path: string, init: { headers?: Record<string, string>; body?: unknown } = {}): Promise<{ status: number; body: Record<string, unknown> }> {
+  /** `anonymous`: no access token, as a curl would call. Every other call carries the one of the PIN the beforeAll set. */
+  async function call(method: string, path: string, init: { headers?: Record<string, string>; body?: unknown; anonymous?: boolean } = {}): Promise<{ status: number; body: Record<string, unknown> }> {
+    const headers = { ...(init.anonymous === true ? {} : { Authorization: `Bearer ${accessToken}` }), ...init.headers };
     const response = await fetch(`${baseUrl}/api/modules/queue${path}`, {
       method,
-      ...(init.headers !== undefined && { headers: init.headers }),
+      headers,
       ...(init.body !== undefined && { body: JSON.stringify(init.body) }),
     });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   }
+
+  it('a sensitive route (the DLQ clear) answers 401 elevation-required to a caller without the access token, and never reaches its handler', async () => {
+    const { status, body } = await call('POST', '/dlq/whatever/clear', { anonymous: true });
+    expect(status).toBe(401);
+    expect(body['error']).toBe('elevation-required');
+  });
+
+  it('the reads stay open: a GET needs no access token', async () => {
+    const { status } = await call('GET', '/history/evt-with-payload', { anonymous: true });
+    expect(status).toBe(200);
+  });
 
   it('GET /history/:eventId hands the real eventId to the handler and returns the entry', async () => {
     const { status, body } = await call('GET', '/history/evt-with-payload');

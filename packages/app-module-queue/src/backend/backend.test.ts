@@ -107,6 +107,22 @@ beforeEach(() => {
 });
 
 describe('backend', () => {
+  it('only the routes that run subscribers or delete history ask for the PIN: no other route is marked, and no GET', () => {
+    const { effects, ctx } = collectRoutes();
+    backend(ctx);
+    const sensitive = [...effects].filter(([, effect]) => effect === 'sensitive').map(([route]) => route).sort();
+    expect(sensitive).toEqual([
+      'POST /dlq/:id/clear',
+      'POST /dlq/:id/replay',
+      'POST /events/:name/push-test',
+      'POST /history/:eventId/replay',
+      'POST /log-files/:kind/:day/:variant/delete',
+      'POST /log-files/:kind/prune',
+      'POST /push',
+      'POST /retry/:eventId',
+    ]);
+  });
+
   it('registers one route per app-module-queue operation', () => {
     const { routes, ctx } = collectRoutes();
     backend(ctx);
