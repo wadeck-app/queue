@@ -22,7 +22,7 @@ await build({
     entryPoints: [path.join(root, 'src/cli/queue-updater-entry.ts')],
     bundle: true,
     platform: 'node',
-    target: 'node22',
+    target: 'node24',
     format: 'cjs',
     outfile,
     // No externals -- all dependencies must be inlined

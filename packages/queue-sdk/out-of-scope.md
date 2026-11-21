@@ -13,4 +13,4 @@ What the SDK deliberately does not do. A request for one of these is a decision 
 | Validating a pushed payload against a declared schema | A declaration is documentation (`registerEvents`); checking it needs a validator dependency | Suggested name form: `<source>.<verb>` such as `job.started` |
 | Remote daemons, TLS, other hosts | The daemon binds `127.0.0.1` only | |
 | Clients in other languages | The contract is `docs/push-protocol.md` in the repository | Implement the contract |
-| Browsers | Node >= 22 only (files, `child_process`) | |
+| Browsers | Node >= 24 only (files, `child_process`) | |

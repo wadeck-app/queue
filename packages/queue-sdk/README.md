@@ -1,6 +1,6 @@
 # @wadeck-app/queue-sdk
 
-Push events to the queue daemon from any Node program. It finds the daemon, authenticates, starts it on demand, checks that SDK and daemon speak compatible protocols, and reports every failure instead of swallowing it. Zero runtime dependencies, Node >= 22, ESM and CommonJS, Windows / macOS / Linux.
+Push events to the queue daemon from any Node program. It finds the daemon, authenticates, starts it on demand, checks that SDK and daemon speak compatible protocols, and reports every failure instead of swallowing it. Zero runtime dependencies, Node >= 24, ESM and CommonJS, Windows / macOS / Linux.
 
 ```ts
 import { createQueuePublisher } from '@wadeck-app/queue-sdk';
