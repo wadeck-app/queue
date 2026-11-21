@@ -13,6 +13,7 @@ const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf
   id?: string;
   version?: unknown;
   backendEntryPath?: unknown;
+  optionalRequires?: Record<string, string>;
   expose?: { slots?: Record<string, { accepts: string[] }> };
   extensionPoints: { view: { type: string; value: string } }[];
 };
@@ -20,6 +21,11 @@ const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf
 describe('manifest.json (source manifest of the app-core-cli layout)', () => {
   it('declares the id the module is registered under: app-core refuses a manifest without it ("Required" at path id)', () => {
     expect(manifest.id).toBe('queue');
+  });
+
+  it('declares project as an optional dependency: the project page asks only the modules that say so (GET related/project/:id), and queue works without it', () => {
+    expect(manifest.optionalRequires).toEqual({ project: '*' });
+    expect(manifest).not.toHaveProperty('requires');
   });
 
   it('holds neither version nor backendEntryPath: `app-core-cli package` stamps the first and fixes the second', () => {
