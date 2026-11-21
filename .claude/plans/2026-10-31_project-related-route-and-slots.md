@@ -1,6 +1,6 @@
 # Project integration: `related/project/:projectId` + `queue:project-header` slot
 
-Requested by project-owner (module `project`, project detail page `/modules/project/p/:project`). Contract is theirs to adapt; their answers override the first draft.
+Requested by project-owner (module `project`, project detail page `/modules/project/projects/:project` (was `/p/:project`)). Contract is theirs to adapt; their answers override the first draft.
 
 ## Contract decisions (agreed with project-owner)
 
@@ -33,7 +33,7 @@ Response: `{ title: "Queue", count, items: [{label, url, subtitle?}], moreUrl }`
 1. `manifest.json`: `expose.slots["project-header"]` with `accepts` limited to link-like roots (verify the exact `$type`s that exist; `Badge` with `href` is used by `relay-badge.yaml`). Final ids and `$type`s are sent to project-owner after review.
 2. Embedded on the history and DLQ pages (the two views that already take `?project=`). Subscribers page: deferred (it takes `?cwd=`, not a project); requires `GET /subscribers?project=` first. Tell the peer.
 3. A contributed node cannot read the query param (`$route` = path params only in the bundled shell, unverified for the peer's app-core). Host exposes it: new route `GET /project-scope?project=<id>` returns `{ id, name, found }` (registry incl. deleted); host source `projectScope` (params `project: $urlParam.project`); contributed nodes read `$sources.projectScope.id|name`; the slot is shown with `$if: $sources.projectScope.found`.
-4. Unverified, to confirm with `app-core-cli dev` and the peer: how a contributed node builds `/modules/project/p/<id>` from `$sources.projectScope.id` (string templating on a non-row component); fallback = peer supplies the href expression.
+4. Unverified, to confirm with `app-core-cli dev` and the peer: how a contributed node builds `/modules/project/projects/<id>` from `$sources.projectScope.id` (string templating on a non-row component); fallback = peer supplies the href expression.
 
 ## Tests
 

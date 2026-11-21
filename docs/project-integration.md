@@ -58,6 +58,6 @@ The page reads the project through `GET /project-scope?project=<id>`:
 
 `found` is `false` (status 200) for a missing, repeated, malformed or unregistered id: a header must not break the page. A soft-deleted project is found. An unreadable registry answers 500.
 
-A contributor needs `requires: { "queue": "*" }` and a root of an accepted type; it builds its own href (`/modules/project/p/<id>`). Whether a contributed node can read `$sources.projectScope` is not verified.
+A contributor needs `requires: { "queue": "*" }` and a root of an accepted type; it builds its own href (`/modules/project/projects/<id>`; the project routes also return `href` in their rows, prefer it when you have it; the old `/p/<id>` address no longer exists). Whether a contributed node can read `$sources.projectScope` is not verified.
 
 The Subscribers page does not embed the slot yet: it filters on `?cwd=` (a folder inside a registered project, else 400), not on a project.
