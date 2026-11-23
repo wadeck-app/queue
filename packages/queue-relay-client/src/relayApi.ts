@@ -58,6 +58,10 @@ export interface DeliveryQuery {
   includePayload?: boolean;
   /** ISO time: only deliveries received at or after it (the relay ignores the parameter until it supports it, then the caller filters by time itself). */
   since?: string;
+  /** owner/name (GitHub repository.full_name, GitLab path_with_namespace): only that repository; an older relay ignores it. */
+  repo?: string;
+  /** YYYY-MM-DD: the day to read (default: today). */
+  day?: string;
 }
 
 // Convert relay WebSocket URL to HTTP base URL
@@ -71,6 +75,7 @@ export function httpBaseFromRelayUrl(relayUrl: string): string {
 export function createRelayApiClient(options: RelayApiClientOptions): {
   listWebhookConfigs(): Promise<WebhookConfigInfo[]>;
   listDeliveries(query?: DeliveryQuery): Promise<DeliveryInfo[]>;
+  listDeliveriesSince(query: DeliveryQuery): Promise<DeliveryInfo[]>;
 } {
   const { relayUrl, token, fetch: customFetch = globalThis.fetch, timeoutMs = 10000 } = options;
   const httpBase = httpBaseFromRelayUrl(relayUrl);
@@ -207,7 +212,8 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
     return obj.configs as WebhookConfigInfo[];
   }
 
-  async function listDeliveries(query?: DeliveryQuery): Promise<DeliveryInfo[]> {
+  /** One page, with the earlier day the relay names when `since` reaches before the day asked (see listDeliveriesSince). */
+  async function fetchDeliveriesPage(query?: DeliveryQuery): Promise<{ entries: DeliveryInfo[]; olderDay: string | null }> {
     const url = new URL(`${httpBase}/api/webhook-history`);
 
     // Add optional query parameters
@@ -222,6 +228,12 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
     }
     if (query?.verified !== undefined) {
       url.searchParams.set('verified', query.verified ? 'true' : 'false');
+    }
+    if (query?.repo !== undefined) {
+      url.searchParams.set('repo', query.repo);
+    }
+    if (query?.day !== undefined) {
+      url.searchParams.set('day', query.day);
     }
     if (query?.since !== undefined) {
       url.searchParams.set('since', query.since);
@@ -320,12 +332,30 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
       );
     }
 
-    return obj.entries as DeliveryInfo[];
+    return { entries: obj.entries as DeliveryInfo[], olderDay: obj.sinceBeforeDay === true && typeof obj.olderDay === 'string' ? obj.olderDay : null };
+  }
+
+  async function listDeliveries(query?: DeliveryQuery): Promise<DeliveryInfo[]> {
+    return (await fetchDeliveriesPage(query)).entries;
+  }
+
+  /**
+   * The deliveries received at or after `query.since`, across midnight: when the relay says `since` reaches before the day it answered (`sinceBeforeDay`), the earlier
+   * day it names (`olderDay`) is asked for with the same filters and its deliveries are added. Newest first, like the relay.
+   */
+  async function listDeliveriesSince(query: DeliveryQuery): Promise<DeliveryInfo[]> {
+    const first = await fetchDeliveriesPage(query);
+    if (first.olderDay === null) {
+      return first.entries;
+    }
+    const older = await fetchDeliveriesPage({ ...query, day: first.olderDay });
+    return [...first.entries, ...older.entries];
   }
 
   return {
     listWebhookConfigs,
     listDeliveries,
+    listDeliveriesSince,
   };
 }
 

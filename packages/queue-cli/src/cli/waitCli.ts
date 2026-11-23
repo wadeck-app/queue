@@ -394,7 +394,7 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
           // Nothing about a commit can have been delivered before it existed: its committer date (when git is read and knows it) bounds the read, else the --since window
           const committedMs = parsedArgs.noInfer ? Number.NaN : Date.parse(git.read(['show', '-s', '--format=%cI', sha]) ?? '');
           const sinceMs = Math.max(now() - options.lookbackMs, Number.isFinite(committedMs) ? committedMs : Number.NEGATIVE_INFINITY);
-          return readRelayHistoryEntries(createRelayApiClient({ relayUrl: config.relayUrl, token: config.token }), sinceMs);
+          return readRelayHistoryEntries(createRelayApiClient({ relayUrl: config.relayUrl, token: config.token }), sinceMs, options.repo);
         }),
         // Local, no network: the relay client says whether it is connected and how many times it connected, so the relay's history is read at each connection, not on a timer
         relayConnection: async () => {

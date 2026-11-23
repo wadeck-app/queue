@@ -36,14 +36,15 @@ describe('entriesOfRelayDeliveries', () => {
 });
 
 describe('readRelayHistoryEntries', () => {
-  it('asks the relay for the latest verified github workflow_run with their payload, from the given time, and keeps only what was received since', async () => {
+  it('asks the relay for the verified github workflow_run of the repository with their payload, from the given time, and keeps only what was received since', async () => {
     const asked: unknown[] = [];
     const since = Date.parse('2026-11-23T20:00:00.000Z');
     const entries = await readRelayHistoryEntries(
-      { listDeliveries: async (query) => { asked.push(query); return [delivery({ deliveryId: 'new' }), delivery({ deliveryId: 'old', receivedAt: '2026-11-23T19:59:59.999Z' })]; } },
+      { listDeliveriesSince: async (query) => { asked.push(query); return [delivery({ deliveryId: 'new' }), delivery({ deliveryId: 'old', receivedAt: '2026-11-23T19:59:59.999Z' })]; } },
       since,
+      'wadeck-app/machine',
     );
-    expect(asked).toEqual([{ limit: 100, eventType: 'workflow_run', source: 'github', verified: true, includePayload: true, since: '2026-11-23T20:00:00.000Z' }]);
+    expect(asked).toEqual([{ limit: 100, eventType: 'workflow_run', source: 'github', verified: true, includePayload: true, since: '2026-11-23T20:00:00.000Z', repo: 'wadeck-app/machine' }]);
     expect(entries.map((entry) => entry.eventId)).toEqual(['relay-new']);
   });
 });

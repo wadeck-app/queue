@@ -34,7 +34,8 @@ export function entriesOfRelayDeliveries(deliveries: RelayDelivery[]): HistoryEn
 
 /** What `queue wait ci` needs of the relay's HTTP API: the deliveries it holds, newest first. */
 export interface RelayHistoryApi {
-  listDeliveries(query: { limit: number; eventType: string; source: string; verified: boolean; includePayload: boolean; since?: string }): Promise<RelayDelivery[]>;
+  /** Across midnight: what was received at or after `since`, the day before included when it reaches there. */
+  listDeliveriesSince(query: { limit: number; eventType: string; source: string; verified: boolean; includePayload: boolean; since: string; repo?: string }): Promise<RelayDelivery[]>;
 }
 
 /**
@@ -42,7 +43,7 @@ export interface RelayHistoryApi {
  * have been delivered before). The time is also sent as `since` so a relay that supports it sends less; one that does not sends its latest ones and the filter here applies.
  * A relay that cannot be read throws, with the reason.
  */
-export async function readRelayHistoryEntries(api: RelayHistoryApi, sinceMs: number): Promise<HistoryEntry[]> {
-  const deliveries = await api.listDeliveries({ limit: RELAY_HISTORY_LIMIT, eventType: 'workflow_run', source: 'github', verified: true, includePayload: true, since: new Date(sinceMs).toISOString() });
+export async function readRelayHistoryEntries(api: RelayHistoryApi, sinceMs: number, repo?: string): Promise<HistoryEntry[]> {
+  const deliveries = await api.listDeliveriesSince({ limit: RELAY_HISTORY_LIMIT, eventType: 'workflow_run', source: 'github', verified: true, includePayload: true, since: new Date(sinceMs).toISOString(), ...(repo !== undefined && { repo }) });
   return entriesOfRelayDeliveries(deliveries).filter((entry) => Date.parse(entry.ts) >= sinceMs);
 }
