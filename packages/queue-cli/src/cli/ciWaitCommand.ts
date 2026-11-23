@@ -24,12 +24,18 @@ export interface CiWaitDeps {
   sleep: (ms: number) => Promise<void>;
   io: WaitIO;
   /**
-   * The workflow_run deliveries the relay itself holds, as history entries (in memory, never pushed into the queue). Read while the wait is pending, because a delivery that came while
-   * the relay client was not connected is not in the local history and is not replayed to it. Absent: only the local history counts. A failure is warned about once, then the wait goes on.
+   * The workflow_run deliveries the relay itself holds, as history entries (in memory, never pushed into the queue). Read once when the relay client is connected and again after each
+   * reconnection (see `relayConnection`), never on a timer: a delivery that came while the client was not connected is not in the local history and is not replayed to it, and after
+   * that the live socket sees everything. Absent: only the local history counts. A failure is warned about once, then the wait goes on.
    */
   fetchRelayEntries?: () => Promise<HistoryEntry[]>;
-  /** How long to wait between two reads of the relay's history; default 20 s. */
-  relayHistoryEveryMs?: number;
+  /**
+   * Whether the relay client is connected and how many times the relay authenticated it since it started (local, no network). A new count means the socket dropped and came
+   * back, which is when the relay's history is read again. Absent: connected, count 0 (one read).
+   */
+  relayConnection?: () => Promise<{ connected: boolean; connections: number }>;
+  /** How often `relayConnection` is asked while the wait is pending; default 5 s. */
+  relayProbeEveryMs?: number;
 }
 
 export interface CiWaitCommandOptions extends CiWaitOptions {
@@ -81,10 +87,12 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
   let relayChecked = false;
 
   let relayEntries: HistoryEntry[] = [];
-  let relayReadAtMs = Number.NEGATIVE_INFINITY;
+  let relayProbeAtMs = Number.NEGATIVE_INFINITY;
+  // The connection count the relay history was last read for: -1 = never, so the first connected probe reads
+  let relayReadConnections = -1;
   let relayReadWarned = false;
   let relayReadOk = false;
-  const relayEveryMs = deps.relayHistoryEveryMs ?? 20_000;
+  const relayProbeEveryMs = deps.relayProbeEveryMs ?? 5_000;
 
   for (;;) {
     const nowMs = deps.now();
@@ -108,22 +116,29 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
       }
     }
 
-    // Only a wait that is not over reads the relay's history (a CI that already finished locally costs no request): what the relay client was not connected for is there
-    if (deps.fetchRelayEntries !== undefined && nowMs - relayReadAtMs >= relayEveryMs) {
-      relayReadAtMs = nowMs;
-      try {
-        relayEntries = await deps.fetchRelayEntries();
-        relayReadOk = true;
-        entries = [...localEntries, ...relayEntries];
-        verdict = evaluateRuns(collectRuns(entries, options), options, nowMs);
-      } catch (err) {
-        if (!relayReadWarned) {
-          relayReadWarned = true;
-          io.stderr.write(`[warn] The relay's own webhook history could not be read (${getErrorMessage(err)}): only what this machine's relay client received is counted, so a delivery that came while it was not connected is missed.\n`);
+    // Only a wait that is not over reads the relay's history (a CI that already finished locally costs no request), once per connection of the relay client: what it was not
+    // connected for is there, and once it is connected the live socket sees the rest. The connection is asked about every few seconds (local, no network).
+    if (deps.fetchRelayEntries !== undefined && nowMs - relayProbeAtMs >= relayProbeEveryMs) {
+      relayProbeAtMs = nowMs;
+      const link = deps.relayConnection === undefined ? { connected: true, connections: 0 } : await deps.relayConnection().catch(() => null);
+      if (link !== null && link.connected && link.connections !== relayReadConnections) {
+        relayReadConnections = link.connections;
+        try {
+          // Merged by delivery: a delivery read twice (after a reconnection) counts once
+          const known = new Set(relayEntries.map((entry) => entry.eventId));
+          relayEntries = [...relayEntries, ...(await deps.fetchRelayEntries()).filter((entry) => !known.has(entry.eventId))];
+          relayReadOk = true;
+          entries = [...localEntries, ...relayEntries];
+          verdict = evaluateRuns(collectRuns(entries, options), options, nowMs);
+        } catch (err) {
+          if (!relayReadWarned) {
+            relayReadWarned = true;
+            io.stderr.write(`[warn] The relay's own webhook history could not be read (${getErrorMessage(err)}): only what this machine's relay client received is counted, so a delivery that came while it was not connected is missed.\n`);
+          }
         }
-      }
-      if (verdict.state !== 'pending') {
-        return report(verdict.state, verdict.runs, verdict.state === 'failed' ? verdict.failed : [], options, io);
+        if (verdict.state !== 'pending') {
+          return report(verdict.state, verdict.runs, verdict.state === 'failed' ? verdict.failed : [], options, io);
+        }
       }
     }
 

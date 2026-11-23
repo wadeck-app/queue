@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { entriesOfRelayDeliveries, type RelayDelivery } from './ciWaitRelayHistory.js';
+import { entriesOfRelayDeliveries, readRelayHistoryEntries, type RelayDelivery } from './ciWaitRelayHistory.js';
 import { collectRuns } from './ciWait.js';
 
 const SHA = '3106cbc6676be06d0001cefada74ac2a55291da2';
@@ -32,5 +32,18 @@ describe('entriesOfRelayDeliveries', () => {
       delivery({ payload: null }),
       delivery({ payload: undefined }),
     ])).toEqual([]);
+  });
+});
+
+describe('readRelayHistoryEntries', () => {
+  it('asks the relay for the latest verified github workflow_run with their payload, from the given time, and keeps only what was received since', async () => {
+    const asked: unknown[] = [];
+    const since = Date.parse('2026-11-23T20:00:00.000Z');
+    const entries = await readRelayHistoryEntries(
+      { listDeliveries: async (query) => { asked.push(query); return [delivery({ deliveryId: 'new' }), delivery({ deliveryId: 'old', receivedAt: '2026-11-23T19:59:59.999Z' })]; } },
+      since,
+    );
+    expect(asked).toEqual([{ limit: 100, eventType: 'workflow_run', source: 'github', verified: true, includePayload: true, since: '2026-11-23T20:00:00.000Z' }]);
+    expect(entries.map((entry) => entry.eventId)).toEqual(['relay-new']);
   });
 });

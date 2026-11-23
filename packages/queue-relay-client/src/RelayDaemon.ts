@@ -12,6 +12,8 @@ import { startIdleWatchdog, pinRelay, type IdleWatchdogOptions } from './onDeman
 export const RELAY_DAEMON_PORT = DEFAULT_RELAY_DAEMON_PORT;
 
 export interface RelayStatus {
+  /** How many times the relay authenticated this client since it started; a wait reads it to know the socket came back. Absent in an older relay daemon. */
+  connections?: number;
   connected: boolean;
   pid: number;
   uptimeSec: number;
@@ -138,6 +140,7 @@ export async function startRelayDaemon(configDir: string, shutdownDeps?: Shutdow
         const diag = connection.getDiagnostics();
         return {
           connected: connection.isConnected(),
+          connections: connection.connectionCount(),
           pid: process.pid,
           uptimeSec: Math.round((Date.now() - startedAt) / 1000),
           lastError: diag.lastError,

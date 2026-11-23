@@ -119,6 +119,8 @@ export class RelayConnection {
   private readonly onLoopEnd: (() => void) | undefined;
   private ws: WebSocket | null = null;
   private connected = false;
+  // How many times the relay accepted this client since it started: a change tells a wait that the socket was dropped and came back (a deploy restarts the relay)
+  private authenticatedCount = 0;
   private stopped = false;
   private reconnectDelay = MIN_RECONNECT_DELAY_MS;
   private loadedPlugins: LoadedPlugin[] = [];
@@ -167,6 +169,11 @@ export class RelayConnection {
       intervalMs: options.heartbeat?.intervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
       timeoutMs: options.heartbeat?.timeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS,
     };
+  }
+
+  /** How many times the relay authenticated this client since it started (1 after the first connection, one more per reconnection). */
+  connectionCount(): number {
+    return this.authenticatedCount;
   }
 
   isConnected(): boolean {
@@ -559,6 +566,7 @@ export class RelayConnection {
     switch (msg.type) {
       case 'authenticated':
         this.connected = true;
+        this.authenticatedCount++;
         // Clear error state on successful authentication
         this.lastError = null;
         this.lastErrorAt = null;

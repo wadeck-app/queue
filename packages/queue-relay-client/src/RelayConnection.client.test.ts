@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 /** A relay that records the User-Agent of the handshake and the first message (the auth) of one connection. */
-async function runAgainstFakeRelay(clientVersion: string | undefined): Promise<{ userAgent: string | undefined; auth: Record<string, unknown> }> {
+async function runAgainstFakeRelay(clientVersion: string | undefined): Promise<{ userAgent: string | undefined; auth: Record<string, unknown>; connections: number }> {
   tmpDir = join(tmpdir(), `queue-relay-client-id-${crypto.randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
   const wss = new WebSocketServer({ port: 0 });
@@ -37,17 +37,22 @@ async function runAgainstFakeRelay(clientVersion: string | undefined): Promise<{
   wss.on('connection', (ws, request) => {
     userAgent = request.headers['user-agent'];
     ws.on('message', (data) => {
-      auth ??= JSON.parse(String(data)) as Record<string, unknown>;
-      ws.send(JSON.stringify({ type: 'authenticated', username: 'test' }));
+      const message = JSON.parse(String(data)) as Record<string, unknown>;
+      // Only the auth message is answered, as the real relay does: the subscribe that follows must not count as a second authentication
+      if (message['type'] === 'auth') {
+        auth = message;
+        ws.send(JSON.stringify({ type: 'authenticated', username: 'test' }));
+      }
     });
   });
   const connection = new RelayConnection({ configDir: tmpDir, retryDelayMs: 10, ...(clientVersion !== undefined && { clientVersion }) });
   try {
     const started = connection.start();
-    await waitFor(() => auth !== undefined, 'the relay to receive the auth message');
+    await waitFor(() => auth !== undefined && connection.connectionCount() === 1, 'the relay to receive the auth message and accept the client');
+    const connections = connection.connectionCount();
     connection.stop();
     await started;
-    return { userAgent, auth: auth! };
+    return { userAgent, auth: auth!, connections };
   } finally {
     wss.close();
   }
@@ -61,6 +66,10 @@ describe('RelayConnection: who it says it is', () => {
     expect(String(auth['client'])).toMatch(/^queue-cli\/2026\.11\.21-314-e480bf1c host=\S+/);
     expect(String(auth['client']).length).toBeLessThanOrEqual(64);
     expect(userAgent).toBe('queue-cli/2026.11.21-314-e480bf1c');
+  });
+
+  it('counts the times the relay accepted the client: a wait reads it to know the socket came back', async () => {
+    expect((await runAgainstFakeRelay('1.0.0')).connections).toBe(1);
   });
 
   it('without a client version nothing is added: the auth message holds the type and the token only', async () => {

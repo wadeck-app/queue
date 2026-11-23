@@ -391,8 +391,16 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
           if (config === null) {
             throw new Error('there is no relay.yml');
           }
-          return readRelayHistoryEntries(createRelayApiClient({ relayUrl: config.relayUrl, token: config.token }));
+          // Nothing about a commit can have been delivered before it existed: its committer date (when git is read and knows it) bounds the read, else the --since window
+          const committedMs = parsedArgs.noInfer ? Number.NaN : Date.parse(git.read(['show', '-s', '--format=%cI', sha]) ?? '');
+          const sinceMs = Math.max(now() - options.lookbackMs, Number.isFinite(committedMs) ? committedMs : Number.NEGATIVE_INFINITY);
+          return readRelayHistoryEntries(createRelayApiClient({ relayUrl: config.relayUrl, token: config.token }), sinceMs);
         }),
+        // Local, no network: the relay client says whether it is connected and how many times it connected, so the relay's history is read at each connection, not on a timer
+        relayConnection: async () => {
+          const status = (await relay.send('status', undefined)) as { connected?: boolean; connections?: number } | null;
+          return { connected: Boolean(status?.connected), connections: status?.connections ?? 0 };
+        },
         // Called only when the history holds nothing for this commit yet: a CI that already finished never starts the relay
         relayStatus: async () => {
           const wasRunning = await relay.isRunning().catch(() => false);

@@ -56,6 +56,8 @@ export interface DeliveryQuery {
   source?: string;
   verified?: boolean;
   includePayload?: boolean;
+  /** ISO time: only deliveries received at or after it (the relay ignores the parameter until it supports it, then the caller filters by time itself). */
+  since?: string;
 }
 
 // Convert relay WebSocket URL to HTTP base URL
@@ -220,6 +222,9 @@ export function createRelayApiClient(options: RelayApiClientOptions): {
     }
     if (query?.verified !== undefined) {
       url.searchParams.set('verified', query.verified ? 'true' : 'false');
+    }
+    if (query?.since !== undefined) {
+      url.searchParams.set('since', query.since);
     }
     if (query?.includePayload === true) {
       url.searchParams.set('includePayload', '1');

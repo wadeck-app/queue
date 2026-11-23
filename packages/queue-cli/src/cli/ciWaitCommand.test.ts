@@ -236,26 +236,47 @@ describe('ciWaitCommand: no run seen, was anything delivered for this repository
 
 describe('ciWaitCommand: what the relay client was not connected for (the relay keeps it)', () => {
   it('finds a run whose requested delivery came before the relay client connected, from the relay history, and keeps waiting for it', async () => {
-    const h = harness(() => []);
-    let reads = 0;
-    h.deps.fetchRelayEntries = async () => {
-      reads++;
-      // The relay holds `requested`, then (from 60 s) `completed`
-      return h.clock.now >= T0 + 60_000 ? [runEntry(T0 - 10_000, 'queued'), runEntry(T0 + 60_000, 'completed', 'success')] : [runEntry(T0 - 10_000, 'queued')];
-    };
+    const h = harness((now) => (now >= T0 + 60_000 ? [runEntry(T0 + 60_000, 'completed', 'success')] : []));
+    h.deps.fetchRelayEntries = async () => [runEntry(T0 - 10_000, 'queued')];
     expect(await ciWaitCommand(base, h.deps)).toBe(CI_EXIT.PASSED);
     expect(h.err.join('')).toContain('still running: "CI" (queued)');
     expect(h.err.join('')).not.toContain('no workflow run seen yet for this commit after');
-    expect(reads).toBeGreaterThan(1);
   });
 
-  it('reads the relay history at most once per interval (20 s by default), not once per poll', async () => {
+  it('reads the relay history once, when the relay client is connected, never on a timer', async () => {
     const h = harness(() => []);
     let reads = 0;
     h.deps.fetchRelayEntries = async () => { reads++; return []; };
+    await ciWaitCommand({ ...base, startGraceMs: 300_000 }, h.deps);
+    // 300 s of polls and of probes of the connection: one read
+    expect(reads).toBe(1);
+  });
+
+  it('reads it again after a reconnection (the relay restarts on a deploy and drops the socket), and a delivery read twice counts once', async () => {
+    const h = harness(() => []);
+    let reads = 0;
+    h.deps.fetchRelayEntries = async () => { reads++; return [runEntry(T0 - 10_000, 'queued')]; };
+    // Connected once from the start, again (count 2) after 100 s
+    h.deps.relayConnection = async () => ({ connected: true, connections: h.clock.now >= T0 + 100_000 ? 2 : 1 });
+    await ciWaitCommand({ ...base, startGraceMs: 300_000 }, h.deps);
+    expect(reads).toBe(2);
+  });
+
+  it('does not read while the relay client is not connected, and reads as soon as it is', async () => {
+    const h = harness(() => []);
+    let reads = 0;
+    h.deps.fetchRelayEntries = async () => { reads++; return []; };
+    let readsWhenConnected = -1;
+    h.deps.relayConnection = async () => {
+      const connected = h.clock.now >= T0 + 30_000;
+      if (connected && readsWhenConnected === -1) {
+        readsWhenConnected = reads;
+      }
+      return { connected, connections: connected ? 1 : 0 };
+    };
     await ciWaitCommand({ ...base, startGraceMs: 100_000 }, h.deps);
-    // 100 s of one-second polls: a read at 0, 20, 40, 60, 80 and 100 s (the read comes before the give-up check)
-    expect(reads).toBe(6);
+    expect(readsWhenConnected).toBe(0);
+    expect(reads).toBe(1);
   });
 
   it('never reads it when the local history already says the CI is over', async () => {
@@ -269,6 +290,7 @@ describe('ciWaitCommand: what the relay client was not connected for (the relay 
   it('a relay history that cannot be read is warned about once, with the reason, and the local history still decides', async () => {
     const h = harness((now) => (now >= T0 + 30_000 ? [runEntry(T0 + 30_000, 'completed', 'success')] : []));
     h.deps.fetchRelayEntries = async () => { throw new Error('Cannot reach the relay at https://relay.example'); };
+    h.deps.relayConnection = async () => ({ connected: true, connections: h.clock.now < T0 + 10_000 ? 1 : 2 });
     expect(await ciWaitCommand({ ...base, settleMs: 0 }, h.deps)).toBe(CI_EXIT.PASSED);
     const warnings = h.err.join('').split('\n').filter((line) => line.startsWith("[warn] The relay's own webhook history could not be read"));
     expect(warnings).toHaveLength(1);
