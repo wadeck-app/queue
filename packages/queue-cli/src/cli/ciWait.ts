@@ -2,6 +2,10 @@
  * `queue wait ci`: decides, from the `on.github.workflow_run` entries of the history, whether the CI of a commit is done.
  * Pure logic only (no I/O, no clock): the caller feeds the entries and the current time.
  *
+ * The `on.github.workflow_job` entries only prove that a run exists and is not over: GitHub sends `workflow_run` `requested` once, at the push, and nothing more
+ * until the run starts, so a run that stays queued (no runner) or whose `requested` was delivered while no relay client was connected is seen through its jobs.
+ * A job never completes a run: only a `workflow_run` entry does, so a lost `completed` ends in a timeout, never in a false pass.
+ *
  * GitHub exposes no "whole commit" status, so "done" is defined here:
  *  - with --workflow names: exactly those workflows have a completed run for the SHA;
  *  - otherwise: every run seen for the SHA is completed, and nothing new happened for `settleMs`
@@ -64,11 +68,24 @@ interface WorkflowRunPayload {
   repository?: { full_name?: string };
 }
 
+export const WORKFLOW_JOB_EVENT = 'on.github.workflow_job';
+
+interface WorkflowJobPayload {
+  workflow_job?: {
+    run_id?: number;
+    workflow_name?: string | null;
+    head_sha?: string;
+    run_attempt?: number;
+    status?: string;
+  };
+  repository?: { full_name?: string };
+}
+
 /** The repositories (`owner/name`) that delivered a workflow_run event to the relay, in the entries given. */
 export function repositoriesSeen(entries: HistoryEntry[]): string[] {
   const seen = new Set<string>();
   for (const entry of entries) {
-    if (entry.event !== WORKFLOW_RUN_EVENT || entry.orphan) {
+    if ((entry.event !== WORKFLOW_RUN_EVENT && entry.event !== WORKFLOW_JOB_EVENT) || entry.orphan) {
       continue;
     }
     const name = (entry.payload as WorkflowRunPayload | undefined)?.repository?.full_name;
@@ -89,9 +106,42 @@ export function shaMatches(wanted: string, actual: string): boolean {
  */
 export function collectRuns(entries: HistoryEntry[], options: Pick<CiWaitOptions, 'sha' | 'repo'>): CiRun[] {
   const byId = new Map<number, CiRun>();
+  // Run id -> the attempt a workflow_run entry spoke for: that state is the run's own, a job entry of the same attempt never replaces it
+  const fromRunEvent = new Map<number, number>();
   const chronological = [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
 
   for (const entry of chronological) {
+    if (entry.event === WORKFLOW_JOB_EVENT && !entry.orphan) {
+      const payload = entry.payload as WorkflowJobPayload | undefined;
+      const job = payload?.workflow_job;
+      if (!job || typeof job.run_id !== 'number' || typeof job.head_sha !== 'string' || !shaMatches(options.sha, job.head_sha)) {
+        continue;
+      }
+      const repository = payload?.repository?.full_name;
+      if (options.repo && repository?.toLowerCase() !== options.repo.toLowerCase()) {
+        continue;
+      }
+      const attempt = job.run_attempt ?? 1;
+      const known = byId.get(job.run_id);
+      if (known && known.attempt > attempt) {
+        continue;
+      }
+      if (fromRunEvent.get(job.run_id) === attempt) {
+        continue;
+      }
+      // The jobs say the run exists and is not over (a finished job is not a finished run): queued while GitHub has not started any, running otherwise
+      byId.set(job.run_id, {
+        id: job.run_id,
+        name: job.workflow_name ?? known?.name ?? `run ${job.run_id}`,
+        attempt,
+        status: job.status === 'queued' || job.status === 'waiting' ? 'queued' : 'in_progress',
+        conclusion: null,
+        url: repository ? `https://github.com/${repository}/actions/runs/${job.run_id}` : '',
+        startedAt: null,
+        seenAt: entry.ts,
+      });
+      continue;
+    }
     if (entry.event !== WORKFLOW_RUN_EVENT || entry.orphan) {
       continue;
     }
@@ -123,6 +173,7 @@ export function collectRuns(entries: HistoryEntry[], options: Pick<CiWaitOptions
       startedAt: run.run_started_at ?? null,
       seenAt: entry.ts,
     });
+    fromRunEvent.set(run.id, attempt);
   }
 
   return [...byId.values()];

@@ -4,7 +4,7 @@
  * which also covers a CI that finished before this command started: no subscribe-before-push race.
  */
 
-import type { HistoryEntry } from '@wadeck-app/queue-core';
+import { getErrorMessage, type HistoryEntry } from '@wadeck-app/queue-core';
 import { CI_EXIT, collectRuns, evaluateRuns, formatRunLine, repositoriesSeen, type CiRun, type CiWaitOptions } from './ciWait.js';
 
 export interface WaitIO {
@@ -23,6 +23,13 @@ export interface CiWaitDeps {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   io: WaitIO;
+  /**
+   * The workflow_run deliveries the relay itself holds, as history entries (in memory, never pushed into the queue). Read while the wait is pending, because a delivery that came while
+   * the relay client was not connected is not in the local history and is not replayed to it. Absent: only the local history counts. A failure is warned about once, then the wait goes on.
+   */
+  fetchRelayEntries?: () => Promise<HistoryEntry[]>;
+  /** How long to wait between two reads of the relay's history; default 20 s. */
+  relayHistoryEveryMs?: number;
 }
 
 export interface CiWaitCommandOptions extends CiWaitOptions {
@@ -73,10 +80,17 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
   let lastProgress = '';
   let relayChecked = false;
 
+  let relayEntries: HistoryEntry[] = [];
+  let relayReadAtMs = Number.NEGATIVE_INFINITY;
+  let relayReadWarned = false;
+  let relayReadOk = false;
+  const relayEveryMs = deps.relayHistoryEveryMs ?? 20_000;
+
   for (;;) {
     const nowMs = deps.now();
-    const runs = collectRuns(deps.readEntries(nowMs - options.lookbackMs), options);
-    const verdict = evaluateRuns(runs, options, nowMs);
+    const localEntries = deps.readEntries(nowMs - options.lookbackMs);
+    let entries = [...localEntries, ...relayEntries];
+    let verdict = evaluateRuns(collectRuns(entries, options), options, nowMs);
 
     if (verdict.state !== 'pending') {
       return report(verdict.state, verdict.runs, verdict.state === 'failed' ? verdict.failed : [], options, io);
@@ -94,6 +108,25 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
       }
     }
 
+    // Only a wait that is not over reads the relay's history (a CI that already finished locally costs no request): what the relay client was not connected for is there
+    if (deps.fetchRelayEntries !== undefined && nowMs - relayReadAtMs >= relayEveryMs) {
+      relayReadAtMs = nowMs;
+      try {
+        relayEntries = await deps.fetchRelayEntries();
+        relayReadOk = true;
+        entries = [...localEntries, ...relayEntries];
+        verdict = evaluateRuns(collectRuns(entries, options), options, nowMs);
+      } catch (err) {
+        if (!relayReadWarned) {
+          relayReadWarned = true;
+          io.stderr.write(`[warn] The relay's own webhook history could not be read (${getErrorMessage(err)}): only what this machine's relay client received is counted, so a delivery that came while it was not connected is missed.\n`);
+        }
+      }
+      if (verdict.state !== 'pending') {
+        return report(verdict.state, verdict.runs, verdict.state === 'failed' ? verdict.failed : [], options, io);
+      }
+    }
+
     const elapsedMs = nowMs - startMs;
     if (verdict.runs.length === 0 || options.workflows.length > 0) {
       const nothingSeen = options.workflows.length > 0
@@ -102,8 +135,9 @@ export async function ciWaitCommand(options: CiWaitCommandOptions, deps: CiWaitD
       if (nothingSeen && elapsedMs >= options.startGraceMs) {
         const window = formatWindow(options.lookbackMs);
         const reason =
-          `${verdict.reason} after ${Math.round(elapsedMs / 1000)}s. ${deliveryHint(options.repo, deps.readEntries(nowMs - options.lookbackMs), window)}Likely causes: the workflow has a path/branch filter that skips this commit, ` +
+          `${verdict.reason} after ${Math.round(elapsedMs / 1000)}s. ${deliveryHint(options.repo, entries, window)}Likely causes: the workflow has a path/branch filter that skips this commit, ` +
           `GitHub did not deliver the webhook (see "queue relay webhook history"), or the relay does not forward workflow_run events. ` +
+          `A delivery that came while this machine's relay client was not connected is not replayed to it${!relayReadOk ? '' : ' (the relay\'s own webhook history was read too and holds nothing for this commit)'}. ` +
           `Cross-check with "gh run list --commit ${options.sha}". ` +
           // The commit's date is unknown here (no git): a run older than the window is indistinguishable from a run that never came
           `Only relayed events of the last ${window} were read (--since); if the commit is older, re-run with --since <duration> back past its push.`;

@@ -66,6 +66,8 @@ Inside a git repository it also reads git:
 
 Without an inferred list, "done" means every workflow run seen for the commit is completed and nothing new happened for `--settle` (default 20s). With `--workflow <name>` (repeatable), only those workflows count and git is not used to guess.
 
+**What a wait that missed the first event still finds.** GitHub sends `workflow_run` `requested` once, about 3 s after the push, and nothing more until the run starts (a queued run can stay silent for minutes). The relay client the wait starts on demand needs about 10 s to connect and is never replayed what it missed, so the local history may hold no `workflow_run` for the commit. Two things cover it: the `workflow_job` events of the run (they say it exists and is queued or running, never that it is over: only a `workflow_run` ends the wait, so a lost `completed` ends in a timeout, not in a pass; read while no run of the commit is known, at most every 5 s), and the relay's own webhook history (`GET /api/webhook-history`, the latest 100 verified GitHub `workflow_run` deliveries, read in memory at most every 20 s while the wait is pending: nothing is pushed into the queue, so no subscriber runs twice). If that read fails, one `[warn]` gives the reason. Observed 2026-11-23: `requested` delivered 20:12:39.8, client connected 20:12:49.6, wait gave up at exit 3 after 91 s although the run existed.
+
 Only the relayed history of the last 24 h is read. A commit pushed earlier looks like "no run seen" (exit 3); pass `--since <duration|time>` (same syntax as the event wait: `3d`, `2026-10-18T11:00:00Z`) reaching back past its push. The exit 3 message names the window read.
 
 ## The relay

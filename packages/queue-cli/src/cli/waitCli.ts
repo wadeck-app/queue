@@ -5,7 +5,10 @@ import { join as pathJoin } from 'node:path';
 import { EventMatcher, HistoryReader, getErrorMessage, isEventPattern, type HistoryEntry } from '@wadeck-app/queue-core';
 import { parseDuration } from '@wadeck-app/shared-cli/Duration';
 import { createRelayClient, relayStateDir } from '@wadeck-app/queue-relay-client/dist/relayClient.js';
-import { CI_EXIT } from './ciWait.js';
+import { CI_EXIT, WORKFLOW_JOB_EVENT, collectRuns } from './ciWait.js';
+import { readRelayHistoryEntries } from './ciWaitRelayHistory.js';
+import { loadRelayConfig } from '@wadeck-app/queue-relay-client/dist/config.js';
+import { createRelayApiClient } from '@wadeck-app/queue-relay-client/dist/relayApi.js';
 import { ciWaitCommand, parseGithubRepo, type CiWaitCommandOptions } from './ciWaitCommand.js';
 import { createGitPort, inspectRepository, type GitPort } from './ciGit.js';
 import { eventWaitCommand, type EventWaitTarget } from './eventWaitCommand.js';
@@ -251,6 +254,8 @@ export interface QueueWaitDeps {
   historyReader?: HistoryRead;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** The relay's own webhook history for `queue wait ci` (in memory, nothing is pushed); default: the relay named in relay.yml, over its HTTP API. */
+  fetchRelayEntries?: () => Promise<HistoryEntry[]>;
   /** The pid an unnamed wait is called after (`anon.<pid>`). */
   pid?: number;
 }
@@ -363,10 +368,31 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
     input: { name, events: [CI_EVENT], whens: [], label: sha, since: new Date(now() - options.lookbackMs).toISOString(), cwd: process.cwd() },
     run: async (report) => {
       const onDemand = relayOnDemandFor(configDir, startRelay);
+      let jobEntries: HistoryEntry[] = [];
+      let jobsReadAtMs = Number.NEGATIVE_INFINITY;
       onDemand.begin();
 
       return ciWaitCommand(options, {
-        readEntries: (sinceMs) => reader.read({ event: CI_EVENT, sinceMs }),
+        // The jobs of a run say it exists when its workflow_run was never received (GitHub sends `requested` once and nothing else until the run starts): they are read
+        // only while no run of this commit is known from workflow_run entries, and at most every 5 s, so a wait that has its run reads the history once per poll as before
+        readEntries: (sinceMs) => {
+          const runEntries = reader.read({ event: CI_EVENT, sinceMs });
+          if (collectRuns(runEntries, options).length > 0) {
+            return runEntries;
+          }
+          if (now() - jobsReadAtMs >= JOB_READ_EVERY_MS) {
+            jobEntries = reader.read({ event: WORKFLOW_JOB_EVENT, sinceMs });
+            jobsReadAtMs = now();
+          }
+          return [...runEntries, ...jobEntries];
+        },
+        fetchRelayEntries: deps.fetchRelayEntries ?? (async () => {
+          const config = loadRelayConfig(configDir);
+          if (config === null) {
+            throw new Error('there is no relay.yml');
+          }
+          return readRelayHistoryEntries(createRelayApiClient({ relayUrl: config.relayUrl, token: config.token }));
+        }),
         // Called only when the history holds nothing for this commit yet: a CI that already finished never starts the relay
         relayStatus: async () => {
           const wasRunning = await relay.isRunning().catch(() => false);
@@ -395,3 +421,5 @@ export async function queueWaitCommand(configDir: string, args: string[], startR
 
 /** The event the relay turns a GitHub workflow run into. */
 const CI_EVENT = 'on.github.workflow_run';
+/** How often the workflow_job entries are read while no workflow_run of the commit is known. */
+const JOB_READ_EVERY_MS = 5000;

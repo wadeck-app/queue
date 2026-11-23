@@ -106,3 +106,50 @@ describe('evaluateRuns', () => {
     });
   });
 });
+
+describe('collectRuns: workflow_job entries (a run whose workflow_run was never received)', () => {
+  function jobEntry(ts: string, status: string, over: Record<string, unknown> = {}, repo = 'wadeck-app/queue'): HistoryEntry {
+    return {
+      ts,
+      eventId: `${ts}-job-${status}`,
+      event: 'on.github.workflow_job',
+      subscribers: [],
+      orphan: false,
+      payload: { action: status, workflow_job: { run_id: 7, workflow_name: 'CI / Publish', head_sha: SHA, run_attempt: 1, status, ...over }, repository: { full_name: repo } },
+    };
+  }
+
+  it('a queued job proves the run exists: it is pending as queued, not "no run seen"', () => {
+    const runs = collectRuns([jobEntry('2026-10-17T10:00:00Z', 'queued')], options);
+    expect(runs).toMatchObject([{ id: 7, name: 'CI / Publish', status: 'queued', conclusion: null, url: 'https://github.com/wadeck-app/queue/actions/runs/7' }]);
+    expect(evaluateRuns(runs, options, at('2026-10-17T10:00:30Z'))).toMatchObject({ state: 'pending', reason: 'still running: "CI / Publish" (queued)' });
+  });
+
+  it('a finished job is not a finished run: the run stays in progress, so a lost workflow_run completed ends in a timeout, never in a pass', () => {
+    const runs = collectRuns([jobEntry('2026-10-17T10:00:00Z', 'completed', { conclusion: 'success' })], options);
+    expect(runs).toMatchObject([{ status: 'in_progress', conclusion: null }]);
+    expect(evaluateRuns(runs, options, at('2026-10-17T11:00:00Z')).state).toBe('pending');
+  });
+
+  it('the workflow_run state of the same attempt wins, whatever order the jobs arrive in (a late job never reopens a completed run)', () => {
+    const runs = collectRuns([
+      jobEntry('2026-10-17T10:00:00Z', 'in_progress'),
+      entry('2026-10-17T10:05:00Z', { id: 7, name: 'CI / Publish', status: 'completed', conclusion: 'success' }),
+      jobEntry('2026-10-17T10:05:01Z', 'completed'),
+    ], options);
+    expect(runs).toMatchObject([{ id: 7, status: 'completed', conclusion: 'success' }]);
+  });
+
+  it('a re-run (higher attempt) seen through its jobs replaces the completed earlier attempt', () => {
+    const runs = collectRuns([
+      entry('2026-10-17T10:05:00Z', { id: 7, name: 'CI / Publish', status: 'completed', conclusion: 'failure' }),
+      jobEntry('2026-10-17T10:10:00Z', 'queued', { run_attempt: 2 }),
+    ], options);
+    expect(runs).toMatchObject([{ id: 7, attempt: 2, status: 'queued', conclusion: null }]);
+  });
+
+  it('ignores the jobs of another commit or another repository', () => {
+    expect(collectRuns([jobEntry('2026-10-17T10:00:00Z', 'queued', { head_sha: 'f'.repeat(40) })], options)).toEqual([]);
+    expect(collectRuns([jobEntry('2026-10-17T10:00:00Z', 'queued')], { ...options, repo: 'wadeck-app/other' })).toEqual([]);
+  });
+});

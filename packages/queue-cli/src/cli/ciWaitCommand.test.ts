@@ -233,3 +233,53 @@ describe('ciWaitCommand: no run seen, was anything delivered for this repository
     });
   });
 });
+
+describe('ciWaitCommand: what the relay client was not connected for (the relay keeps it)', () => {
+  it('finds a run whose requested delivery came before the relay client connected, from the relay history, and keeps waiting for it', async () => {
+    const h = harness(() => []);
+    let reads = 0;
+    h.deps.fetchRelayEntries = async () => {
+      reads++;
+      // The relay holds `requested`, then (from 60 s) `completed`
+      return h.clock.now >= T0 + 60_000 ? [runEntry(T0 - 10_000, 'queued'), runEntry(T0 + 60_000, 'completed', 'success')] : [runEntry(T0 - 10_000, 'queued')];
+    };
+    expect(await ciWaitCommand(base, h.deps)).toBe(CI_EXIT.PASSED);
+    expect(h.err.join('')).toContain('still running: "CI" (queued)');
+    expect(h.err.join('')).not.toContain('no workflow run seen yet for this commit after');
+    expect(reads).toBeGreaterThan(1);
+  });
+
+  it('reads the relay history at most once per interval (20 s by default), not once per poll', async () => {
+    const h = harness(() => []);
+    let reads = 0;
+    h.deps.fetchRelayEntries = async () => { reads++; return []; };
+    await ciWaitCommand({ ...base, startGraceMs: 100_000 }, h.deps);
+    // 100 s of one-second polls: a read at 0, 20, 40, 60, 80 and 100 s (the read comes before the give-up check)
+    expect(reads).toBe(6);
+  });
+
+  it('never reads it when the local history already says the CI is over', async () => {
+    const h = harness(() => [runEntry(T0 - 3600_000, 'completed', 'success')]);
+    let reads = 0;
+    h.deps.fetchRelayEntries = async () => { reads++; return []; };
+    expect(await ciWaitCommand(base, h.deps)).toBe(CI_EXIT.PASSED);
+    expect(reads).toBe(0);
+  });
+
+  it('a relay history that cannot be read is warned about once, with the reason, and the local history still decides', async () => {
+    const h = harness((now) => (now >= T0 + 30_000 ? [runEntry(T0 + 30_000, 'completed', 'success')] : []));
+    h.deps.fetchRelayEntries = async () => { throw new Error('Cannot reach the relay at https://relay.example'); };
+    expect(await ciWaitCommand({ ...base, settleMs: 0 }, h.deps)).toBe(CI_EXIT.PASSED);
+    const warnings = h.err.join('').split('\n').filter((line) => line.startsWith("[warn] The relay's own webhook history could not be read"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Cannot reach the relay at https://relay.example');
+  });
+
+  it('exit 3 says a delivery missed while the client was not connected is not replayed, and that the relay history held nothing for this commit', async () => {
+    const h = harness(() => []);
+    h.deps.fetchRelayEntries = async () => [];
+    expect(await ciWaitCommand(base, h.deps)).toBe(CI_EXIT.NO_RUN);
+    expect(h.err.join('')).toContain('not replayed to it');
+    expect(h.err.join('')).toContain("the relay's own webhook history was read too and holds nothing for this commit");
+  });
+});
